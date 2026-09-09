@@ -46,12 +46,14 @@ Page Agent 的核心路径是：说清楚页面目标，先观测当前页面，
 
 ## 安装扩展
 
-项目当前以源码目录形式分发。需要 Chromium 114 或更高版本（使用 Manifest V3 Side Panel API）。
+可直接从 [GitHub Releases](https://github.com/openpageagent/pageagent/releases) 下载打包好的扩展，无需本地打包。需要 Chromium 114 或更高版本（使用 Manifest V3 Side Panel API）。
 
-1. 克隆仓库。
+1. 在 Release 的 Assets 中下载 `page-agent-extension-<version>.zip` 并解压。
 2. 打开 `chrome://extensions` 或 `edge://extensions`，启用开发者模式。
-3. 点击“加载已解压的扩展程序”，选择仓库根目录（该目录应直接包含 `manifest.json`）。
+3. 点击“加载已解压的扩展程序”，选择解压后的 `page-agent-extension/` 目录（该目录应直接包含 `manifest.json`）。
 4. 点击扩展图标打开侧边栏，在配置中心填写模型服务；API Key 仅保存于本地浏览器存储。
+
+也可以克隆仓库后按上述步骤加载源码，选择仓库根目录即可。
 
 安装与打包说明见 [`docs/Page-Agent-00-安装与打包.md`](docs/Page-Agent-00-安装与打包.md)。
 

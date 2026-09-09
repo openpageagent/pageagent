@@ -1,16 +1,18 @@
 # Page Agent 安装与打包
 
-本文说明当前版本扩展的安装、升级、配置迁移和 ZIP 打包方式。扩展可以直接从源码目录加载，也可以使用仓库根目录的 `page-agent-build.sh` 生成 ZIP。
+本文说明当前版本扩展的安装、升级、配置迁移和 ZIP 打包方式。扩展可以从 [GitHub Releases](https://github.com/openpageagent/pageagent/releases) 下载打包好的 ZIP 后解压加载，无需本地打包；也可以直接加载源码目录，或使用仓库根目录的 `page-agent-build.sh` 自行生成 ZIP。
 
 ## 直接安装
 
 环境要求：Chromium 114 或更高版本（Chrome、Edge 等）以及 Manifest V3 支持。
 
-1. 克隆仓库，或解压发布 ZIP。
+1. 打开 [GitHub Releases](https://github.com/openpageagent/pageagent/releases)，在对应版本的 Assets 中下载 `page-agent-extension-<version>.zip` 并解压。
 2. 打开 `chrome://extensions` 或 `edge://extensions`。
 3. 开启“开发者模式”。
-4. 选择“加载已解压的扩展程序”，指定直接包含 `manifest.json` 的目录。
+4. 选择“加载已解压的扩展程序”，指定解压后的 `page-agent-extension/` 目录，该目录应直接包含 `manifest.json`。
 5. 点击扩展图标打开侧边栏，再进入配置中心填写模型服务。
+
+也可以克隆仓库后按上述步骤加载源码，第 4 步选择仓库根目录即可。
 
 API Key 和其他配置保存在当前浏览器的 `chrome.storage.local` 中。首次使用时需要在配置中心设置至少一个模型服务。
 
