@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Page Agent 配置中心</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <h1>Page Agent</h1>
+        <button id="btn-toggle-sidebar" class="sidebar-toggle" title="隐藏侧边栏" aria-label="隐藏侧边栏"></button>
+      </div>
+      <!--
+        菜单入口名与业务提示名刻意不同：
+        菜单用「流程组合 / 定时运行 / 触发运行 / 模型配置 / 连接配置」；
+        页面标题、表单提示和运行概念继续用「定时任务 / URL 触发器」。
+        不要联动改名。
+      -->
+      <nav id="nav">
+        <button class="nav-item active" data-section="conversation">对话</button>
+        <button class="nav-item" data-section="flows">流程</button>
+        <button class="nav-item" data-section="pages">页面</button>
+        <button class="nav-item" data-section="scripts">脚本</button>
+        <button class="nav-item" data-section="knowledge">知识</button>
+        <button class="nav-item" data-section="flowGroups">流程组合</button>
+        <button class="nav-item" data-section="schedules">定时运行</button>
+        <button class="nav-item" data-section="url-triggers">触发运行</button>
+        <button class="nav-item" data-section="logs">流程报告</button>
+        <button class="nav-item" data-section="model-settings">模型配置</button>
+        <button class="nav-item" data-section="mcp">连接配置</button>
+        <button class="nav-item" data-section="system-settings">系统配置</button>
+        <button class="nav-item" data-section="changelog">更新日志</button>
+      </nav>
+      <div id="sidebar-footer">
+        <button id="btn-export-config" class="btn-secondary" title="按模块导出插件内所有可备份数据">一键导出所有数据</button>
+        <button id="btn-import-config" class="btn-secondary" title="从备份包按模块和明细导入插件数据">一键导入备份数据</button>
+        <input type="file" id="file-import-config" accept="application/json" hidden>
+      </div>
+    </aside>
+
+    <main id="main" class="conversation-main">
+      <!-- 页面配置 -->
+      <section id="section-pages" class="section">
+        <header class="section-header">
+          <h2>页面配置</h2>
+          <button class="btn-primary" id="btn-new-page">新建页面</button>
+        </header>
+        <p class="section-desc">定义要自动化操作的网页地址。可设置自动刷新间隔与网络请求捕获。</p>
+        <div id="pages-list" class="item-list"></div>
+        <div id="page-editor" class="editor hidden"></div>
+      </section>
+
+      <!-- 流程配置 -->
+      <section id="section-flows" class="section">
+        <header class="section-header">
+          <h2>流程配置</h2>
+          <div>
+            <button class="btn-secondary" id="btn-import-flow">导入流程</button>
+            <button class="btn-primary" id="btn-new-flow">新建流程</button>
+            <input type="file" id="file-import-flow" accept="application/json" hidden>
+          </div>
+        </header>
+        <p class="section-desc">将节点编排为顺序执行的流程。流程可在运行时接收输入，节点输出会形成流程输出并供下游节点引用。</p>
+        <div id="flows-list" class="item-list"></div>
+        <div id="flow-editor" class="editor hidden"></div>
+      </section>
+
+      <!-- 流程组合 -->
+      <section id="section-flowGroups" class="section">
+        <header class="section-header">
+          <h2>流程组合</h2>
+          <div>
+            <button class="btn-secondary" id="btn-import-flowGroup">导入流程组</button>
+            <button class="btn-primary" id="btn-new-flowGroup">新建流程组</button>
+            <input type="file" id="file-import-flowGroup" accept="application/json" hidden>
+          </div>
+        </header>
+        <p class="section-desc">将多个已保存流程编排为业务流程。流程组按顺序运行流程，后一个流程自动接收上一个流程的输出。</p>
+        <div id="flowGroups-list" class="item-list"></div>
+        <div id="flowGroup-editor" class="editor hidden"></div>
+      </section>
+
+      <!-- 脚本配置 -->
+      <section id="section-scripts" class="section">
+        <header class="section-header">
+          <h2>脚本配置</h2>
+          <button class="btn-primary" id="btn-new-script">新建脚本</button>
+        </header>
+        <p class="section-desc">自定义 JS 脚本在沙箱中执行，通过 api 对象调用全部节点能力。</p>
+        <details id="api-reference">
+          <summary>脚本 API 速查</summary>
+          <pre>// 页面操作：page.open(pageId) 打开页面并返回 tabId，后续操作只传 tabId
+const opened = await page.open(pageId, { urlOverride, waitStable, forceReopen, maxReuseMinutes: 60 })
+const tabId = opened.tabId
+await page.refresh(tabId)                              // 刷新页面
+await page.navigate(tabId, url)                        // 跳转地址
+await page.click(tabId, '#btn')                        // 点击按钮
+await page.click(tabId, { textPattern: '查询' })        // 按文本点击
+await page.fill(tabId, '#input', '值')                 // 填充输入框
+await page.waitFor(tabId, '.table', 15000)             // 等待元素
+const t = await page.extractTable(tabId, { selector: 'table' })  // 提取表格
+const s = await page.extractText(tabId, '.title')                // 提取元素文本
+const r = await page.getRequests(tabId, { urlFilter: '/api/' })  // 获取请求返回
+const shot = await page.screenshot(tabId)              // 截图 { dataUrl }
+
+// HTTP / Webhook
+const resp = await http.fetch(url, { method, headers, body, timeoutMs })
+await http.webhook(url, { any: 'json' })               // POST JSON
+
+// 模型调用（需在「模型配置」配置模型）
+const answer = await api.model.chat('总结这段文本: ...')
+const answer2 = await api.model.chat({ system: '角色设定', user: '问题', temperature: 0 })
+
+// 运行上下文（与流程节点共享）
+const v = await ctx.get('varName')                     // 读变量
+await ctx.set('varName', value)                        // 写变量
+
+// 其它
+await log('消息', 'info')                               // 写日志
+await sleep(1000)                                      // 等待
+return result                                          // 返回值写入节点输出</pre>
+        </details>
+        <div id="scripts-list" class="item-list"></div>
+        <div id="script-editor" class="editor hidden"></div>
+      </section>
+
+      <!-- 定时任务 -->
+      <section id="section-schedules" class="section">
+        <header class="section-header">
+          <h2>定时任务</h2>
+          <button class="btn-primary" id="btn-new-schedule">新建定时任务</button>
+        </header>
+        <p class="section-desc">按间隔、每天固定时间或 Cron 自动触发流程，也可以定时创建并运行对话。浏览器需保持运行（扩展 Service Worker 会被 alarm 自动唤醒）。</p>
+        <div id="schedules-list" class="item-list"></div>
+        <div id="schedule-editor" class="editor hidden"></div>
+      </section>
+
+      <!-- URL 触发器 -->
+      <section id="section-url-triggers" class="section">
+        <header class="section-header">
+          <h2>URL 触发器</h2>
+          <button class="btn-primary" id="btn-new-url-trigger">新建触发器</button>
+        </header>
+        <p class="section-desc">当浏览器打开匹配的页面时自动执行流程。URL 模式支持通配符 <code>*</code>，如 <code>https://erp.company.com/*</code>。</p>
+        <div id="url-triggers-list" class="item-list"></div>
+      </section>
+
+      <!-- 流程报告 -->
+      <section id="section-logs" class="section">
+        <header class="section-header">
+          <h2>流程报告</h2>
+          <div>
+            <button class="btn-small" id="btn-export-runs-json">导出全部 JSON</button>
+            <button class="btn-small" id="btn-export-runs-html">批量 HTML</button>
+            <button class="btn-small" id="btn-export-failures-csv">失败 CSV</button>
+            <button class="btn-small" id="btn-refresh-runs">刷新</button>
+            <button class="btn-small btn-danger-outline" id="btn-clear-runs">清理历史</button>
+          </div>
+        </header>
+        <p class="section-desc">集中查看流程与流程组的运行结果、节点统计、失败样本、warn/error 事件和可导出的流程报告。</p>
+        <div id="runs-list" class="item-list"></div>
+      </section>
+
+      <!-- MCP 服务器 -->
+      <section id="section-mcp" class="section">
+        <header class="section-header">
+          <h2>MCP 服务器连接</h2>
+        </header>
+        <p class="section-desc">管理当前扩展环境与本地 MCP 服务的连接。连接用于外部客户端配置和管理自动化流程；关闭连接后，已保存的自动化仍可独立运行。</p>
+
+        <div class="mcp-settings">
+          <div class="setting-item">
+            <label class="switch-label">
+              <input type="checkbox" id="mcp-enabled">
+              <span class="switch-slider"></span>
+              <span class="switch-text">启用 MCP 服务器连接</span>
+            </label>
+          </div>
+
+          <div class="setting-item">
+            <label>WebSocket 地址</label>
+            <input type="text" id="mcp-url" value="ws://127.0.0.1:9999" placeholder="ws://127.0.0.1:9999">
+            <small>MCP 服务器的 WebSocket 地址</small>
+          </div>
+
+          <div class="setting-item">
+            <label>当前连接名称</label>
+            <input type="text" id="mcp-client-name" placeholder="例如 Chrome 工作资料 / Edge 测试资料">
+            <small>用于在本地 MCP 服务中识别当前扩展环境。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>当前连接 ID</label>
+            <input type="text" id="mcp-client-id" readonly>
+            <small>由当前扩展环境生成，可用于精确选择这个连接。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>MCP 页面操作标签策略</label>
+            <select id="mcp-run-tab-mode">
+              <option value="reuseOpenTab">复用已打开标签</option>
+              <option value="fixedCurrentTab">固定当前标签</option>
+              <option value="fixedNewTab">固定打开标签</option>
+            </select>
+            <small>仅影响 MCP 观测、点击、填充、evaluate、CDP 等页面操作；运行流程仍按流程或流程组步骤配置。</small>
+          </div>
+
+          <div class="mcp-actions">
+            <button class="btn-primary" id="btn-mcp-save-settings" disabled>保存连接设置</button>
+          </div>
+
+          <div class="mcp-status">
+            <div class="status-indicator">
+              <span class="status-dot" id="mcp-status-dot"></span>
+              <span id="mcp-status-text">未连接</span>
+            </div>
+            <button class="btn-small" id="btn-mcp-reconnect">重新连接</button>
+          </div>
+
+          <div class="mcp-log-panel">
+            <div class="mcp-log-header">
+              <h4>MCP 连接日志</h4>
+              <button class="btn-small" id="btn-mcp-clear-logs">清空日志</button>
+            </div>
+            <div class="mcp-log-list" id="mcp-log-list">
+              <div class="mcp-log-empty">暂无日志</div>
+            </div>
+          </div>
+
+          <div class="mcp-info">
+            <h4>内置单文件 MCP 服务器</h4>
+            <p>内部发布 ZIP 已包含 MCP 服务器单文件。解压后文件固定在：</p>
+            <p><code>mcp-server/page-agent-mcp-server.cjs</code></p>
+
+            <div class="setting-item">
+              <label>扩展解压目录（用于生成 Cherry Studio 配置）</label>
+              <input type="text" id="mcp-extension-dir" placeholder="/path/to/page-agent-extension">
+              <small>浏览器扩展无法读取开发者模式加载目录的真实本机路径；从文件管理器复制解压目录到这里即可。</small>
+            </div>
+
+            <label class="mcp-snippet-label">启动命令</label>
+            <pre class="mcp-snippet" id="mcp-start-command"></pre>
+            <div class="mcp-actions">
+              <button class="btn-small" id="btn-copy-mcp-command">复制启动命令</button>
+            </div>
+
+            <label class="mcp-snippet-label">Cherry Studio 配置</label>
+            <pre class="mcp-snippet" id="mcp-cherry-config"></pre>
+            <div class="mcp-actions">
+              <button class="btn-small" id="btn-copy-cherry-config">复制 Cherry Studio 配置</button>
+            </div>
+
+            <p class="mcp-note">一键写入 Cherry Studio 配置需要 Cherry Studio 提供官方导入协议或本机助手。当前扩展只能生成配置并复制，不能直接修改桌面应用配置文件。</p>
+          </div>
+
+          <div class="mcp-info">
+            <h4>Codex / Claude Code 连接</h4>
+            <p>使用内置单文件 MCP 服务器 <code>mcp-server/page-agent-mcp-server.cjs</code>；上方填写扩展目录后会自动生成完整路径。</p>
+
+            <label class="mcp-snippet-label">Codex 配置</label>
+            <pre class="mcp-snippet" id="mcp-codex-config"></pre>
+            <div class="mcp-actions">
+              <button class="btn-small" id="btn-copy-codex-config">复制 Codex 命令</button>
+            </div>
+
+            <label class="mcp-snippet-label">Claude Code 配置</label>
+            <pre class="mcp-snippet" id="mcp-claude-config"></pre>
+            <div class="mcp-actions">
+              <button class="btn-small" id="btn-copy-claude-config">复制 Claude Code 命令</button>
+            </div>
+
+            <p class="mcp-note">Claude Code 本地 stdio MCP 使用 <code>claude mcp add ... -- command args</code> 格式；Codex 和 Claude Code 添加后均可用自然语言调用 <code>page-agent</code> 创建流程。</p>
+          </div>
+
+          <div class="mcp-info">
+            <h4>MCP 能力与接口</h4>
+            <p>MCP 服务器启动后同时提供三类通道：MCP 客户端通过 stdio 调用工具，浏览器插件通过 WebSocket 连接 Server，外部系统可以通过 HTTP API 触发流程。</p>
+            <ol>
+              <li><b>MCP stdio</b>：Codex、Claude Code、Cherry Studio 等客户端通过 stdio 连接 MCP 服务器，调用下面这些工具和资源。</li>
+              <li><b>插件 WebSocket</b>：浏览器插件默认连接 <code>ws://127.0.0.1:9999</code>（可用 <code>--ws-port</code> 或 <code>WS_PORT</code> 覆盖），用于 MCP 服务器和 Extension 之间传递页面观测、操作、配置和运行请求。</li>
+              <li><b>多插件客户端</b>：同一个 MCP 服务器可接受多个浏览器插件连接。普通窗口和隐私窗口在 split incognito 模式下是两个独立客户端。先用 <code>list_mcp_clients</code> 或 <code>GET /mcp/clients</code> 查看 <code>mcpClientId</code>，再在 MCP 工具参数、HTTP header 或 query 中指定目标。</li>
+              <li><b>能力发现</b>：<code>list_capabilities</code>、<code>list_node_catalog</code>、<code>get_node_type_details</code> 用于了解可用节点和参数。</li>
+              <li><b>配置与检索</b>：<code>list_context_catalog</code>、<code>search_context</code>、<code>get_context_detail</code> 按证据缺口读取页面源、流程、流程组、运行历史等信息。</li>
+              <li><b>页面观测</b>：<code>inspect_structure</code>、<code>inspect_element</code>、<code>inspect_form_fields</code>、<code>search_page</code>、<code>inspect_text</code>、<code>inspect_html</code>、<code>inspect_css</code>、<code>inspect_javascript</code> 用于定位 DOM、表单、文本、样式和脚本状态。</li>
+              <li><b>页面操作验证</b>：<code>act_click</code>、<code>act_fill</code>、<code>assert_element</code>、<code>assert_text</code>、<code>fill_form_fields</code> 可先验证交互和断言，再转成流程节点。</li>
+              <li><b>流程搭建</b>：描述目标页面、执行步骤和输入输出，助手可以创建页面源、流程、节点和流程组。</li>
+              <li><b>运行与验收</b>：先观察关键节点的输入输出，再完整运行流程或流程组，根据报告确认结果。</li>
+              <li><b>只读诊断</b>：<code>cdp.inspect_dom_snapshot</code>、<code>cdp.inspect_ax_tree</code>、<code>cdp.inspect_network</code>、<code>cdp.analyze_performance</code> 用于补充统一感知证据；普通页面动作没有第二条 CDP 或 DOM fallback 路径。</li>
+              <li><b>资源接口</b>：MCP 还提供 <code>flow://list</code>、<code>flow-group://list</code>、<code>page://list</code>、<code>status://current</code>、<code>history://runs</code> 等只读资源。</li>
+              <li><b>HTTP API（默认启动）</b>：Server 默认监听 <code>http://localhost:9998</code>（可用 <code>--http-port</code> 或 <code>HTTP_PORT</code> 覆盖），提供 <code>GET /healthz</code>、<code>GET /mcp/clients</code>、<code>POST /webhook/run/{流程ID}</code>、<code>POST /webhook/run-group/{流程组ID}</code>、<code>GET /webhook/result/{runId}</code>。</li>
+              <li><b>HTTP 目标选择</b>：多客户端场景下，请求可加 header <code>x-page-agent-mcp-client-id</code>/<code>x-page-agent-mcp-client-name</code>，或 query <code>?mcpClientId=...</code>/<code>?mcpClientName=...</code>/<code>?incognito=true</code>。</li>
+              <li><b>HTTP 输入参数</b>：Webhook 请求体推荐写成 <code>{"input":{"keyword":"测试","limit":10}}</code>，流程节点里用 <code>{{input.keyword}}</code>、<code>{{input.limit}}</code> 取值；如果请求体没有 <code>input</code> 字段，则整个 JSON 会作为 <code>input</code>。</li>
+              <li><b>HTTP 等待参数</b>：默认等待流程结束后返回结果；加 <code>?wait=false</code> 会立即返回 <code>runId</code>，之后用 <code>GET /webhook/result/{runId}</code> 查询；加 <code>?timeoutMs=120000</code> 可以调整等待超时。</li>
+            </ol>
+            <p class="mcp-note">推荐流程：先说明任务和验收标准，再观察页面并保存必要节点，最后完整运行一次确认结果。</p>
+          </div>
+
+          <div class="mcp-info">
+            <h4>使用说明</h4>
+            <ol>
+              <li><b>解压插件 ZIP</b>：开发者模式加载解压后的 <code>page-agent-extension</code> 目录</li>
+              <li><b>配置 Cherry Studio</b>：复制上方配置，把路径替换为实际解压目录</li>
+              <li><b>启动 MCP 服务器</b>：由 Cherry Studio 启动，或在终端运行上方启动命令</li>
+              <li><b>开启连接</b>：勾选上方开关，Extension 会自动连接到 MCP 服务器</li>
+              <li><b>通过 MCP 客户端配置</b>：在 Cherry Studio 中说"列出所有自动化能力"或"创建一个流程"</li>
+              <li><b>配置完成后</b>：可以关闭 MCP 服务器，插件会继续按配置运行</li>
+            </ol>
+            <p><b>注意</b>：MCP 服务器只是配置工具，不是运行时依赖。</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 模型配置 -->
+      <section id="section-model-settings" class="section">
+        <header class="section-header">
+          <h2>模型配置</h2>
+        </header>
+        <p class="section-desc">配置一个或多个模型服务后，可给「请求模型断言」「请求模型数据提取」「请求模型自定义动作」节点、脚本 <code>api.model.chat()</code> 与对话使用。</p>
+
+        <div class="mcp-settings model-settings-panel">
+          <div class="setting-item">
+            <label>当前编辑服务</label>
+            <div class="model-service-picker">
+              <select id="model-service-select"></select>
+              <button class="btn-secondary" id="btn-model-add-service">新增</button>
+              <button class="btn-secondary" id="btn-model-copy-service">复制</button>
+              <button class="btn-secondary" id="btn-model-delete-service">删除</button>
+            </div>
+            <small>全局默认服务：<span id="model-default-service-name">未配置</span>。Assistant 仍可显式选择其他模型服务。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>协议</label>
+            <select id="model-protocol">
+              <option value="chat_completions" selected>OpenAI Chat Completions</option>
+              <option value="responses">OpenAI Responses</option>
+              <option value="anthropic">Claude Anthropic Messages</option>
+            </select>
+            <small>协议决定请求与响应格式；标准 Provider 保持协议纯净，已识别服务的必要方言由兼容层补齐。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>服务名称</label>
+            <input type="text" id="model-service-name" placeholder="例如 OpenAI / Qwen / 本地 Ollama">
+          </div>
+
+          <div class="setting-item">
+            <label>服务地址（Base URL）</label>
+            <input type="text" id="model-base-url" placeholder="https://api.example.com/v1">
+            <small>可填写版本根地址或完整接口地址；系统会按协议补全 /chat/completions、/responses 或 /messages。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>API Key</label>
+            <div class="model-service-picker">
+              <input type="password" id="model-api-key" placeholder="输入 API Key" autocomplete="new-password">
+              <button class="btn-secondary" id="btn-model-clear-key">清除密钥</button>
+            </div>
+            <small id="model-api-key-help">服务端只返回是否已配置；密钥不会回显。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>User-Agent（可选）</label>
+            <input type="text" id="model-user-agent" placeholder="例如 Mozilla/5.0 或自定义客户端标识">
+            <small>随该服务请求发送；留空时使用浏览器默认值。部分 Chromium 版本可能限制脚本覆盖 User-Agent。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>模型名（文本任务）</label>
+            <input type="text" id="model-name" placeholder="gpt-4o-mini / qwen-plus / local-model">
+          </div>
+
+          <div class="setting-item">
+            <label>最大上下文 Token</label>
+            <div class="input-with-unit">
+              <input type="number" id="model-max-context-tokens" min="0" max="1000" step="0.001" inputmode="decimal" placeholder="1000">
+              <span class="unit-suffix">K</span>
+            </div>
+            <small>Agent 全局上下文预算；通过 Agent Settings 保存，不属于单个模型服务表单。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>自动压缩阈值</label>
+            <div class="input-with-unit">
+              <input type="number" id="model-auto-compact-token-limit" min="50" max="90" step="1" inputmode="numeric" placeholder="90">
+              <span class="unit-suffix">%</span>
+            </div>
+            <small>取值 50-90；90 表示使用默认阈值。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>思考级别</label>
+            <select id="model-reasoning-effort">
+              <option value="auto">auto（不传参数）</option>
+              <option value="none">none</option>
+              <option value="minimal">minimal</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="xhigh">xhigh</option>
+              <option value="max">max</option>
+            </select>
+            <small>auto 不传参数；各协议先按标准字段发送，再由服务地址匹配到的 compat 适配器补充厂商必要方言。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>请求重试次数</label>
+            <input type="number" id="model-max-retries" min="0" max="50" step="1" inputmode="numeric" placeholder="15">
+            <small>网络错误、429 限流、5xx、流中断等瞬时故障自动重试（带退避并尊重 Retry-After）；0 表示不重试，默认 15。配额与账单类错误不会重试。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>会话压缩</label>
+            <select id="model-context-compression">
+              <option value="auto">自动摘要压缩</option>
+              <option value="off">关闭摘要压缩</option>
+            </select>
+            <small>Agent 全局压缩策略；通过 Agent Settings 保存。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>视觉模型名（可选，截图类节点使用）</label>
+            <input type="text" id="model-vision-model" placeholder="gpt-4o / qwen-vl-plus / glm-4v">
+            <small>留空默认使用「模型名（文本任务）」；「请求模型断言」「请求模型数据提取」选择截图来源时需要支持图片输入的模型。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>摘要模型名（可选）</label>
+            <input type="text" id="model-summary-model" placeholder="默认使用「模型名（文本任务）」">
+            <small>留空默认使用「模型名（文本任务）」；仅用于同一模型服务内的上下文摘要请求，不会切换 Base URL、凭据、请求头或服务。</small>
+          </div>
+
+          <div class="mcp-status">
+            <div class="status-indicator">
+              <span id="model-test-result"></span>
+            </div>
+            <button class="btn-secondary" id="btn-model-set-default">设为全局默认</button>
+            <button class="btn-primary" id="btn-model-save">保存</button>
+            <button class="btn-secondary" id="btn-model-test">测试当前服务</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 对话 -->
+      <section id="section-conversation" class="section active">
+        <header class="section-header">
+          <h2>对话</h2>
+        </header>
+        <p class="section-desc">在配置中心用助手和话题创建、修复、校验流程。生成的页面和流程会直接写入自动化配置，并可从运行记录查看结果。</p>
+        <div id="conversation-root" class="conversation-root">
+          <div class="placeholder">正在加载对话...</div>
+        </div>
+      </section>
+
+      <!-- 知识 -->
+      <section id="section-knowledge" class="section">
+        <header class="section-header">
+          <h2>知识</h2>
+          <div>
+            <button class="btn-secondary" id="btn-knowledge-refresh">刷新</button>
+            <button class="btn-primary" id="btn-knowledge-new">新建知识</button>
+          </div>
+        </header>
+        <p class="section-desc">集中维护对话可检索的知识、Skill 和 HTTP MCP 工具。内置内容保持只读，用户内容可编辑归档；外部工具会按服务器的真实连接和发现结果更新。</p>
+        <div id="knowledge-root" class="knowledge-root">
+          <div class="placeholder">正在加载知识...</div>
+        </div>
+      </section>
+
+      <!-- 更新日志 -->
+      <section id="section-changelog" class="section">
+        <header class="section-header">
+          <h2>更新日志</h2>
+        </header>
+        <div class="help-doc">
+
+          <h3>v1.0.0</h3>
+          <ul>
+            <li><b>页面自动化</b>：页面感知、元素定位、点击、填写、选择、滚动、导航、脚本、截图、上传和结果验证。</li>
+            <li><b>流程编排</b>：Flow、FlowGroup、模板、数据处理、定时任务、URL 触发、运行报告和配置备份恢复。</li>
+            <li><b>对话 Agent</b>：多协议模型 Provider、流式输出、工具调用、助手、知识、Skill 和 Conversation Journal。</li>
+            <li><b>资源互操作</b>：ARP/1 资源路由，以及可选 MCP Server 的 stdio、WebSocket 和 HTTP webhook 接入。</li>
+            <li><b>扩展能力</b>：页面录制、取消与会话恢复、内置 Flow/Skill 和敏感数据边界提示。</li>
+          </ul>
+
+        </div>
+      </section>
+
+      <!-- 系统配置 -->
+      <section id="section-system-settings" class="section">
+        <header class="section-header">
+          <h2>系统配置</h2>
+        </header>
+        <div class="system-settings">
+          <div class="setting-item">
+            <label class="switch-label">
+              <input type="checkbox" id="system-floating-entry-disabled">
+              <span class="switch-slider"></span>
+              <span class="switch-text">关闭悬浮入口</span>
+            </label>
+            <small>在网页中隐藏悬浮入口；重新打开后会恢复显示。</small>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="hidden"></div>
+
+  <!-- 抽屉 -->
+  <div class="drawer-overlay" id="drawer-overlay" data-action="cancel-drawer"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-header">
+      <h3 id="drawer-title">编辑</h3>
+      <button class="drawer-close" id="drawer-close" data-action="cancel-drawer" title="关闭">×</button>
+    </div>
+    <div class="drawer-body" id="drawer-content"></div>
+    <div class="drawer-footer" id="drawer-actions"></div>
+  </div>
+
+  <script src="../shared/page-action-contract.js"></script>
+  <script src="../shared/page-verification-contract.js"></script>
+  <script src="../flows/node-types.js"></script>
+  <script src="../resources/mcp-tool-contract.js"></script>
+  <script src="../resources/protocol/index.js"></script>
+  <script src="../resources/resource-contract.js"></script>
+  <script src="../resources/resource-uri.js"></script>
+  <script src="../resources/resource-errors.js"></script>
+  <script src="../resources/resource-permissions.js"></script>
+  <script src="../resources/resource-idempotency.js"></script>
+  <script src="../resources/introspection-runtime.js"></script>
+  <script src="../resources/resource-router.js"></script>
+  <script src="../knowledge/knowledge-search.js"></script>
+  <script src="../knowledge/knowledge-store.js"></script>
+  <script src="../knowledge/knowledge-lifecycle.js"></script>
+  <script src="../knowledge/knowledge-builtins.js"></script>
+  <script src="../knowledge/knowledge.js"></script>
+  <script src="../knowledge/skill-knowledge.js"></script>
+  <script src="../settings/model-settings.js"></script>
+  <script src="../agent/providers/provider-utils.js"></script>
+  <script src="../agent/providers/provider-sse.js"></script>
+  <script src="../agent/providers/browser-provider-transport.js"></script>
+  <script src="../agent/providers/compat/index.js"></script>
+  <script src="../agent/tool-result-projection.js"></script>
+  <script src="../agent/providers/provider-message-normalizer.js"></script>
+  <script src="../agent/providers/openai-chat-completions-provider.js"></script>
+  <script src="../agent/providers/openai-responses-provider.js"></script>
+  <script src="../agent/providers/anthropic-messages-provider.js"></script>
+  <script src="../settings/system-settings.js"></script>
+  <script src="../ui/runtime-client.js"></script>
+  <script src="../ui/resource-client.js"></script>
+  <script src="../ui/lifecycle.js"></script>
+  <script src="../shared/sync-event-stream.js"></script>
+  <script src="../ui/image-artifact-client.js"></script>
+  <script src="../ui/zip-store.js"></script>
+  <script src="../agent/conversation-protocol.js"></script>
+  <script src="../ui/conversation-event-view.js"></script>
+  <script src="../ui/conversation-list-view.js"></script>
+  <script src="../ui/conversation-shared.js"></script>
+  <script src="conversation-profile-schema.js"></script>
+  <script src="conversation-assistant-state-runtime.js"></script>
+  <script src="conversation-state.js"></script>
+  <script src="../shared/page-data-contract.js"></script>
+  <script src="../background/agent-page-service.js"></script>
+  <script src="../resources/services/resource-service.js"></script>
+  <script src="../resources/services/agent-configuration-resource-service.js"></script>
+  <script src="../resources/services/mcp-resource-service.js"></script>
+  <script src="../resources/resource-module-adapter.js"></script>
+  <script src="../resources/resource-module-support.js"></script>
+  <script src="../resources/modules/flow-resource.js"></script>
+  <script src="../resources/modules/node-type-resource.js"></script>
+  <script src="../resources/modules/flow-group-resource.js"></script>
+  <script src="../resources/modules/conversation-resource.js"></script>
+  <script src="../resources/modules/page-source-resource.js"></script>
+  <script src="../resources/modules/url-trigger-resource.js"></script>
+  <script src="../resources/modules/script-resource.js"></script>
+  <script src="../resources/modules/config-resource.js"></script>
+  <script src="../resources/modules/skill-resource.js"></script>
+  <script src="../resources/modules/run-resource.js"></script>
+  <script src="../resources/modules/schedule-resource.js"></script>
+  <script src="../resources/modules/knowledge-resource.js"></script>
+  <script src="../resources/modules/agent-configuration-resource.js"></script>
+  <script src="../resources/modules/connection-resource.js"></script>
+  <script src="../resources/modules/mcp-resource.js"></script>
+  <script src="../resources/adapters/page-resource-adapter.js"></script>
+  <script src="../resources/adapters/browser-resource-adapter.js"></script>
+  <script src="../agent/agent-provider.js"></script>
+  <script src="conversation.js"></script>
+  <script src="knowledge-panel.js"></script>
+  <script src="model-settings-panel.js"></script>
+  <script src="options-flow-node-controller.js"></script>
+  <script src="options-flow-controller.js"></script>
+  <script src="options-flow-group-controller.js"></script>
+  <script src="options-page-controller.js"></script>
+  <script src="options-script-controller.js"></script>
+  <script src="options-schedule-controller.js"></script>
+  <script src="options-url-trigger-controller.js"></script>
+  <script src="options-backup-controller.js"></script>
+  <script src="options-run-report-controller.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

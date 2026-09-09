@@ -1,0 +1,20 @@
+.vscode
+
+.npm-test.log
+/node_modules
+/dist
+
+# macOS
+.DS_Store
+
+# MCP Server
+mcp-server/node_modules/
+mcp-server/dist/
+*.log
+
+# Intellij
+.idea/
+*.iml
+*.iws
+*.ipr
+*~

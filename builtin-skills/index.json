@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "id": "khazix-writer",
+      "path": "khazix-writer",
+      "files": [
+        "SKILL.md",
+        "references/content_methodology.md",
+        "references/style_examples.md"
+      ]
+    }
+  ]
+}

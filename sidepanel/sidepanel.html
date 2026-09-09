@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>运行面板</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <!-- 运行配置 -->
+  <section id="config-section">
+    <div class="field-row">
+      <label for="select-flow">运行</label>
+      <select id="select-flow">
+        <option value="">-- 选择运行目标 --</option>
+      </select>
+      <div class="run-actions">
+        <button id="btn-run" class="btn-primary">运行</button>
+      </div>
+    </div>
+    <div class="field-row">
+      <label for="select-session">会话</label>
+      <select id="select-session">
+        <option value="">未运行</option>
+      </select>
+      <button id="btn-clear-sessions" class="btn-secondary" title="清除当前面板保存的会话指向，不删除流程报告或对话详情">清除</button>
+    </div>
+    <div id="runtime-inputs" class="runtime-inputs is-disabled">
+      <div class="runtime-input-title">
+        <span data-runtime-input-label>入参</span>
+        <span class="runtime-input-meta">
+          <span data-runtime-required>可选</span>
+          <button type="button" class="runtime-help-link" data-runtime-format title="格式化 JSON" disabled>格式化</button>
+          <button type="button" class="runtime-help-link" data-runtime-help title="运行说明" aria-label="运行说明" aria-expanded="false" hidden disabled>说明</button>
+        </span>
+      </div>
+      <textarea id="runtime-input-json" rows="3" placeholder='{"input":{"keyword":"订单"}} 或 {"keyword":"订单"}' disabled></textarea>
+      <div id="runtime-input-error" class="runtime-input-error" hidden></div>
+    </div>
+  </section>
+
+  <!-- 步骤进度 -->
+  <section id="steps-section">
+    <h3 id="steps-title">步骤进度</h3>
+    <div id="steps-container">
+      <p class="placeholder">请选择运行目标</p>
+    </div>
+  </section>
+
+  <!-- 输出面板 -->
+  <section id="output-section">
+    <div class="output-tabs" role="tablist" aria-label="输出面板">
+      <button class="output-tab active" data-output-tab="log" role="tab" aria-selected="true">日志</button>
+      <button class="output-tab" data-output-tab="debug" role="tab" aria-selected="false">调试</button>
+      <button id="btn-open-settings" class="btn-secondary btn-small output-settings-button" type="button" title="打开扩展配置页面" aria-label="打开扩展配置页面">配置</button>
+    </div>
+
+    <div class="output-panels">
+      <div id="log-panel" class="output-panel active" data-output-panel="log" role="tabpanel">
+        <div class="log-channel-tabs" role="tablist" aria-label="日志频道">
+          <button class="log-channel active" data-log-scope="run">运行</button>
+          <button class="log-channel" data-log-scope="flow">节点</button>
+          <button class="log-channel" data-log-scope="mcp">MCP</button>
+          <button class="log-channel" data-log-scope="system">系统</button>
+        </div>
+        <div id="log-container"></div>
+        <div class="panel-actions">
+          <button id="btn-clear-log" class="btn-secondary btn-small panel-action" data-output-action="log">清除</button>
+        </div>
+      </div>
+
+      <div id="debug-section" class="output-panel debug-panel" data-output-panel="debug" role="tabpanel">
+        <div id="debug-content">
+          <!-- Tab 切换 -->
+          <div class="debug-tabs">
+            <button class="debug-tab active" data-tab="variables">变量</button>
+            <button class="debug-tab" data-tab="ctx">ctx</button>
+            <button class="debug-tab" data-tab="flowdata">FlowData</button>
+            <button class="debug-tab" data-tab="trace">追踪</button>
+          </div>
+
+          <!-- Variables Tab -->
+          <div class="debug-tab-panel active" data-panel="variables">
+            <div id="variables-tree" class="tree-viewer"></div>
+          </div>
+
+          <!-- ctx Tab -->
+          <div class="debug-tab-panel" data-panel="ctx">
+            <div id="ctx-viewer" class="code-viewer"></div>
+          </div>
+
+          <!-- FlowData Tab -->
+          <div class="debug-tab-panel" data-panel="flowdata">
+            <div class="flowdata-section">
+              <h4>Attributes</h4>
+              <div id="attributes-viewer" class="code-viewer"></div>
+            </div>
+            <div class="flowdata-section">
+              <h4>Content</h4>
+              <div id="content-viewer" class="code-viewer"></div>
+            </div>
+          </div>
+
+          <!-- Trace Tab -->
+          <div class="debug-tab-panel" data-panel="trace">
+            <div id="trace-timeline" class="timeline-viewer"></div>
+          </div>
+          <div class="panel-actions">
+            <button id="btn-refresh-debug" class="btn-secondary btn-small panel-action" data-output-action="debug" title="刷新" hidden>刷新</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 状态栏 -->
+  <footer id="status-bar">
+    <span id="status-text">空闲</span>
+    <span id="session-details"></span>
+    <span id="page-readiness" class="page-readiness">驱动未就绪</span>
+  </footer>
+
+  <script src="../ui/runtime-client.js"></script>
+  <script src="../ui/resource-client.js"></script>
+  <script src="../ui/session-floating-message-contract.js"></script>
+  <script src="../ui/lifecycle.js"></script>
+  <script src="../shared/sync-event-stream.js"></script>
+  <script src="sidepanel-runtime-input.js"></script>
+  <script src="sidepanel-log.js"></script>
+  <script src="sidepanel-debug.js"></script>
+  <script src="sidepanel-run-state.js"></script>
+  <script src="sidepanel-run-entry.js"></script>
+  <script src="sidepanel-session-snapshot-runtime.js"></script>
+  <script src="sidepanel-session-state-runtime.js"></script>
+  <script src="sidepanel-session-steps-view.js"></script>
+  <script src="sidepanel-session-controller.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

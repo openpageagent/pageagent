@@ -1,0 +1,73 @@
+{
+  "manifest_version": 3,
+  "name": "Page Agent",
+  "version": "1.0.0",
+  "description": "Page Agent，从对话到可复用的产出。",
+  "permissions": [
+    "sidePanel",
+    "tabs",
+    "storage",
+    "scripting",
+    "activeTab",
+    "alarms",
+    "offscreen",
+    "webNavigation",
+    "nativeMessaging",
+    "cookies",
+    "unlimitedStorage",
+    "downloads",
+    "debugger",
+    "proxy",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "incognito": "split",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options/options.html",
+  "sandbox": {
+    "pages": ["sandbox/sandbox.html"]
+  },
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/page-element-position-controller.js", "shared/recording-contract.js", "content/conversation-recorder.js", "content/page-action-visual-feedback.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["settings/system-settings.js", "agent/conversation-protocol.js", "agent/tool-result-projection.js", "ui/runtime-client.js", "ui/image-artifact-client.js", "ui/page-conversation-message-contract.js", "ui/conversation-event-view.js", "ui/conversation-list-view.js", "ui/conversation-shared.js", "shared/sync-event-stream.js", "content/page-conversation-panel.js", "content/page-conversation-entry.js", "content/floating-status.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/icon48.png"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "action": {
+    "default_title": "运行面板",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

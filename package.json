@@ -1,0 +1,21 @@
+{
+  "name": "page-agent",
+  "license": "Apache-2.0",
+  "private": true,
+  "description": "Page Agent",
+  "scripts": {
+    "build:turndown-runtime": "node scripts/build-turndown-runtime.js"
+  },
+  "devDependencies": {
+    "clean-css-cli": "^5.6.3",
+    "esbuild": "0.28.1",
+    "fake-indexeddb": "6.2.4",
+    "terser": "^5.49.0",
+    "zod": "4.4.3"
+  },
+  "dependencies": {
+    "croner": "10.0.1",
+    "turndown": "7.2.4",
+    "turndown-plugin-gfm": "1.0.2"
+  }
+}
