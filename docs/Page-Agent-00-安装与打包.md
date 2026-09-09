@@ -56,12 +56,18 @@ ZIP 解压后得到的目录直接包含 `manifest.json`，可按上面的“直
 
 ## 可选的 MCP Server
 
-需要让外部 MCP 客户端调用扩展，或通过 HTTP webhook 触发 Flow 时，才启动 MCP Server：
+需要让外部 MCP 客户端调用扩展，或通过 HTTP webhook 触发 Flow 时，才启动 MCP Server。使用源码时：
 
 ```bash
 cd mcp-server
 npm install
 npm start
+```
+
+使用 Release ZIP 时，直接在解压后的扩展目录运行：
+
+```bash
+node mcp-server/page-agent-mcp-server.cjs
 ```
 
 默认监听：

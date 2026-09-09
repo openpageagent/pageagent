@@ -59,15 +59,22 @@ Page Agent 的核心路径是：说清楚页面目标，先观测当前页面，
 
 ## 可选 MCP Server
 
-MCP Server 位于 [`mcp-server/`](mcp-server/)，扩展本体不依赖它。它通过 WebSocket 连接扩展，并向 MCP 客户端暴露 `GET`、`POST`、`PUT`、`PATCH`、`DELETE`、`OPTIONS` 六个方法工具。
+MCP Server 源码位于 [`mcp-server/`](mcp-server/)，扩展本体不依赖它。Release ZIP 同时包含可直接运行的 `mcp-server/page-agent-mcp-server.cjs` 单文件包。它通过 WebSocket 连接扩展，并向 MCP 客户端暴露 `GET`、`POST`、`PUT`、`PATCH`、`DELETE`、`OPTIONS` 六个方法工具。
 
+从 Release ZIP 启动：
+
+```bash
+node mcp-server/page-agent-mcp-server.cjs
+```
+
+从源码启动：
 ```bash
 cd mcp-server
 npm install
 npm start
 ```
 
-默认监听 WebSocket `127.0.0.1:9999` 和 HTTP `127.0.0.1:9998`。单文件发布包可用 `npm run build:single` 生成，配置和接口见 [`docs/Page-Agent-11-MCP服务.md`](docs/Page-Agent-11-MCP服务.md)。
+默认监听 WebSocket `127.0.0.1:9999` 和 HTTP `127.0.0.1:9998`。配置和接口见 [`docs/Page-Agent-11-MCP服务.md`](docs/Page-Agent-11-MCP服务.md)。
 
 ## 打包
 
