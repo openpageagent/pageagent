@@ -1,6 +1,6 @@
 {
   "name": "@page-agent/mcp-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "ARP/1 MCP transport for the Page Agent Extension",
   "main": "index.js",
   "bin": {

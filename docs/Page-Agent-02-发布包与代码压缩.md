@@ -41,7 +41,7 @@ page-agent-extension-<version>.zip
 版本号来自 `manifest.json`，必须递增后再提交商店更新：
 
 ```json
-{ "version": "1.0.0" }
+{ "version": "1.0.1" }
 ```
 
 市场审核材料应说明扩展的页面自动化用途、Manifest 权限、用户配置的模型请求和可选 MCP 连接。不要把开发过程记录或内部测试日志放进发布包。

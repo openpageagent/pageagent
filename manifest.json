@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Page Agent",
-  "version": "1.0.0",
-  "description": "Page Agent，从对话到可复用的产出。",
+  "version": "1.0.1",
+  "description": "Page Agent 从对话到可复用的产出",
   "permissions": [
     "sidePanel",
     "tabs",

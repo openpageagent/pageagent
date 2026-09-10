@@ -197,6 +197,7 @@ rsync -a "$ROOT_DIR/" "$STAGING_DIR/" \
   --exclude ".github/" \
   --exclude ".vscode/" \
   --exclude "docs/" \
+  --exclude "assets/readme-demo/" \
   --exclude "CONTRIBUTING.md" \
   --exclude "SECURITY.md" \
   --exclude "README.md" \
