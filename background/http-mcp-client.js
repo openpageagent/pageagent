@@ -147,6 +147,7 @@
         enabled: raw.enabled !== false,
         bearerToken: String(raw.bearerToken || raw.token || '').trim(),
         headersText: String(raw.headersText || '').trim(),
+        useBrowserCookies: raw.useBrowserCookies === true,
         protocolVersion: String(raw.protocolVersion || DEFAULT_PROTOCOL_VERSION).trim() || DEFAULT_PROTOCOL_VERSION,
         timeoutMs: normalizeTimeoutMs(raw.timeoutMs || raw.timeout || DEFAULT_TIMEOUT_MS),
         tools: tools,
@@ -333,6 +334,7 @@
         url: server.url,
         bearerToken: server.bearerToken,
         headersText: server.headersText,
+        useBrowserCookies: server.useBrowserCookies,
         protocolVersion: server.protocolVersion,
       });
     }
@@ -372,8 +374,8 @@
       }
       headers.Accept = options.accept || 'application/json, text/event-stream';
       if (options.method !== 'GET') headers['Content-Type'] = 'application/json';
-      var protocolVersion = session && session.protocolVersion || server.protocolVersion || DEFAULT_PROTOCOL_VERSION;
-      headers['MCP-Protocol-Version'] = protocolVersion;
+      // Initialize negotiates the version in its body; subsequent requests use the agreed version.
+      if (session && session.protocolVersion) headers['MCP-Protocol-Version'] = session.protocolVersion;
       if (session && session.sessionId) headers['MCP-Session-Id'] = session.sessionId;
       return headers;
     }
@@ -563,7 +565,11 @@
       var timer = setTimeout(function () {
         try { controller.abort(new Error('HTTP MCP 请求超时')); } catch (_) { controller.abort(); }
       }, durationMs);
-      init = Object.assign({}, init || {}, { signal: controller.signal });
+      // Browser login cookies participate only when explicitly enabled for this server.
+      init = Object.assign({}, init || {}, {
+        credentials: server.useBrowserCookies === true ? 'include' : 'omit',
+        signal: controller.signal,
+      });
       return fetch(server.url, init).then(function (resp) {
         return consumeResponse(resp);
       }).catch(function (err) {
@@ -598,7 +604,7 @@
         }
         return resp.text().then(function (text) {
           if (!resp.ok && resp.status !== 202) {
-            throw new Error('HTTP MCP 请求失败 HTTP ' + resp.status + ': ' + compactString(text, 600));
+            throw new Error('HTTP MCP 请求失败 [' + (message.method || 'JSON-RPC response') + '] HTTP ' + resp.status + ': ' + compactString(text, 600));
           }
           return {
             result: parseRpcResponse(resp, text, message.id),

@@ -3606,8 +3606,7 @@
       return '<div class="placeholder">正在加载归档内容</div>';
     }
     var allEvents = visibleTopicEvents(topic);
-    /* Event rows are rendered by the virtual list. Only emit a bounded shell
-       here; mapping every loaded event to HTML defeats virtualization. */
+    /* The shared list reconciles event rows after the shell is mounted. */
     return allEvents.length ? '' : '<div class="placeholder">等待对话</div>';
   }
 
@@ -3863,8 +3862,9 @@
       conversationVirtualList = conversationListView.createVirtualList({
         container: stream,
         document: document,
-        estimatedRowHeight: 104,
-        virtualize: true,
+        // Message heights change with content and disclosure state; fixed-height
+        // virtualization can leave spacers inside the visible viewport.
+        virtualize: false,
         disclosureState: eventDisclosureState,
         disclosurePrefix: topicId,
         renderItem: function (event, index) {
@@ -3891,7 +3891,7 @@
     }
     if (placeholder) placeholder.remove();
     conversationVirtualList.setItems(events, {
-      preserveAnchor: !shouldStick && scrollState.preserveScroll !== true,
+      preserveAnchor: !shouldStick,
       stickToEnd: shouldStick,
       scrollTop: !shouldStick && replacingList ? scrollState.scrollTop : undefined,
     });

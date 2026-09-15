@@ -47,6 +47,7 @@
     enabled: { type: 'boolean' },
     bearerToken: { type: 'string', maxLength: 20000 },
     headersText: { type: 'string', maxLength: 50000 },
+    useBrowserCookies: { type: 'boolean', description: '允许携带浏览器登录 Cookie；默认关闭。' },
     timeoutMs: { type: 'integer', minimum: 1000, maximum: 600000 },
     protocolVersion: {
       type: 'string', enum: ['2025-11-25', '2025-06-18'],
@@ -62,6 +63,7 @@
     enabled: SERVER_WRITE_PROPERTIES.enabled,
     bearerToken: SERVER_WRITE_PROPERTIES.bearerToken,
     headersText: SERVER_WRITE_PROPERTIES.headersText,
+    useBrowserCookies: SERVER_WRITE_PROPERTIES.useBrowserCookies,
     timeoutMs: SERVER_WRITE_PROPERTIES.timeoutMs,
     protocolVersion: SERVER_WRITE_PROPERTIES.protocolVersion,
   });
@@ -73,6 +75,7 @@
     properties: {
       id: { type: 'string' }, name: { type: 'string' }, url: { type: 'string' }, enabled: { type: 'boolean' },
       protocolVersion: { type: 'string' }, timeoutMs: { type: 'integer' },
+      useBrowserCookies: { type: 'boolean' },
       syncedAt: { type: 'number' }, lastTestedAt: { type: 'number' }, lastStatus: { type: 'string' }, lastError: { type: 'string' },
       serverInfo: { type: 'object' }, serverInstructions: { type: 'string' }, capabilities: { type: 'object' },
       hasBearerToken: { type: 'boolean' }, hasCustomHeaders: { type: 'boolean' },

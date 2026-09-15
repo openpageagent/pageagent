@@ -1075,6 +1075,34 @@
       var raf = options.requestAnimationFrame || (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function (callback) { return setTimeout(callback, 0); });
       frame = raf(render);
     }
+    function captureVisibleAnchor() {
+      if (!canReconcileRows || typeof container.getBoundingClientRect !== 'function') return null;
+      var viewportTop = container.getBoundingClientRect().top + (container.clientTop || 0);
+      var viewportBottom = viewportTop + container.clientHeight;
+      for (var index = 0; index < rows.children.length; index += 1) {
+        var node = rows.children[index];
+        var rect = node.getBoundingClientRect();
+        if (rect.height > 0 && rect.bottom > viewportTop && rect.top < viewportBottom) {
+          return {
+            key: node.getAttribute('data-conversation-virtual-key'),
+            offset: rect.top - viewportTop,
+          };
+        }
+      }
+      return null;
+    }
+    function restoreVisibleAnchor(anchor) {
+      if (!anchor) return;
+      var viewportTop = container.getBoundingClientRect().top + (container.clientTop || 0);
+      for (var index = 0; index < rows.children.length; index += 1) {
+        var node = rows.children[index];
+        if (node.getAttribute('data-conversation-virtual-key') !== anchor.key) continue;
+        // Correct only the remaining displacement if the browser already anchored.
+        var displacement = node.getBoundingClientRect().top - viewportTop - anchor.offset;
+        if (displacement) container.scrollTop += displacement;
+        break;
+      }
+    }
     function setItems(nextItems, setOptions) {
       setOptions = setOptions || {};
       var updatingAttribute = 'data-conversation-virtual-updating';
@@ -1083,6 +1111,8 @@
       var hadUpdatingAttribute = canMarkUpdating && container.getAttribute(updatingAttribute) !== null;
       if (canMarkUpdating) container.setAttribute(updatingAttribute, 'true');
       try {
+        var visibleAnchor = !virtualize && setOptions.preserveAnchor !== false
+          && setOptions.stickToEnd !== true ? captureVisibleAnchor() : null;
         var previousTop = Number(container.scrollTop) || 0;
         var previousIndex = Math.max(0, Math.floor(previousTop / rowHeight));
         var anchorKey = keyOf(items[previousIndex], previousIndex);
@@ -1109,6 +1139,8 @@
           if (Number.isFinite(nextScrollTop) && nextScrollTop >= 0) {
             container.scrollTop = nextScrollTop;
             render();
+          } else {
+            restoreVisibleAnchor(visibleAnchor);
           }
         }
       } finally {

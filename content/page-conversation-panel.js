@@ -676,8 +676,9 @@
         virtualList = listView.createVirtualList({
           container: messages,
           document: documentRef,
-          estimatedRowHeight: 96,
-          virtualize: true,
+          // Message heights change with content and disclosure state; fixed-height
+          // virtualization can leave spacers inside the visible viewport.
+          virtualize: false,
           disclosureState: eventDisclosureState,
           disclosurePrefix: topicId,
           renderItem: renderMessageEvent,
@@ -700,7 +701,7 @@
       } else {
         if (placeholder) placeholder.remove();
         virtualList.setItems(events, {
-          preserveAnchor: !shouldStick && !preserveScroll,
+          preserveAnchor: !shouldStick,
           stickToEnd: shouldStick,
         });
       }

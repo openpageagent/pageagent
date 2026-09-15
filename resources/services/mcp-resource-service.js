@@ -462,7 +462,7 @@
     function serverInput(value, serverId) {
       value = object(value);
       var output = {};
-      ['id', 'name', 'url', 'enabled', 'bearerToken', 'headersText', 'timeoutMs', 'protocolVersion'].forEach(function (key) {
+      ['id', 'name', 'url', 'enabled', 'bearerToken', 'headersText', 'useBrowserCookies', 'timeoutMs', 'protocolVersion'].forEach(function (key) {
         if (Object.prototype.hasOwnProperty.call(value, key)) output[key] = clone(value[key]);
       });
       if (serverId) output.id = serverId;

@@ -874,6 +874,7 @@
     mcpDraft.enabled = $('#http-mcp-enabled').checked;
     mcpDraft._bearerToken = $('#http-mcp-token').value;
     mcpDraft._headersText = $('#http-mcp-headers').value;
+    mcpDraft.useBrowserCookies = $('#http-mcp-browser-cookies').checked;
     mcpDraft._clearBearerToken = $('#http-mcp-clear-token').checked;
     mcpDraft._clearHeaders = $('#http-mcp-clear-headers').checked;
   }
@@ -897,8 +898,10 @@
       + '<div class="form-row"><label>自定义 Header</label><textarea id="http-mcp-headers" rows="4" placeholder="' + (existing && auth.customHeaderNames && auth.customHeaderNames.length ? '已配置 ' + esc(auth.customHeaderNames.join(', ')) + '；留空保持不变' : 'X-Api-Key: ...') + '">' + esc(item._headersText || '') + '</textarea></div>'
       + '<div class="knowledge-editor-checks">'
       + '<label class="switch-label"><input type="checkbox" id="http-mcp-enabled"' + (item.enabled !== false ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">启用</span></label>'
+      + '<label class="knowledge-check"><input type="checkbox" id="http-mcp-browser-cookies"' + (item.useBrowserCookies === true ? ' checked' : '') + '>使用浏览器登录 Cookie</label>'
       + (existing ? '<label class="knowledge-check"><input type="checkbox" id="http-mcp-clear-token"' + (item._clearBearerToken ? ' checked' : '') + '>清除 Token</label><label class="knowledge-check"><input type="checkbox" id="http-mcp-clear-headers"' + (item._clearHeaders ? ' checked' : '') + '>清除 Header</label>' : '<input type="checkbox" id="http-mcp-clear-token" hidden><input type="checkbox" id="http-mcp-clear-headers" hidden>')
       + '</div>'
+      + '<p class="form-help">Cookie 默认隔离。开启后尝试复用当前浏览器登录态，需服务端支持 Cookie 认证并符合浏览器 Cookie 策略。仅使用 Cookie 时，请清除已保存的 Token 和 Authorization Header。</p>'
       + '<div class="editor-actions"><button class="btn-primary" data-http-mcp-action="save">保存服务器</button><button class="btn-secondary" data-http-mcp-action="cancel">取消</button></div>'
       + '</div>';
   }
@@ -1230,7 +1233,7 @@
   function newMcpServer() {
     mcpDraft = {
       name: '', url: '', timeoutMs: 120000, protocolVersion: '2025-11-25',
-      enabled: true, _bearerToken: '', _headersText: '',
+      enabled: true, useBrowserCookies: false, _bearerToken: '', _headersText: '',
     };
     renderCurrentState(true);
     scrollIntoView('#http-mcp-editor-wrap .knowledge-mcp-editor');
@@ -1253,6 +1256,7 @@
       name: String(mcpDraft.name || '').trim(),
       url: String(mcpDraft.url || '').trim(),
       enabled: mcpDraft.enabled !== false,
+      useBrowserCookies: mcpDraft.useBrowserCookies === true,
       timeoutMs: Math.max(1000, Math.min(600000, Number(mcpDraft.timeoutMs) || 120000)),
       protocolVersion: String(mcpDraft.protocolVersion || '').trim(),
     };
