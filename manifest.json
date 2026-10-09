@@ -1,13 +1,15 @@
 {
   "manifest_version": 3,
+  "minimum_chrome_version": "116",
   "name": "Page Agent",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Page Agent 从对话到可复用的产出",
   "permissions": [
     "sidePanel",
     "tabs",
     "storage",
     "scripting",
+    "declarativeNetRequestWithHostAccess",
     "activeTab",
     "alarms",
     "offscreen",

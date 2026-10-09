@@ -11,6 +11,8 @@
     'background/floating-conversation-wiring.js',
     'background/page-conversation-wiring.js',
     'shared/utils.js',
+    'shared/config-migration.js',
+    'shared/schedule-utils.js',
     'shared/sync-event-stream.js',
     'shared/page-data-contract.js',
     'shared/page-fact-contract.js',
@@ -25,9 +27,12 @@
     'flows/step-registry.js',
     'flows/tab-runtime.js',
     'flows/flow-capabilities.js',
-    'settings/settings-schema.js',
     'settings/model-settings.js',
     'settings/system-settings.js',
+    'settings/mail-settings.js',
+    'background/mail-client.js',
+    'settings/user-agent-profile.js',
+    'background/user-agent-runtime.js',
     'agent/providers/provider-utils.js',
     'agent/providers/provider-sse.js',
     'agent/providers/browser-provider-transport.js',
@@ -93,7 +98,7 @@
     'background/page-resource-cache.js',
     'background/cdp-tools.js',
     'background/page-readiness.js',
-    'background/page-keepalive.js',
+    'background/page-heartbeat.js',
     'background/mcp-tab-access.js',
     'background/session-tab-access.js',
     'background/action-indicator.js',
@@ -147,6 +152,7 @@
     'resources/modules/knowledge-resource.js',
     'resources/modules/agent-configuration-resource.js',
     'resources/modules/connection-resource.js',
+    'resources/modules/local-resource.js',
     'resources/modules/mcp-resource.js',
     'resources/adapters/page-resource-adapter.js',
     'resources/adapters/image-artifact-resource-adapter.js',
@@ -169,6 +175,10 @@
     'agent/agent-bootstrap.js',
     'flows/index.js'
   );
+  globalThis.PageAutomationUserAgent = globalThis.UserAgentRuntime.create(chrome);
+  var mailClient = globalThis.MailClient.create(chrome, function () {
+    return mcpRuntime && mcpRuntime.getClient();
+  });
   var SessionFloatingMessages = globalThis.PageAutomationSessionFloatingMessageContract;
   if (!SessionFloatingMessages || SessionFloatingMessages.API_VERSION !== 1) throw new Error('session/floating message contract 未加载');
   var PageConversationMessages = globalThis.PageAutomationPageConversationMessages;
@@ -454,14 +464,6 @@
   var pageReadiness;
   var actionIndicator;
 
-  // Settings Schema
-  var settingsSchema = SettingsSchema.createSettingsSchema({
-    getRegisteredFlowIds: function () { return flowRegistry.getRegisteredFlowIds(); },
-    getFlowDefinition: function (f) { return flowRegistry.getFlowDefinition(f); },
-    getTargetDefinitions: function (f) { return flowRegistry.getTargetDefinitions(f); },
-    defaultFlowId: flowRegistry.getDefaultFlowId(),
-  });
-
   // Flow Capabilities
   var flowCapabilities = FlowCapabilities.createFlowCapabilities({
     getRegisteredFlowIds: function () { return flowRegistry.getRegisteredFlowIds(); },
@@ -581,6 +583,7 @@
   // Node Executor — 声明式节点的通用执行器，兼任脚本 API 桥后端
   var nodeExecutor = NodeExecutor.createNodeExecutor({
     chrome: chrome,
+    mailClient: mailClient,
     tabRuntime: tabRuntime,
     pageAutomation: pageAutomation,
     addLog: loggingStatus.addLog,
@@ -770,15 +773,6 @@
     getFlowDataset: getFlowDataset,
   });
 
-  var pageKeepAlive = PageKeepAlive.createPageKeepAlive({
-    chrome: chrome,
-    tabRuntime: tabRuntime,
-    sourceRegistry: sourceRegistry,
-    pageAutomation: pageAutomation,
-    isTabClaimedByRunningSession: isTabClaimedByRunningSession,
-    runningSessionForTab: runningSessionForTab,
-  });
-
   function scheduledConversationField(sched, keys) {
     var task = sched && sched.task || {};
     for (var i = 0; i < keys.length; i++) {
@@ -809,6 +803,9 @@
     var serviceId = scheduledConversationServiceId(sched);
     if (!assistantId) return Promise.reject(new Error('缺少绑定助手'));
     if (!message) return Promise.reject(new Error('缺少对话内容'));
+    if (opts.initialContext && Object.keys(opts.initialContext).length) {
+      message += '\n\n定时任务输入参数（JSON）：\n' + JSON.stringify(opts.initialContext, null, 2);
+    }
     var scheduleId = opts.scheduleId || sched.id || '';
     var fireTime = Math.max(0, Math.floor(Number(opts.fireTime) || Date.now()));
     var commandId = 'schedule:' + RUNTIME_SCOPE + ':' + scheduleId + ':' + fireTime;
@@ -838,7 +835,7 @@
             maxModelRequests: Math.max(1, Number(assistant.settings && assistant.settings.maxIterations) || 30),
             maxIterations: Math.max(1, Number(assistant.settings && assistant.settings.maxIterations) || 30),
             maxToolCalls: Math.max(0, Number(assistant.settings && assistant.settings.maxToolCalls) || 100),
-            maxWallTimeMs: Math.max(1000, Number(sched.maxWallTimeMs || sched.task && sched.task.maxWallTimeMs) || 15 * 60 * 1000),
+            maxWallTimeMs: Math.max(0, Number(sched.maxWallTimeMs !== undefined ? sched.maxWallTimeMs : sched.task && sched.task.maxWallTimeMs) || 0),
             maxContextTokens: Math.max(1024, Number(service.maxContextTokens) || 1000000),
             maxOutputTokens: Math.max(1, Number(assistant.settings && assistant.settings.maxTokens) || 4096),
           },
@@ -869,12 +866,19 @@
     return runCommandService;
   }
 
-  // Scheduler — 定时任务与页面自动刷新/保活
+  var pageHeartbeat = PageHeartbeat.createPageHeartbeat({
+    chrome: chrome,
+    pageAutomation: pageAutomation,
+    addLog: loggingStatus.addLog,
+    incognito: INCOGNITO_CONTEXT,
+  });
+
+  // Scheduler — 定时任务与页面会话保活调度
   var scheduler = Scheduler.createScheduler({
     chrome: chrome,
     runtimeScope: RUNTIME_SCOPE,
-    pageAutomation: pageAutomation,
     addLog: loggingStatus.addLog,
+    runPageHeartbeat: pageHeartbeat.run,
     getConfig: function () {
       return Promise.resolve(configReady).then(function () { return configCache; });
     },
@@ -903,10 +907,6 @@
         });
       });
     },
-    getTabId: tabRuntime.getTabId,
-    execPageKeepAlive: function (pageId, page) { return pageKeepAlive.execPageKeepAlive(pageId, page); },
-    syncPageKeepAliveState: function (config) { return pageKeepAlive.syncCdpActivityState(config); },
-    isTabRunning: isTabClaimedByRunningSession,
   });
 
   function startFlowRun(userFlowId, trigger, opts) {
@@ -1353,20 +1353,7 @@
 
   function validateScheduleConfigItem(item) {
     item = item || {};
-    var trigger = Object.assign({}, item.trigger || {});
-    if (!trigger.kind && item.cronExpression) {
-      trigger.kind = 'cron';
-      trigger.expression = item.cronExpression;
-    }
-    if (!trigger.kind) trigger.kind = 'interval';
-    if (trigger.kind === 'daily') {
-      var time = String(trigger.time || '08:00').trim();
-      if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error('每天固定时间必须是 HH:mm');
-    } else if (trigger.kind === 'cron') {
-      scheduler.validateCronExpression(trigger.expression || trigger.cron || item.cronExpression || '');
-    } else if (trigger.kind !== 'interval') {
-      throw new Error('未知触发方式: ' + trigger.kind);
-    }
+    scheduler.validateSchedule(item);
 
     var taskKind = scheduleConfigTaskKind(item);
     if (taskKind === 'conversation') {
@@ -1725,6 +1712,8 @@
   var MCP_CLIENT_ID_STORAGE_KEY = INCOGNITO_CONTEXT ? 'mcpClientIdIncognito' : 'mcpClientId';
   var MCP_CLIENT_NAME_STORAGE_KEY = INCOGNITO_CONTEXT ? 'mcpClientNameIncognito' : 'mcpClientName';
   var MCP_RUN_TAB_MODE_STORAGE_KEY = INCOGNITO_CONTEXT ? 'mcpRunTabModeIncognito' : 'mcpRunTabMode';
+  var MCP_LOCAL_TOOLS_STORAGE_KEY = INCOGNITO_CONTEXT ? 'mcpLocalToolsEnabledIncognito' : 'mcpLocalToolsEnabled';
+  var MCP_LOCAL_DIRECTORY_STORAGE_KEY = INCOGNITO_CONTEXT ? 'mcpLocalWorkingDirectoryIncognito' : 'mcpLocalWorkingDirectory';
   var mcpRunTabMode = DEFAULT_RUN_TAB_MODE;
   chrome.storage.local.get([MCP_RUN_TAB_MODE_STORAGE_KEY], function (res) {
     mcpRunTabMode = normalizeRunTabMode(res && res[MCP_RUN_TAB_MODE_STORAGE_KEY], DEFAULT_RUN_TAB_MODE);
@@ -1901,6 +1890,8 @@
       || changes[MCP_URL_STORAGE_KEY]
       || changes[MCP_CLIENT_ID_STORAGE_KEY]
       || changes[MCP_CLIENT_NAME_STORAGE_KEY]
+      || changes[MCP_LOCAL_TOOLS_STORAGE_KEY]
+      || changes[MCP_LOCAL_DIRECTORY_STORAGE_KEY]
     )) {
       setTimeout(initMCPClient, 0);
     }
@@ -2088,7 +2079,7 @@
     return true;
   }
 
-  // 标签页被关闭：清除所有会话内的映射和保活状态，并停止正在使用该标签页的流程
+  // 标签页被关闭：清除所有会话内的映射和 CDP 连接记录，并停止正在使用该标签页的流程
   chrome.tabs.onRemoved.addListener(function (closedTabId) {
     var expectedFlowClose = cdpSessionManager.consumeExpectedTabClose(closedTabId);
     Object.keys(sessions).forEach(function (id) {
@@ -2098,7 +2089,7 @@
         if (s.tabs[source] === closedTabId) { delete s.tabs[source]; hadTab = true; }
       });
       if (s.boundTabId === closedTabId) { s.boundTabId = 0; hadTab = true; }
-      // 清理保活状态（虽然 debugger 会自动 detach，但显式清理避免 sync 尝试操作无效 tab）
+      // debugger 会自动 detach，同时移除会话内的连接记录。
       if (s.keepAliveTabs && s.keepAliveTabs[closedTabId] !== undefined) {
         if (s.keepAliveLeases && s.keepAliveLeases[closedTabId]) delete s.keepAliveLeases[closedTabId];
         delete s.keepAliveTabs[closedTabId];
@@ -2306,6 +2297,7 @@
     tabRuntime: TabRuntime,
     modelClient: ModelClient,
     nodeExecutor: NodeExecutor,
+    mailClient: mailClient,
     autoRunController: AutoRunController,
     runReport: RunReport,
     sourceRegistry: sourceRegistry,
@@ -2464,6 +2456,8 @@
       MCP_ENABLED_STORAGE_KEY, MCP_URL_STORAGE_KEY,
       MCP_CLIENT_ID_STORAGE_KEY, MCP_CLIENT_NAME_STORAGE_KEY,
       MCP_RUN_TAB_MODE_STORAGE_KEY,
+      MCP_LOCAL_TOOLS_STORAGE_KEY,
+      MCP_LOCAL_DIRECTORY_STORAGE_KEY,
     ];
     return new Promise(function (resolve, reject) {
       chrome.storage.local.get(keys, function (stored) {
@@ -2517,6 +2511,10 @@
         clientId: String(stored[MCP_CLIENT_ID_STORAGE_KEY] || status.clientInfo && status.clientInfo.clientId || ''),
         clientName: String(stored[MCP_CLIENT_NAME_STORAGE_KEY] || status.clientInfo && status.clientInfo.clientName || ''),
         runTabMode: normalizeRunTabMode(stored[MCP_RUN_TAB_MODE_STORAGE_KEY], DEFAULT_RUN_TAB_MODE),
+        localToolsEnabled: stored[MCP_LOCAL_TOOLS_STORAGE_KEY] !== false,
+        localWorkingDirectory: String(stored[MCP_LOCAL_DIRECTORY_STORAGE_KEY]
+          || status.serverInfo && status.serverInfo.workingDirectory || ''),
+        localToolsSupported: !!(connected && status.serverInfo && status.serverInfo.localOperations === 'local/1'),
         state: !enabled ? 'disabled' : (connected ? 'connected' : (connecting ? 'connecting' : 'disconnected')),
         connected: connected,
         connecting: connecting,
@@ -2535,11 +2533,24 @@
       if (String(connectionId || '') !== LOCAL_MCP_CONNECTION_ID) return Promise.resolve(null);
       return readLocalMcpConnection();
     },
-    updateConnection: function (connectionId, input) {
+    updateConnection: async function (connectionId, input) {
       assertLocalMcpConnectionId(connectionId);
       input = input && typeof input === 'object' ? input : {};
       var values = {};
       if (Object.prototype.hasOwnProperty.call(input, 'enabled')) values[MCP_ENABLED_STORAGE_KEY] = input.enabled === true;
+      if (Object.prototype.hasOwnProperty.call(input, 'localToolsEnabled')) values[MCP_LOCAL_TOOLS_STORAGE_KEY] = input.localToolsEnabled === true;
+      if (Object.prototype.hasOwnProperty.call(input, 'localWorkingDirectory') || input.localToolsEnabled === true) {
+        var current = await readLocalMcpConnection();
+        var directory = String(Object.prototype.hasOwnProperty.call(input, 'localWorkingDirectory')
+          ? input.localWorkingDirectory || '' : current.localWorkingDirectory).trim();
+        var localEnabled = Object.prototype.hasOwnProperty.call(input, 'localToolsEnabled')
+          ? input.localToolsEnabled === true : current.localToolsEnabled;
+        if ((!directory && localEnabled) || directory.length > 4096 || directory.indexOf('\0') !== -1
+            || (directory && !/^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(directory))) {
+          throw new Error('本地操作必须配置有效的绝对工作目录；连接服务端后可使用回显的运行目录');
+        }
+        values[MCP_LOCAL_DIRECTORY_STORAGE_KEY] = directory;
+      }
       if (Object.prototype.hasOwnProperty.call(input, 'url')) {
         var url = new URL(String(input.url || ''));
         if (url.protocol !== 'ws:' && url.protocol !== 'wss:') throw new Error('MCP Connection URL must use ws/wss');
@@ -2599,6 +2610,7 @@
     }
     isolatedExecutor = NodeExecutor.createNodeExecutor({
       chrome: chrome,
+      mailClient: mailClient,
       tabRuntime: isolatedTabAccess,
       addLog: addResourceStepLog,
       getConfig: function () { return configCache; },
@@ -2630,7 +2642,7 @@
     var flow = rawFlowId && configCache.flows && configCache.flows[rawFlowId];
     return isolatedExecutor.executeNodeInstance(node, {
       flowId: rawFlowId ? 'user:' + rawFlowId : 'resource:single-step',
-      flowLabel: flow && (flow.label || flow.name) || '资源单步调试',
+      flowLabel: flow && flow.label || '资源单步调试',
       nodeStatuses: {},
       assistantInvocationKind: options.assistantInvocationKind === 'runAssistant'
         ? 'runAssistant' : '',
@@ -2684,6 +2696,34 @@
     rejectConversationMigrationGate = reject;
   });
   conversationMigrationGate.catch(function () {});
+
+  var localOperations = Object.freeze({
+    isAvailable: function () {
+      var client = mcpRuntime && mcpRuntime.getClient();
+      var status = client && client.getStatus();
+      return !!(status && status.connected && status.localToolsEnabled && status.localWorkingDirectory
+        && status.serverInfo && status.serverInfo.localOperations === 'local/1');
+    },
+    execute: async function (operation, input, options) {
+      var stored = await localMcpStorageGet();
+      if (stored[MCP_ENABLED_STORAGE_KEY] !== true || stored[MCP_LOCAL_TOOLS_STORAGE_KEY] === false) {
+        throw AgentResourceProtocol.arpError('FORBIDDEN', '请在连接配置中启用本地文件与命令操作', { performed: 'no' });
+      }
+      if (!localOperations.isAvailable()) {
+        throw AgentResourceProtocol.arpError('TEMPORARILY_UNAVAILABLE', '本地操作需要连接支持该能力的 MCP Server', { performed: 'no' });
+      }
+      var status = mcpRuntime.getClient().getStatus();
+      var directory = String(stored[MCP_LOCAL_DIRECTORY_STORAGE_KEY]
+        || status.serverInfo && status.serverInfo.workingDirectory || '').trim();
+      if (!directory || status.localWorkingDirectory !== directory) {
+        throw AgentResourceProtocol.arpError('TEMPORARILY_UNAVAILABLE', '工作目录正在更新，请稍后再试', { performed: 'no' });
+      }
+      try { return await mcpRuntime.getClient().callLocal(operation, input, options); }
+      catch (error) {
+        throw AgentResourceProtocol.arpError('UPSTREAM_FAILED', error.message, { performed: 'unknown', retryable: false });
+      }
+    },
+  });
 
   function createCanonicalResourceRuntime() {
     var resourceRouter = globalThis.AgentResourceRouter;
@@ -2773,6 +2813,7 @@
       },
       httpMcpManager: httpMcpManager,
       connectionRuntime: localMcpConnectionRuntime,
+      localOperations: localOperations,
       imageArtifactStore: imageArtifactStoreRuntime,
       recordingStore: recordingStoreRuntime,
       recordingProjector: recordingProjectorRuntime,
@@ -2783,7 +2824,12 @@
     resourceOptions.mcpService = globalThis.McpResourceService.create(resourceOptions);
 
     var runtime = resourceRouter.createAgentResourceRouter({
-      authorize: conversationRuntime.authorizeResourceRequest,
+      authorize: function (input) {
+        if (input.route && input.route.root === 'local' && !localOperations.isAvailable()) {
+          return { allowed: false, message: '本地文件与命令操作未启用或服务端不可用' };
+        }
+        return conversationRuntime.authorizeResourceRequest(input);
+      },
       resourceOptions: resourceOptions,
       adapterOptions: {
         page: {
@@ -3730,6 +3776,50 @@
     // offscreen 中继消息：发往 offscreen 的消息由 offscreen.js 处理，background 忽略
     if (message && message.target === 'offscreen') return undefined;
 
+    if (message && /^(?:MAIL_SETTINGS_GET|MAIL_SETTINGS_SAVE|MAIL_ENABLED_SET|MAIL_TEST_SEND|MAIL_STATUS)$/.test(message.type)) {
+      if (!trustedExtensionSender(sender)) {
+        sendResponse({ ok: false, error: '仅扩展页面可以操作邮件配置和测试发送' });
+        return undefined;
+      }
+      Promise.resolve().then(function () {
+        if (message.type === 'MAIL_STATUS') return mailClient.getStatus();
+        if (message.type === 'MAIL_SETTINGS_GET') return mailClient.load();
+        if (message.type === 'MAIL_SETTINGS_SAVE') return mailClient.save(message.payload);
+        if (message.type === 'MAIL_ENABLED_SET') return mailClient.setEnabled(message.payload && message.payload.enabled);
+        var payload = message.payload || {};
+        return mailClient.send(payload.message, { config: payload.config });
+      }).then(function (value) {
+        sendResponse({ ok: true, payload: value });
+      }, function (error) {
+        sendResponse({ ok: false, error: error && error.message || '邮件操作失败' });
+      });
+      return true;
+    }
+
+    if (message && (message.type === 'SYSTEM_SETTINGS_SAVE' || message.type === 'SYSTEM_HTTP_TEXT')) {
+      if (!trustedExtensionSender(sender)) {
+        sendResponse({ ok: false, error: '仅扩展页面可以操作系统 HTTP 配置' });
+        return undefined;
+      }
+      var systemOperation = Promise.resolve().then(async function () {
+        if (message.type === 'SYSTEM_SETTINGS_SAVE') return globalThis.PageAutomationUserAgent.save(message.payload);
+        var url = new URL(String(message.payload && message.payload.url || ''));
+        if (!/^https?:$/.test(url.protocol)) throw new Error('仅支持 HTTP/HTTPS URL');
+        var controller = new AbortController();
+        var timer = setTimeout(function () { controller.abort(); }, 10000);
+        try {
+          var response = await globalThis.PageAutomationUserAgent.fetchSystem(url.href, {
+            signal: controller.signal, cache: 'no-cache', credentials: 'omit',
+          });
+          return { ok: response.ok, status: response.status, data: response.ok ? await response.text() : null };
+        } finally { clearTimeout(timer); }
+      });
+      systemOperation.then(function (value) { sendResponse({ ok: true, payload: value }); }, function (error) {
+        sendResponse({ ok: false, error: error && error.message || String(error) });
+      });
+      return true;
+    }
+
     var recordingMessageResult = conversationRecordingCoordinator.handleMessage(message, sender, sendResponse);
     if (recordingMessageResult.handled) return recordingMessageResult.keepChannel ? true : undefined;
 
@@ -4313,7 +4403,6 @@
     tabRuntime: tabRuntime,
     loggingStatus: loggingStatus,
     autoRunController: autoRunController,
-    settingsSchema: settingsSchema,
     flowCapabilities: flowCapabilities,
     configStore: configStore,
     nodeExecutor: nodeExecutor,

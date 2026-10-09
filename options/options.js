@@ -318,7 +318,7 @@
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
       return Promise.reject(new TypeError(section + ' 资源必须是对象'));
     }
-    var item = clonePlain(input);
+    var item = PageAutomationConfigMigration.cleanItem(section, clonePlain(input));
     var id = String(item.id || '');
     function createResource() {
       return resourceClient.authorizedPost(spec.collectionUri, item, {
@@ -419,7 +419,7 @@
   }
 
   function createFlowResource(item) {
-    item = clonePlain(item || {});
+    item = PageAutomationConfigMigration.cleanItem('flows', clonePlain(item || {}));
     var nodes = (Array.isArray(item.nodes) ? item.nodes : []).map(function (node) {
       return clonePlain(node || {});
     });
@@ -457,6 +457,7 @@
   }
 
   function createFlowGroupResource(item) {
+    item = PageAutomationConfigMigration.cleanItem('flowGroups', clonePlain(item || {}));
     return resourceClient.authorizedPost('/flow-groups', item, {
       criteria: { relation: 'flow-groups' },
     }).then(function (envelope) {
@@ -932,7 +933,7 @@
 
   function runFlow(flowId) {
     var flow = config.flows && config.flows[flowId];
-    var context = buildRuntimeContextFromInputs(flow, '运行流程「' + ((flow && (flow.label || flow.name)) || flowId) + '」');
+    var context = buildRuntimeContextFromInputs(flow, '运行流程「' + ((flow && flow.label) || flowId) + '」');
     if (context === null) return;
     var uri = '/flows/' + resourceSegment(flowId) + '/runs';
     resourceClient.authorizedPost(uri, {
@@ -1083,7 +1084,6 @@
     var group = stripRuntimeMetadata(source);
     group.id = groupId;
     group.label = (group.label || group.name || flowGroupId) + ' (副本)';
-    group.name = group.label;
     group.steps = (group.steps || []).map(function (step) {
       var copy = stripRuntimeMetadata(step);
       var sourceFlowId = normalizeUserFlowId(copy.flowId);
@@ -1184,7 +1184,7 @@
       });
       return item;
     }
-    var flow = remapImportedFlow(stripRuntimeMetadata(bundle.flow));
+    var flow = remapImportedFlow(PageAutomationConfigMigration.cleanItem('flows', stripRuntimeMetadata(bundle.flow)));
     if (config.flows[flow.id]) {
       flow = JSON.parse(JSON.stringify(flow));
       flow.id = '';
@@ -1252,7 +1252,7 @@
 
     Object.keys(bundle.flows || {}).forEach(function (id) {
       if (isBuiltinConfigImport('flows', id, bundle.flows[id])) return;
-      var flow = stripRuntimeMetadata(bundle.flows[id]);
+      var flow = PageAutomationConfigMigration.cleanItem('flows', stripRuntimeMetadata(bundle.flows[id]));
       flow.id = flow.id || id;
       if (config.flows[id]) {
         flow.id = genUniqueConfigId('fl', 'flows', reservedFlows);
@@ -1270,7 +1270,7 @@
       ops.push(['flows', flow]);
     });
 
-    var group = stripRuntimeMetadata(bundle.flowGroup);
+    var group = PageAutomationConfigMigration.cleanItem('flowGroups', stripRuntimeMetadata(bundle.flowGroup));
     group.steps = (group.steps || []).map(function (step) {
       var copy = stripRuntimeMetadata(step);
       var sourceFlowId = normalizeUserFlowId(copy.flowId);
@@ -1289,7 +1289,6 @@
     if (!group.id || config.flowGroups[group.id]) {
       group.id = genUniqueConfigId('fg', 'flowGroups', reservedFlowGroups);
       group.label = (group.label || group.name || '') + ' (导入)';
-      group.name = group.label;
     }
     ops.push(['flowGroups', group]);
 
@@ -1329,11 +1328,15 @@
   function setSystemSettingsControlsDisabled(disabled) {
     var floatingEntry = $('#system-floating-entry-disabled');
     if (floatingEntry) floatingEntry.disabled = !!disabled;
+    var userAgent = $('#system-user-agent');
+    if (userAgent) userAgent.disabled = !!disabled;
   }
 
   function renderSystemSettings() {
     var floatingEntry = $('#system-floating-entry-disabled');
     if (floatingEntry) floatingEntry.checked = systemSettings.floatingEntryDisabled === true;
+    var userAgent = $('#system-user-agent');
+    if (userAgent) userAgent.value = systemSettings.userAgent;
   }
 
   function loadSystemSettings() {
@@ -1349,17 +1352,20 @@
     var floatingEntry = $('#system-floating-entry-disabled');
     var previous = systemSettings;
     var floatingEntryDisabled = !!(floatingEntry && floatingEntry.checked);
+    var userAgent = $('#system-user-agent');
+    var configuredUserAgent = userAgent ? userAgent.value : previous.userAgent;
     systemSettingsSaving = true;
     setSystemSettingsControlsDisabled(true);
-    resourceClient.get('/agent-settings').then(function (envelope) {
-      var currentAgentSettings = resourceData(envelope);
-      if (!currentAgentSettings) throw new Error('Agent Settings 返回无效数据');
-      var next = globalThis.PageAutomationSystemSettings.normalize({
-        floatingEntryDisabled: floatingEntryDisabled,
-      });
-      return globalThis.PageAutomationSystemSettings.save(chrome.storage.local, chrome.runtime, next);
+    var next = globalThis.PageAutomationSystemSettings.normalize({
+      floatingEntryDisabled: floatingEntryDisabled,
+      userAgent: configuredUserAgent,
+    });
+    chrome.runtime.sendMessage({ type: 'SYSTEM_SETTINGS_SAVE', payload: next }).then(function (response) {
+      if (!response || !response.ok) throw new Error(response && response.error || '系统配置保存失败');
+      return response.payload;
     }).then(function (saved) {
       systemSettings = saved;
+      renderSystemSettings();
       toast('系统配置已更新');
     }).catch(function (error) {
       systemSettings = previous;
@@ -1432,6 +1438,8 @@
 
   var floatingEntryToggle = $('#system-floating-entry-disabled');
   if (floatingEntryToggle) floatingEntryToggle.addEventListener('change', saveSystemSettingsFromControls);
+  var systemUserAgentInput = $('#system-user-agent');
+  if (systemUserAgentInput) systemUserAgentInput.addEventListener('change', saveSystemSettingsFromControls);
   loadSystemSettings().catch(function (error) {
     toast('系统配置加载失败: ' + (error && error.message || error), true);
   });
@@ -1508,6 +1516,7 @@
   var mcpSettingsDirty = false;
   var mcpSettingsSaving = false;
   var mcpEnabledUpdating = false;
+  var mcpLocalDirectoryDirty = false;
   var mcpExtensionDir = '';
   var mcpRunTabMode = 'reuseOpenTab';
   var mcpWsPort = 9999;
@@ -1519,6 +1528,9 @@
 
   function updateMcpSaveSettingsButton() {
     $('#mcp-enabled').disabled = mcpSettingsSaving || mcpEnabledUpdating;
+    $('#mcp-local-tools-enabled').disabled = !mcpConnection || mcpSettingsSaving || mcpEnabledUpdating;
+    $('#mcp-local-working-directory').disabled = mcpSettingsSaving || mcpEnabledUpdating;
+    $('#btn-mcp-local-directory-save').disabled = !mcpConnection || !mcpLocalDirectoryDirty || mcpSettingsSaving || mcpEnabledUpdating;
     ['#mcp-url', '#mcp-client-name', '#mcp-run-tab-mode'].forEach(function (selector) {
       $(selector).disabled = mcpEnabled || mcpSettingsSaving || mcpEnabledUpdating;
     });
@@ -1703,6 +1715,12 @@
     mcpClientName = String(connection.clientName || '');
     mcpRunTabMode = normalizeRunTabMode(connection.runTabMode, 'reuseOpenTab');
     $('#mcp-enabled').checked = mcpEnabled;
+    $('#mcp-local-tools-enabled').checked = connection.localToolsEnabled === true;
+    if (!mcpLocalDirectoryDirty) $('#mcp-local-working-directory').value = connection.localWorkingDirectory || '';
+    $('#mcp-local-tools-status').textContent = !connection.localToolsEnabled ? '已关闭'
+      : !connection.connected ? '未连接 MCP Server，暂不可用'
+        : connection.localToolsSupported ? '已就绪'
+          : '等待服务端确认；若持续不可用，请更新服务端并重新连接';
     $('#mcp-client-id').value = mcpClientId || (connection.incognito ? '当前隐私环境尚未生成 ID' : '启用连接后自动生成');
     if (preserveDraft && mcpSettingsDirty) {
       updateMcpSaveSettingsButton();
@@ -1989,6 +2007,53 @@
     });
   });
 
+  $('#mcp-local-tools-enabled').addEventListener('change', function (event) {
+    var enabled = event.target.checked;
+    var directory = $('#mcp-local-working-directory').value.trim();
+    if (enabled && !directory) {
+      event.target.checked = false;
+      toast('开启本地操作必须填写工作目录；请先连接 MCP Server 获取默认目录', true);
+      $('#mcp-local-working-directory').focus();
+      return;
+    }
+    if (enabled && mcpSettingsDirty) {
+      event.target.checked = !!(mcpConnection && mcpConnection.localToolsEnabled);
+      toast('请先保存 MCP 连接设置', true);
+      return;
+    }
+    mcpEnabledUpdating = true;
+    updateMcpSaveSettingsButton();
+    var patch = { localToolsEnabled: enabled };
+    if (enabled) patch.localWorkingDirectory = directory;
+    patchMcpConnection(patch, enabled ? '本地操作已开启' : '本地操作已关闭').then(function () {
+      if (enabled) mcpLocalDirectoryDirty = false;
+    }).catch(function () {
+      event.target.checked = !!(mcpConnection && mcpConnection.localToolsEnabled);
+    }).finally(function () {
+      mcpEnabledUpdating = false;
+      updateMcpSaveSettingsButton();
+    });
+  });
+
+  $('#mcp-local-working-directory').addEventListener('input', function () {
+    mcpLocalDirectoryDirty = true;
+    updateMcpSaveSettingsButton();
+  });
+
+  $('#btn-mcp-local-directory-save').addEventListener('click', function () {
+    var directory = $('#mcp-local-working-directory').value.trim();
+    if (!directory) { toast('工作目录不能为空', true); return; }
+    if (mcpSettingsDirty) { toast('请先保存 MCP 连接设置', true); return; }
+    mcpEnabledUpdating = true;
+    updateMcpSaveSettingsButton();
+    patchMcpConnection({ localWorkingDirectory: directory }, '工作目录已保存').then(function () {
+      mcpLocalDirectoryDirty = false;
+    }).catch(function () {}).finally(function () {
+      mcpEnabledUpdating = false;
+      updateMcpSaveSettingsButton();
+    });
+  });
+
   $('#mcp-url').addEventListener('input', function () {
     markMcpSettingsDirty();
   });
@@ -2103,6 +2168,8 @@
   $('#drawer-overlay').addEventListener('click', handleDrawerCancel);
   $('#drawer-close').addEventListener('click', handleDrawerCancel);
 
+  globalThis.OptionsMailController.init({ openDrawer: openDrawer, lifecycle: lifecycle });
+
   function destroyController(controller) {
     if (!controller || typeof controller.destroy !== 'function') return;
     try {
@@ -2190,6 +2257,8 @@
     window: window,
     $: $,
     esc: esc,
+    openDrawer: openDrawer,
+    closeDrawer: closeDrawer,
     resourceClient: resourceClient,
     getConfig: function () { return config; },
     mutateConfig: mutateConfig,
@@ -2361,6 +2430,7 @@
     renderPagination: renderConfigListPagination,
     nodeTypes: globalThis.NodeTypes,
     toast: toast,
+    copyText: copyText,
     confirm: function (message) { return confirm(message); },
     openDrawer: openDrawer,
     closeDrawer: closeDrawer,

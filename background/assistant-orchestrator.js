@@ -183,7 +183,7 @@
 
     async function waitForTerminal(conversationId, generationId, surface, timeoutMs, stopChecker, signal) {
       stopChecker = typeof stopChecker === 'function' ? stopChecker : throwIfStopped;
-      var deadline = Date.now() + timeoutMs;
+      var deadline = timeoutMs > 0 ? Date.now() + timeoutMs : 0;
       async function ensureRunning() {
         try {
           if (signal && signal.aborted) throw signalError(signal);
@@ -227,14 +227,14 @@
             event: materializedEvent,
           };
         }
-        if (Date.now() >= deadline) {
+        if (deadline && Date.now() >= deadline) {
           var cancelResult = await cancel(conversationId, generationId, surface, 'flow_assistant_timeout');
           var timeoutError = new Error('Assistant generation timed out after ' + timeoutMs + 'ms');
           timeoutError.code = 'ASSISTANT_TIMEOUT';
           throw attachAssistantAudit(timeoutError, conversationId, generationId, cancelResult && cancelResult.state, 'flow_assistant_timeout');
         }
         try {
-          await sleepWithSignal(sleep, Math.min(pollIntervalMs, Math.max(1, deadline - Date.now())), signal);
+          await sleepWithSignal(sleep, deadline ? Math.min(pollIntervalMs, Math.max(1, deadline - Date.now())) : pollIntervalMs, signal);
         } catch (error) {
           if (signal && signal.aborted) {
             var sleepCancel = await cancel(conversationId, generationId, surface, error && error.message || 'flow_assistant_cancelled');
@@ -287,7 +287,7 @@
         throw missingService;
       }
 
-      var timeoutMs = integer(input.timeoutMs, 15 * 60 * 1000, 1000, 24 * 60 * 60 * 1000);
+      var timeoutMs = integer(input.timeoutMs, 0, 0, 24 * 60 * 60 * 1000);
       if (input.signal && input.signal.aborted) throw signalError(input.signal);
       var conversationId = text(input.conversationId) || createId('assistant_flow');
       var commandId = createId('assistant_command');

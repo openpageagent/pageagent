@@ -700,7 +700,9 @@
       }
       var response;
       try {
-        response = await abortable(fetchImpl(sourceUrl, { credentials: 'include', cache: 'force-cache', signal: signal || undefined }), signal);
+        var init = { credentials: 'include', cache: 'force-cache', signal: signal || undefined };
+        response = await abortable(/^https?:/i.test(sourceUrl)
+          ? root.PageAutomationUserAgent.fetchSystem(sourceUrl, init, fetchImpl) : fetchImpl(sourceUrl, init), signal);
       } catch (error) {
         if (signal && signal.aborted) throw cancelledError();
         throw new PageServiceError('MEDIA_SOURCE_UNREADABLE', 'The original media source could not be read by the extension background context');

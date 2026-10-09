@@ -131,9 +131,6 @@
           onFailure: inst.onFailure,
           retries: inst.retries,
           retryDelayMs: inst.retryDelayMs,
-          requiresForeground: inst.requiresForeground === true,
-          foreground: inst.foreground === true,
-          reveal: inst.reveal === true,
           displayOrder: index + 1,
           title: inst.title || (globalThis.NodeTypes ? globalThis.NodeTypes.getTypeLabel(inst.type) : inst.type),
           execute: function (state) {
@@ -193,7 +190,9 @@
       return chrome.scripting.getRegisteredContentScripts().then(function (registered) {
         var staleIds = registered
           .map(function (s) { return s.id; })
-          .filter(function (id) { return id.indexOf(LEGACY_PAGE_SCRIPT_PREFIX) === 0; });
+          .filter(function (id) {
+            return id.indexOf(LEGACY_PAGE_SCRIPT_PREFIX) === 0 || id.indexOf(STEALTH_SCRIPT_PREFIX) === 0;
+          });
         return staleIds.length
           ? chrome.scripting.unregisterContentScripts({ ids: staleIds })
           : Promise.resolve();
@@ -242,46 +241,6 @@
       });
     }
 
-    function syncStealthScripts(config) {
-      if (!chrome.scripting || !chrome.scripting.getRegisteredContentScripts) {
-        return Promise.resolve();
-      }
-      return chrome.scripting.getRegisteredContentScripts().then(function (registered) {
-        var staleIds = registered
-          .map(function (s) { return s.id; })
-          .filter(function (id) { return id.indexOf(STEALTH_SCRIPT_PREFIX) === 0; });
-
-        var unregister = staleIds.length
-          ? chrome.scripting.unregisterContentScripts({ ids: staleIds })
-          : Promise.resolve();
-
-        return unregister.then(function () {
-          var pageIds = Object.keys(config.pages || {});
-          var registrations = [];
-          for (var i = 0; i < pageIds.length; i++) {
-            var page = config.pages[pageIds[i]];
-            if (!page.stealthMode) continue;
-            var matches = buildMatchPatterns(page);
-            if (!matches.length) continue;
-            registrations.push({
-              id: STEALTH_SCRIPT_PREFIX + page.id,
-              matches: matches,
-              js: ['content/stealth-main.js'],
-              world: 'MAIN',
-              runAt: 'document_start',
-              persistAcrossSessions: true,
-            });
-          }
-          if (!registrations.length) return;
-          return chrome.scripting.registerContentScripts(registrations).catch(function (err) {
-            addLog('注册页面环境补丁失败: ' + err.message, { level: 'warn' });
-          });
-        });
-      }).catch(function (err) {
-        addLog('同步页面环境补丁失败: ' + err.message, { level: 'warn' });
-      });
-    }
-
     // --- 总入口 ---
 
     function reload(config) {
@@ -291,8 +250,6 @@
       addLog('动态配置已加载: ' + pageCount + ' 个页面, ' + flowCount + ' 个流程');
       return removeLegacyPageScripts().then(function () {
         return syncNetCapture(config);
-      }).then(function () {
-        return syncStealthScripts(config);
       });
     }
 
@@ -301,7 +258,6 @@
       reload: reload,
       removeLegacyPageScripts: removeLegacyPageScripts,
       syncNetCapture: syncNetCapture,
-      syncStealthScripts: syncStealthScripts,
     };
   }
 

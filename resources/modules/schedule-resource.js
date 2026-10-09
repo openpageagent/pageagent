@@ -18,18 +18,38 @@
     runs: '/schedules/{scheduleId}/runs',
   });
   var OBJECT = Object.freeze({ type: 'object' });
+  var TIME_SCHEMA = Object.freeze({ type: 'string', minLength: 5, maxLength: 5, pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$', description: '浏览器本地时区，24 小时制 HH:mm' });
+  var TIMES_SCHEMA = Object.freeze({ type: 'array', items: TIME_SCHEMA, minItems: 1, maxItems: 1440 });
+  var DATES_SCHEMA = Object.freeze({ type: 'array', items: { type: 'string', pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' }, minItems: 1, maxItems: 366 });
+  var DAY_FILTER_SCHEMA = Object.freeze({ type: 'string', enum: ['all', 'workday', 'holiday', 'restday'], description: '按所选日历筛选；holiday 仅节假日，restday 含周末休息日' });
+  var CALENDAR_SCHEMA = Object.freeze({
+    type: 'object', properties: {
+      mode: { type: 'string', enum: ['cn', 'publicHolidays', 'weekdays'], description: 'Apple iCloud 中国大陆含调休、国外全国公众假日、仅周一至周五；默认 cn' },
+      countryCode: { type: 'string', pattern: '^[A-Z]{2}$', description: 'publicHolidays 模式必填，如 US、GB、DE、FR' },
+      days: { type: 'array', minItems: 1, maxItems: 366, description: '配置时获取并保存的日历快照；运行期间不请求公开接口', items: {
+        type: 'object', properties: {
+          date: { type: 'string', pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' },
+          isWorkday: { type: 'boolean' }, isRestDay: { type: 'boolean' }, isWeekend: { type: 'boolean' },
+          isHoliday: { anyOf: [{ type: 'boolean' }, { type: 'null' }], description: 'weekdays 模式为 null' },
+          mode: { type: 'string', enum: ['cn', 'publicHolidays', 'weekdays'] },
+          countryCode: { type: 'string', pattern: '^[A-Z]{2}$' }, name: { type: 'string' }, source: { type: 'string' },
+        }, required: ['date', 'isWorkday', 'isRestDay', 'isHoliday', 'mode'], additionalProperties: false,
+      } },
+    }, additionalProperties: false,
+  });
   var TRIGGER_SCHEMA = Object.freeze({
     oneOf: [
-      { type: 'object', properties: { kind: { const: 'interval' }, minutes: { type: 'integer', minimum: 1 } }, required: ['kind', 'minutes'], additionalProperties: false },
-      { type: 'object', properties: { kind: { const: 'daily' }, time: { type: 'string', minLength: 5, maxLength: 5, pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$', description: '24 小时制 HH:mm' } }, required: ['kind', 'time'], additionalProperties: false },
-      { type: 'object', properties: { kind: { const: 'cron' }, expression: { type: 'string', minLength: 1, maxLength: 1000 } }, required: ['kind', 'expression'], additionalProperties: false },
+      { type: 'object', properties: { kind: { const: 'interval' }, minutes: { type: 'integer', minimum: 1 }, dayFilter: DAY_FILTER_SCHEMA }, required: ['kind', 'minutes'], additionalProperties: false },
+      { type: 'object', properties: { kind: { const: 'daily' }, time: TIME_SCHEMA, times: TIMES_SCHEMA, dayFilter: DAY_FILTER_SCHEMA }, required: ['kind'], anyOf: [{ required: ['time'] }, { required: ['times'] }], additionalProperties: false },
+      { type: 'object', properties: { kind: { const: 'dates' }, dates: DATES_SCHEMA, times: TIMES_SCHEMA, dayFilter: DAY_FILTER_SCHEMA }, required: ['kind', 'dates', 'times'], additionalProperties: false },
+      { type: 'object', properties: { kind: { const: 'cron' }, expression: { type: 'string', minLength: 1, maxLength: 1000 }, dayFilter: DAY_FILTER_SCHEMA }, required: ['kind', 'expression'], additionalProperties: false },
     ],
   });
   var TRIGGER_PATCH_SCHEMA = Object.freeze({
     type: 'object',
     properties: {
-      kind: { type: 'string', enum: ['interval', 'daily', 'cron'] }, minutes: { type: 'integer', minimum: 1 },
-      time: { type: 'string', minLength: 5, maxLength: 5, pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$', description: '24 小时制 HH:mm' },
+      kind: { type: 'string', enum: ['interval', 'daily', 'dates', 'cron'] }, minutes: { type: 'integer', minimum: 1 },
+      time: TIME_SCHEMA, times: TIMES_SCHEMA, dates: DATES_SCHEMA, dayFilter: DAY_FILTER_SCHEMA,
       expression: { type: 'string', minLength: 1, maxLength: 1000 },
     },
     minProperties: 1, additionalProperties: false,
@@ -52,6 +72,9 @@
     taskType: { type: 'string', enum: ['flow', 'flowGroup', 'conversation'] },
     flowId: { type: 'string', maxLength: 240 }, flowGroupId: { type: 'string', maxLength: 240 },
     assistantId: { type: 'string', maxLength: 240 }, message: { type: 'string', maxLength: 200000 },
+    context: { type: 'object', description: '每次运行的输入参数；流程/流程组使用初始上下文，对话附加 JSON 内容' },
+    calendar: CALENDAR_SCHEMA,
+    includeCalendar: { type: 'boolean', description: '将已保存的日历信息放入 context.calendar；日期筛选启用时自动传入，不联网' },
     trigger: TRIGGER_SCHEMA,
   });
   function scheduleSchema(taskType, requiredProperties) {
@@ -83,6 +106,9 @@
       taskType: SCHEDULE_PROPERTIES.taskType, flowId: SCHEDULE_PROPERTIES.flowId,
       flowGroupId: SCHEDULE_PROPERTIES.flowGroupId, assistantId: SCHEDULE_PROPERTIES.assistantId,
       message: SCHEDULE_PROPERTIES.message, trigger: TRIGGER_PATCH_SCHEMA,
+      context: SCHEDULE_PROPERTIES.context,
+      calendar: { anyOf: [CALENDAR_SCHEMA, { type: 'null' }], description: '设为 null 可删除已保存的日历配置' },
+      includeCalendar: SCHEDULE_PROPERTIES.includeCalendar,
     },
     minProperties: 1, additionalProperties: false,
   });
@@ -140,6 +166,7 @@
         relation: 'schedule-runs', summary: '创建一个异步 Schedule Run',
         guidance: [
           '本次运行的 trigger 与 entry 由 Schedule 决定，请求不接受这两个字段。',
+          '立即运行不受日期筛选约束；继承 Schedule 的 context，本次请求的同名输入参数优先。启用日历时从已保存的日历注入当日 calendar，不联网。',
           'taskType=conversation 的 Schedule 当前只按定时触发执行，不支持通过本路由立即运行。',
         ],
       }),

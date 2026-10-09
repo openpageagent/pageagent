@@ -757,9 +757,9 @@
             parentSignal.addEventListener('abort', forwardAbort, { once: true });
           }
           var timer = setTimeout(function () { controller.abort(); }, timeoutMs);
-          return Promise.resolve().then(function () {
-            return fetchImpl(url, { credentials: 'include', redirect: 'follow', signal: controller.signal });
-          }).then(function (response) {
+          return globalThis.PageAutomationUserAgent.fetchSystem(url, {
+            credentials: 'include', redirect: 'follow', signal: controller.signal,
+          }, fetchImpl).then(function (response) {
             if (!response || !response.ok) throw new Error('HTTP ' + (response && response.status || 0));
             return response.text().then(function (text) {
               return { text: text, finalUrl: response.url || url, acquisitionSource: 'network-download' };

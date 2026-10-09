@@ -76,7 +76,7 @@
     html += '<div class="tree-row" style="padding-left: ' + (depth * 16) + 'px;" data-tree-row'
       + (expandable ? ' data-tree-path="' + escapeHtml(variablePathKey(path)) + '"' : '') + '>';
     if (expandable) {
-      html += '<button type="button" class="tree-toggle" data-tree-toggle aria-expanded="' + (expanded ? 'true' : 'false') + '">' + (expanded ? '▼' : '▶') + '</button>';
+      html += '<button type="button" class="tree-toggle" data-tree-toggle aria-label="展开或收起 ' + escapeHtml(key) + '" aria-expanded="' + (expanded ? 'true' : 'false') + '"></button>';
     } else {
       html += '<span class="tree-toggle placeholder"></span>';
     }
@@ -125,6 +125,8 @@
     var requestRevision = 0;
     var variableExpansionRunId = '';
     var variableExpansionState = Object.create(null);
+    var traceExpansionRunId = '';
+    var traceExpansionState = Object.create(null);
     var initialized = false;
     var destroyed = false;
     var unbind = [];
@@ -203,8 +205,11 @@
       contentViewer.textContent = stringifyDebugValue(last);
     }
 
-    function renderDebugTrace(trace) {
+    function renderDebugTrace(trace, runId) {
       if (!traceTimeline) return;
+      var previousExpansionState = traceExpansionRunId === runId ? traceExpansionState : Object.create(null);
+      traceExpansionRunId = runId;
+      traceExpansionState = Object.create(null);
       if (!Array.isArray(trace) || !trace.length) {
         setEmpty(traceTimeline, '无追踪记录');
         return;
@@ -212,8 +217,13 @@
       var html = '';
       for (var i = 0; i < trace.length; i++) {
         var record = trace[i] || {};
+        // 旧记录会被淘汰，按执行实例保留展开状态，避免列表下标变化导致错位。
+        var recordId = String(record.executionInstanceId || '');
+        var expanded = recordId && previousExpansionState[recordId] === true;
+        if (expanded) traceExpansionState[recordId] = true;
         var statusIcon = record.status === 'completed' ? '✓' : '✗';
-        html += '<div class="trace-item collapsed' + (record.status === 'failed' ? ' failed' : '') + '">';
+        html += '<div class="trace-item' + (expanded ? '' : ' collapsed')
+          + (record.status === 'failed' ? ' failed' : '') + '" data-trace-id="' + escapeHtml(recordId) + '">';
         html += '<div class="trace-header"><span class="trace-node-info">[节点' + (i + 1) + ': '
           + escapeHtml(record.nodeTitle || record.nodeId) + '] ' + statusIcon + '</span>';
         html += '<span class="trace-time">' + escapeHtml(record.executionTime) + 'ms</span></div>';
@@ -272,7 +282,7 @@
     function loadDebugTrace(request) {
       return sendMessage('GET_DEBUG_TRACE', { runId: request.runId }).then(function (response) {
         if (!requestIsCurrent(request)) return;
-        if (response && response.ok && response.payload) renderDebugTrace(response.payload);
+        if (response && response.ok && response.payload) renderDebugTrace(response.payload, request.runId);
         else setEmpty(traceTimeline, isTransportFailure(response) ? '加载失败' : '无追踪数据');
       }, function () {
         if (requestIsCurrent(request)) setEmpty(traceTimeline, '加载失败');
@@ -371,7 +381,6 @@
       var expanded = !item.classList.contains('collapsed');
       var path = row.getAttribute('data-tree-path');
       if (path) variableExpansionState[path] = expanded;
-      toggle.textContent = expanded ? '▼' : '▶';
       toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
       event.preventDefault();
       event.stopPropagation();
@@ -379,7 +388,11 @@
 
     function onTraceClick(event) {
       var header = event.target && event.target.closest ? event.target.closest('.trace-header') : null;
-      if (header && traceTimeline.contains(header) && header.parentElement) header.parentElement.classList.toggle('collapsed');
+      if (!header || !traceTimeline.contains(header) || !header.parentElement) return;
+      var item = header.parentElement;
+      item.classList.toggle('collapsed');
+      var recordId = item.getAttribute('data-trace-id');
+      if (recordId) traceExpansionState[recordId] = !item.classList.contains('collapsed');
     }
 
     function init() {

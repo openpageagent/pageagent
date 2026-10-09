@@ -15,10 +15,12 @@
 
   var lifecycleApi = root && root.PageAutomationLifecycle;
   if (commonJs && !lifecycleApi) lifecycleApi = require('../ui/lifecycle.js');
-  var api = factory(lifecycleApi);
+  var mailSettings = commonJs ? require('../settings/mail-settings.js') : root.PageAutomationMailSettings;
+  var configMigration = commonJs ? require('../shared/config-migration.js') : root.PageAutomationConfigMigration;
+  var api = factory(lifecycleApi, mailSettings, configMigration);
   if (commonJs) module.exports = api;
   if (root) root.OptionsFlowController = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (LifecycleApi) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (LifecycleApi, MailSettings, ConfigMigration) {
   'use strict';
 
   function requireFunction(value, name) {
@@ -175,6 +177,8 @@
     var generateConfigId = requireFunction(options.generateConfigId, 'generateConfigId');
     var downloadFile = requireFunction(options.downloadFile, 'downloadFile');
     var scrollOpenedEditor = requireFunction(options.scrollOpenedEditor, 'scrollOpenedEditor');
+    var openDrawer = requireFunction(options.openDrawer, 'openDrawer');
+    var closeDrawer = requireFunction(options.closeDrawer, 'closeDrawer');
     var toastImpl = requireFunction(options.toast, 'toast');
     var confirmAction = requireFunction(options.confirm, 'confirm');
     var isActive = requireFunction(options.isActive, 'isActive');
@@ -310,9 +314,8 @@
       var inputExample = editorElement('flow-input-example');
       var runTabMode = editorElement('flow-run-tab-mode');
       var dataset = editorElement('flow-dataset');
-      var cdpKeepAlive = editorElement('flow-cdp-keepalive');
       if (!label || !description || !inputDescription || !outputDescription || !inputExample
-          || !runTabMode || !dataset || !cdpKeepAlive) return null;
+          || !runTabMode || !dataset) return null;
       return {
         label: String(label.value || '').trim(),
         description: String(description.value || '').trim(),
@@ -321,8 +324,6 @@
         inputExample: String(inputExample.value || '').trim(),
         runTabMode: normalizeRunTabMode(runTabMode.value),
         dataset: String(dataset.value || '').trim(),
-        allowCdpKeepAlive: !!cdpKeepAlive.checked,
-        disableKeepAlive: !cdpKeepAlive.checked,
       };
     }
 
@@ -341,10 +342,6 @@
         next.inputExample = editorData.inputExample;
         next.runTabMode = editorData.runTabMode;
         next.dataset = editorData.dataset;
-        next.allowCdpKeepAlive = editorData.allowCdpKeepAlive;
-        next.disableKeepAlive = editorData.disableKeepAlive;
-        delete next.inputs;
-        delete next.outputs;
         draft = next;
         draftRevision++;
         draftFormSignature = signature;
@@ -455,11 +452,6 @@
         + '<div class="form-help">控制本流程打开页面时使用哪个标签。流程组步骤可单独覆盖该设置。</div></div>'
         + '<div class="form-row form-row-spaced"><label>数据集（可选，JSON 数组；每组数据跑一遍流程，节点参数用 {{data.字段}} 引用）</label>'
         + '<textarea id="flow-dataset" rows="3" placeholder=\'[{"user":"alice","pwd":"123"},{"user":"bob","pwd":"456"}]\'' + (readonly ? ' disabled' : '') + '>' + esc(ownDataValue(flow, 'dataset') || '') + '</textarea></div>'
-        + '<div class="form-row form-row-spaced"><label class="switch-label">'
-        + '<input type="checkbox" id="flow-cdp-keepalive"' + (ownDataValue(flow, 'allowCdpKeepAlive') === true && ownDataValue(flow, 'disableKeepAlive') !== true ? ' checked' : '') + (readonly ? ' disabled' : '') + '>'
-        + '<span class="switch-slider"></span>'
-        + '<span class="switch-text">启用 CDP 防节流保活（可检测）</span></label>'
-        + '<small>后台稳定模式：运行期间保持 CDP 调试器附加，只激活目标 tab，不主动聚焦浏览器窗口；意外断线会立即重接并重试当前命令。敏感页面可能检测到 DevTools 侧效应</small></div>'
         + '<div class="node-list" id="node-list-container">'
         + (nodes.length ? nodes.map(function (node, index) {
           return nodeCardHtml(node, index, nodes.length, nodes, readonly);
@@ -469,11 +461,13 @@
         + (readonly
           ? '<button class="btn-primary" disabled title="内置流程不能直接修改，请先复制">保存流程</button>'
             + '<button class="btn-primary" data-action="run-flow" data-id="' + esc(id) + '">运行</button>'
+            + '<button class="btn-secondary" data-action="open-flow-notification">流程通知</button>'
             + '<button class="btn-secondary" data-action="validate-flow" data-id="' + esc(id) + '">校验</button>'
             + '<button class="btn-secondary" disabled title="内置流程不支持导出，请先复制为用户流程">导出</button>'
             + '<button class="btn-secondary" data-action="copy-flow" data-id="' + esc(id) + '">复制为用户流程</button>'
             + '<button class="btn-secondary" data-action="cancel-flow">关闭</button>'
           : '<button class="btn-primary" data-action="save-flow">保存流程</button>'
+            + '<button class="btn-secondary" data-action="open-flow-notification">流程通知</button>'
             + (id ? '<button class="btn-secondary" data-action="validate-flow" data-id="' + esc(id) + '">校验</button>' : '')
             + '<button class="btn-secondary" data-action="cancel-flow">取消</button>')
         + '<span class="spacer"></span>'
@@ -491,6 +485,70 @@
       return { ok: true, draftOpen: true, readonly: readonly };
     }
 
+    function openNotificationDrawer() {
+      if (destroyed || !draft) return;
+      syncDraftFromEditor({ markDirty: false });
+      var readonly = draftIsReadOnly();
+      var mailNotification = ownDataValue(draft, 'mailNotification') || {};
+      var revision = draftRevision;
+      $('#drawer-title').textContent = '流程通知';
+      $('#drawer-content').innerHTML = '<form id="flow-mail-form">'
+        + '<div class="form-row"><div class="form-help">所有轮次结束后，按最终结果发送一封邮件；主动停止和单节点调试不发送。使用「连接配置 → 邮件通知」中的发件账户，发送时需连接 MCP Server。发送失败会记录日志，不影响流程结果。</div></div>'
+        + '<div class="form-row form-grid">'
+        + '<label class="switch-label"><input type="checkbox" id="flow-mail-success"' + (mailNotification.onSuccess === true ? ' checked' : '') + (readonly ? ' disabled' : '') + '>'
+        + '<span class="switch-slider"></span><span class="switch-text">成功时通知</span></label>'
+        + '<label class="switch-label"><input type="checkbox" id="flow-mail-failure"' + (mailNotification.onFailure === true ? ' checked' : '') + (readonly ? ' disabled' : '') + '>'
+        + '<span class="switch-slider"></span><span class="switch-text">失败时通知</span></label></div>'
+        + '<div class="form-row form-row-spaced"><label for="flow-mail-to">通知收件人</label>'
+        + '<input type="text" id="flow-mail-to" maxlength="26000" value="' + esc(mailNotification.to || '') + '" placeholder="ops@example.com, owner@example.com"' + (readonly ? ' disabled' : '') + '>'
+        + '<div class="form-help">启用通知时填写固定邮箱，多个地址用逗号、分号或空格分隔，最多 100 个。</div></div>'
+        + '<div class="form-row form-row-spaced"><label for="flow-mail-subject">邮件主题</label>'
+        + '<input type="text" id="flow-mail-subject" maxlength="998" value="' + esc(mailNotification.subject === undefined ? MailSettings.FLOW_NOTIFICATION_DEFAULTS.subject : mailNotification.subject) + '"' + (readonly ? ' disabled' : '') + '>'
+        + '<div class="form-help">可修改默认主题，支持流程变量，如 {{input.名称}}、{{notification.flowLabel}}（流程名称）、{{notification.statusLabel}}（成功／失败）。</div></div>'
+        + '<div class="form-row form-row-spaced"><label for="flow-mail-body">邮件正文（纯文本）</label>'
+        + '<textarea id="flow-mail-body" rows="10" maxlength="1048576"' + (readonly ? ' disabled' : '') + '>' + esc(mailNotification.body === undefined ? MailSettings.FLOW_NOTIFICATION_DEFAULTS.body : mailNotification.body) + '</textarea>'
+        + '<div class="form-help">可直接修改默认正文。用 {{input.字段}} 引用入参、{{变量名}} 引用节点输出、{{json 变量名}} 插入 JSON；{{notification.error}} 为失败原因。变量取流程结束时的值，多轮运行取最后一轮，未生成的变量为空。notification 为通知专用变量。</div></div>'
+        + (readonly ? '<p class="form-help">内置流程需复制为用户流程后修改。</p>' : '')
+        + '</form>';
+      $('#drawer-actions').innerHTML = '<button type="button" class="btn-secondary" data-action="cancel-drawer">' + (readonly ? '关闭' : '取消') + '</button>'
+        + (readonly ? '' : '<button type="submit" form="flow-mail-form" class="btn-primary">确定</button>');
+      var form = $('#flow-mail-form');
+      function readNotificationForm() {
+        return {
+          onSuccess: form.querySelector('#flow-mail-success').checked,
+          onFailure: form.querySelector('#flow-mail-failure').checked,
+          to: form.querySelector('#flow-mail-to').value.trim(),
+          subject: form.querySelector('#flow-mail-subject').value,
+          body: form.querySelector('#flow-mail-body').value,
+        };
+      }
+      var initialSignature = dataSignature(readNotificationForm());
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        if (destroyed || !ensureEditable()) return;
+        if (revision !== draftRevision) {
+          toast('流程已更新，请重新打开通知配置', true);
+          return;
+        }
+        try {
+          var notification = readNotificationForm();
+          if (dataSignature(notification) === initialSignature) {
+            closeDrawer();
+            return;
+          }
+          notification = MailSettings.validateFlowNotification(notification);
+          draft.mailNotification = notification;
+          dirty = true;
+          draftRevision++;
+          closeDrawer();
+          toast('通知配置已修改，请点击「保存流程」');
+        } catch (error) {
+          toast(errorText(error, '通知配置无效'), true);
+        }
+      });
+      openDrawer();
+    }
+
     function confirmDiscard() {
       if (!draft || !dirty) return true;
       if (!confirmAction('当前流程有未保存的修改，确定丢弃吗？\n（点「取消」可回去点击「保存流程」）')) return false;
@@ -506,8 +564,6 @@
         label: '',
         nodes: [],
         runTabMode: 'reuseOpenTab',
-        allowCdpKeepAlive: false,
-        disableKeepAlive: true,
       };
       dirty = false;
       draftPendingId = '';
@@ -649,7 +705,7 @@
     }
 
     function flowMetadata(item) {
-      var metadata = stripRuntimeMetadata(item || {});
+      var metadata = ConfigMigration.cleanItem('flows', stripRuntimeMetadata(item || {}));
       delete metadata.nodes;
       delete metadata.createdAt;
       delete metadata.updatedAt;
@@ -658,7 +714,7 @@
 
     function normalizedNodes(nodes) {
       return (Array.isArray(nodes) ? nodes : []).map(function (node, index) {
-        var next = stripRuntimeMetadata(node);
+        var next = ConfigMigration.cleanNode(stripRuntimeMetadata(node));
         next.displayOrder = index + 1;
         return next;
       });
@@ -722,6 +778,9 @@
       }
       var errors;
       try {
+        if (item.mailNotification !== undefined) {
+          item.mailNotification = MailSettings.validateFlowNotification(item.mailNotification);
+        }
         errors = validateFlowNodes(nodes);
       } catch (error) {
         return validationFailure('无法校验流程: ' + errorText(error, '节点数据无效'));
@@ -1201,6 +1260,10 @@
     }
 
     function handleAction(action, flowId, event) {
+      if (action === 'open-flow-notification') {
+        openNotificationDrawer();
+        return true;
+      }
       if (action === 'edit-flow') {
         openById(flowId);
         return true;

@@ -726,11 +726,12 @@
 
       return loop().then(function () {
         running = false;
-        onRunComplete({ sessionId: sessionId, flowId: flowId, summaries: summaries, stopped: stopRequested, totalRuns: totalRuns });
+        return onRunComplete({ sessionId: sessionId, flowId: flowId, summaries: summaries, stopped: stopRequested, totalRuns: totalRuns });
       }, function (err) {
         running = false;
-        onRunComplete({ sessionId: sessionId, flowId: flowId, summaries: summaries, stopped: stopRequested, totalRuns: totalRuns, error: getErrorMessage(err) });
-        throw err;
+        return Promise.resolve(onRunComplete({ sessionId: sessionId, flowId: flowId, summaries: summaries, stopped: stopRequested, totalRuns: totalRuns, error: getErrorMessage(err) })).then(function () {
+          throw err;
+        });
       });
     }
 

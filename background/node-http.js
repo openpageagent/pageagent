@@ -137,7 +137,7 @@
         }
       }
 
-      return abortable(Promise.resolve().then(function () { return fetch(requestUrl, init); }), parentSignal).then(function (response) {
+      return abortable(globalThis.PageAutomationUserAgent.fetchSystem(requestUrl, init), parentSignal).then(function (response) {
         return abortable(response.text(), parentSignal).then(function (text) {
           var body = text.slice(0, maxBodyLength);
           var json = null;

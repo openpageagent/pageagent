@@ -21,11 +21,10 @@
     requireFunction(value[method], name + '.' + method);
   }
 
-  function configuredSessionCdpKeepAlive(flowId, deps) {
-    var rawId = String(flowId || '').replace(/^user:/, '');
+  function configuredMailNotification(flowId, deps) {
     var config = deps.getConfig() || {};
-    var flow = config.flows && config.flows[rawId];
-    return !!(flow && flow.allowCdpKeepAlive === true && flow.disableKeepAlive !== true);
+    var flow = config.flows && config.flows[String(flowId || '').replace(/^user:/, '')];
+    return copyOwnData(flow && flow.mailNotification);
   }
 
   function copyOwnData(value, seen) {
@@ -87,14 +86,6 @@
     this.error = '';
     this.trigger = options.trigger || 'manual';
     this.entry = deps.normalizeEntry(options.entry, this.trigger);
-    this.forceCdpKeepAlive = options.forceCdpKeepAlive === true
-      || String(this.trigger).indexOf('schedule:') === 0
-      || this.entry === 'schedule';
-    this.sessionCdpKeepAlive = this.forceCdpKeepAlive || (
-      Object.prototype.hasOwnProperty.call(options, 'sessionCdpKeepAlive')
-        ? options.sessionCdpKeepAlive === true
-        : configuredSessionCdpKeepAlive(flowId, deps)
-    );
     this.assistantInvocationKind = options.assistantInvocationKind === 'runAssistant'
       ? 'runAssistant' : '';
     this.parentRunId = options.parentRunId || '';
@@ -118,6 +109,7 @@
     this.keepAliveTabs = {};
     this.proxyConfigs = {};
     this.tabs = {};
+    this.createdTabs = {};
     this.tabUsage = {};
     this.tabEvents = [];
     this.waitingTabs = {};
@@ -137,11 +129,14 @@
 
   RunSession.prototype._beginRunGeneration = function () {
     var generation = ++this._runGeneration;
+    this.createdTabs = {};
     this._runAbortController = new AbortController();
     var resolveCompletion;
     var rejectCompletion;
     var entry = {
       generation: generation,
+      mailNotification: configuredMailNotification(this.flowId, this._deps),
+      notificationStarted: false,
       operation: Promise.resolve({ ok: true }),
       completion: new Promise(function (resolve, reject) {
         resolveCompletion = resolve;
@@ -224,9 +219,6 @@
       matchesSourceUrlFamily: function (source, url) { return deps.sourceRegistry.matchesSourceUrlFamily(source, url); },
       isRetryableTransportError: function (error) { return deps.loggingStatus.isRetryableTransportError(error); },
       getPageAutomation: function () { return deps.pageAutomation; },
-      getCdpKeepAliveState: function (tabId) {
-        return session.keepAliveTabs && session.keepAliveTabs[tabId] || '';
-      },
       throwIfStopped: function () {
         if (session.controller && session.controller.isRunning()) session.controller.throwIfStopped();
       },
@@ -235,6 +227,7 @@
     var sessionModelClient = deps.modelClient.createModelClient({ chrome: deps.chrome, addLog: session.addLog });
     var executor = deps.nodeExecutor.createNodeExecutor({
       chrome: deps.chrome,
+      mailClient: deps.mailClient,
       tabRuntime: tabAccess,
       addLog: session.addLog,
       getConfig: deps.getConfig,
@@ -298,7 +291,7 @@
       broadcast: function (message) { session._broadcastControllerMessage(message); },
       sleep: deps.sleep,
       onRunStart: function (info) { session._onRunStart(info); },
-      onRunComplete: function (info) { session._onRunComplete(info); },
+      onRunComplete: function (info) { return session._onRunComplete(info); },
       onRoundReset: function () { session._onRoundReset(); },
       getLoopStack: function () { return executor.getLoopStack(); },
       getCtx: function () { return executor.getCtx(); },
@@ -395,7 +388,45 @@
     deps.broadcastSessions();
   };
 
-  RunSession.prototype._onRunComplete = function (info) {
+  RunSession.prototype._sendCompletionNotification = async function (status, summaries, reportEntry, context) {
+    if (status !== 'success' && status !== 'failed') return null;
+    try {
+      var notification = reportEntry ? reportEntry.mailNotification : configuredMailNotification(this.flowId, this._deps);
+      if (!notification || (status === 'success' ? notification.onSuccess !== true : notification.onFailure !== true)) return null;
+      if (!(await this._deps.mailClient.load()).enabled) return null;
+      if (reportEntry && reportEntry.notificationStarted) return null;
+      if (reportEntry) reportEntry.notificationStarted = true;
+      notification = globalThis.PageAutomationMailSettings.validateFlowNotification(notification);
+      var resultLabel = status === 'success' ? '成功' : '失败';
+      var flowLabel = String(this.flowLabel || this.flowId);
+      var failure = (summaries || []).slice().reverse().find(function (summary) {
+        return summary && summary.status === 'failed' && summary.error;
+      });
+      var templateContext = Object.assign(Object.create(null), context || this.executor.getCtx() || {}, {
+        notification: {
+          flowLabel: flowLabel,
+          flowId: this.flowId,
+          runId: this.runId,
+          trigger: this.trigger,
+          status: status,
+          statusLabel: resultLabel,
+          startedAt: this.startedAt ? new Date(this.startedAt).toISOString() : '尚未开始',
+          endedAt: new Date(this.endedAt).toISOString(),
+          error: status === 'failed' ? String(this.error || failure && failure.error || '请查看运行报告').slice(0, 10000) : '',
+        },
+      });
+      var result = await this._deps.mailClient.send({
+        to: notification.to,
+        subject: globalThis.Template.interpolate(notification.subject, templateContext),
+        body: globalThis.Template.interpolate(notification.body, templateContext),
+      });
+      return this.addLog('流程' + resultLabel + '通知：SMTP 已接受邮件（' + result.acceptedCount + ' 个收件地址）', { scope: 'run' });
+    } catch (error) {
+      return this.addLog('流程结束邮件通知发送失败: ' + this._deps.loggingStatus.getErrorMessage(error), { level: 'warn', scope: 'run' });
+    }
+  };
+
+  RunSession.prototype._onRunComplete = async function (info) {
     var session = this;
     var deps = this._deps;
     var generation = this._activeRunGeneration;
@@ -415,9 +446,17 @@
       summaries: summaries,
       error: completionError,
     });
+    if (status === 'success' && this.closeCreatedTabs) await this.closeCreatedTabs();
+    if (this.detachKeepAlive) {
+      await this.detachKeepAlive().catch(function (error) {
+        session.addLog('释放运行会话页面资源失败: ' + deps.loggingStatus.getErrorMessage(error), { level: 'warn', scope: 'run' });
+      });
+    }
     this.status = status;
     this.endedAt = deps.now();
     this.error = completionError;
+    // Keep the final variables before report compaction replaces the runtime context.
+    var notificationContext = this.executor.getCtx() || {};
     if (status === 'stopped') deps.saveRunSnapshot(this, info);
     else deps.saveCompletedSnapshot(this, status);
     deps.compactFinishedSessionRuntime(this, status);
@@ -459,8 +498,20 @@
     });
     if (reportEntry) this._settleReportGeneration(reportEntry, terminalPromise);
     else this.reportPromise = terminalPromise;
-    if (this.detachKeepAlive) this.detachKeepAlive();
-    deps.pageAutomation.action.cleanupOwner(this.runId, { detachImmediately: true }).catch(function () {});
+    // Delivery must not delay the completed run or the next flow-group step.
+    this._sendCompletionNotification(status, summaries, reportEntry, notificationContext).then(function (logEntry) {
+      if (!logEntry) return;
+      return terminalPromise.then(function (reportResult) {
+        if (reportResult && reportResult.ok === false) return;
+        return deps.configStore.updateRun(info.sessionId, {
+          logs: (terminalPatch.logs || []).concat([logEntry]),
+        }).then(function () {
+          deps.broadcast({ type: 'RUN_HISTORY_UPDATED' });
+        });
+      });
+    }).catch(function (error) {
+      session.addLog('记录流程结束邮件通知结果失败: ' + deps.loggingStatus.getErrorMessage(error), { level: 'warn', scope: 'run' });
+    });
     if (this.proxyConfigs && Object.keys(this.proxyConfigs).length > 0) {
       deps.proxyManager.clearSession(this, 'run_complete').then(function (result) {
         if (result.activeRules > 0) {
@@ -490,7 +541,7 @@
   RunSession.prototype._finishStoppedBeforeLaunch = function (reportEntry, totalRuns) {
     var timestamp = this._deps.now();
     this._onRunStart({ sessionId: this.runId, flowId: this.flowId, startedAt: timestamp });
-    this._onRunComplete({
+    var completion = this._onRunComplete({
       sessionId: this.runId,
       flowId: this.flowId,
       summaries: [],
@@ -498,7 +549,7 @@
       totalRuns: totalRuns || 1,
     });
     var reportCompletion = reportEntry.completion;
-    this.runPromise = this._deps.waitForRunReport(Promise.resolve(), function () { return reportCompletion; });
+    this.runPromise = this._deps.waitForRunReport(completion, function () { return reportCompletion; });
     return {
       runId: this.runId,
       started: false,
@@ -554,10 +605,6 @@
     }
     var reportEntry = this._beginRunGeneration();
     this.trigger = trigger;
-    this.forceCdpKeepAlive = this.forceCdpKeepAlive === true
-      || String(trigger || '').indexOf('schedule:') === 0
-      || this.entry === 'schedule';
-    if (this.forceCdpKeepAlive) this.sessionCdpKeepAlive = true;
     this.status = 'running';
     this.controller.clearStopRequest();
     var controllerPromise = this.controller.startAutoRunLoop(controllerOptions || {});
@@ -570,13 +617,18 @@
   };
 
   RunSession.prototype.failStart = function (error) {
+    var session = this;
     this.status = 'failed';
     this.endedAt = this._deps.now();
     this.error = this._deps.loggingStatus.getErrorMessage(error);
     this.addLog('启动会话失败: ' + this.error, { level: 'error' });
-    if (this.detachKeepAlive) this.detachKeepAlive();
-    this._deps.pageAutomation.action.cleanupOwner(this.runId, { detachImmediately: true }).catch(function () {});
+    if (this.detachKeepAlive) {
+      this.detachKeepAlive().catch(function (cleanupError) {
+        session.addLog('释放运行会话页面资源失败: ' + session._deps.loggingStatus.getErrorMessage(cleanupError), { level: 'warn', scope: 'run' });
+      });
+    }
     var reportEntry = this._reportGenerations[this._activeRunGeneration];
+    this._sendCompletionNotification('failed', [], reportEntry);
     if (reportEntry && !reportEntry.settling && !reportEntry.settled) {
       if (!this.reportId) this.reportStatus = 'idle';
       this._settleReportGeneration(reportEntry, reportEntry.operation);
@@ -603,10 +655,6 @@
     this.windowId = snapshot.windowId || 0;
     this.incognito = !!snapshot.incognito;
     this.fixedRunTab = !!snapshot.fixedRunTab;
-    this.forceCdpKeepAlive = snapshot.forceCdpKeepAlive === true
-      || String(snapshot.trigger || this.trigger || '').indexOf('schedule:') === 0
-      || String(snapshot.entry || this.entry || '') === 'schedule';
-    this.sessionCdpKeepAlive = this.forceCdpKeepAlive || snapshot.sessionCdpKeepAlive === true;
     if (snapshot.initialContext) this.initialContext = snapshot.initialContext;
     this.executor.setCtx(Object.assign({}, snapshot.runCtx || {}));
     this.executor.setLoopStack((snapshot.loopStack || []).slice());

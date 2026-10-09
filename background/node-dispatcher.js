@@ -161,6 +161,7 @@
     var execRunAssistant = requireMethod(assistant, 'execRunAssistant', 'assistant');
 
     var logForExecution = requireMethod(callbacks, 'logForExecution', 'callbacks');
+    var execSendEmail = requireMethod(callbacks, 'execSendEmail', 'callbacks');
     var execForEachParallel = requireMethod(callbacks, 'execForEachParallel', 'callbacks');
     var execExportTestReport = requireMethod(callbacks, 'execExportTestReport', 'callbacks');
     var execAttachArtifact = requireMethod(callbacks, 'execAttachArtifact', 'callbacks');
@@ -324,6 +325,7 @@
     addRoute(routes, 'runScript', callParamsExecution(execRunScript));
     addRoute(routes, 'turndownToMarkdown', callParamsExecution(execTurndownToMarkdown));
     addRoute(routes, 'webhook', callParamsExecution(execWebhook));
+    addRoute(routes, 'sendEmail', callParamsExecution(execSendEmail));
     addRoute(routes, 'loopStart', callParams(execLoopStart));
     addRoute(routes, 'loopEnd', function () { return { loopEnd: true }; });
     addRoute(routes, 'loopBreak', callParamsExecution(execLoopBreak));

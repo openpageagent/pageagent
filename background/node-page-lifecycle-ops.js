@@ -213,17 +213,7 @@
       });
     }
     function foregroundRequested(options) {
-      return ownValue(options, 'focusWindow', false) === true
-        || ownValue(options, 'foreground', false) === true
-        || ownValue(options, 'requiresForeground', false) === true;
-    }
-    function mergeNodeForegroundOptions(node, params) {
-      var output = copyOwn(params);
-      if (ownValue(node, 'foreground', false) === true) defineOwn(output, 'foreground', true);
-      if (ownValue(node, 'requiresForeground', false) === true) defineOwn(output, 'requiresForeground', true);
-      if (ownValue(node, 'focusWindow', false) === true) defineOwn(output, 'focusWindow', true);
-      if (ownValue(node, 'reveal', false) === true) defineOwn(output, 'reveal', true);
-      return output;
+      return ownValue(options, 'focusWindow', false) === true;
     }
     function raceWithStop(promise) {
       return new Promise(function (resolve, reject) {
@@ -322,8 +312,7 @@
           forceNavigate: forceReopen,
           forceReopen: forceReopen,
           maxReuseMs: fixedNew ? 0 : normalizeMaxReuseMs(options),
-          foreground: foregroundRequested(options),
-          reveal: ownValue(options, 'reveal', false) === true,
+          focusWindow: foregroundRequested(options),
           returnDetails: true,
         });
       }).then(function (tabResult) {
@@ -420,14 +409,14 @@
       var existing = ownValue(readyPromises, source, null);
       if (existing) return existing;
       function ensureDriver(tabId) {
-        // A remembered or newly adopted historical tab may not be the active
-        // tab anymore. Activate only the tab; focusWindow=false preserves the
-        // background automation policy.
-        return executePageCommand('activateTab', {
-          tabId: tabId,
-          focusWindow: false,
-        }, execution).then(function () {
-          return tabId;
+        return tabsGet(tabId).then(function (tab) {
+          if (ownValue(tab, 'discarded', false) !== true) return tabId;
+          // Wake a discarded document before CDP access; ordinary commands
+          // must not switch the user's active tab.
+          return executePageCommand('activateTab', {
+            tabId: tabId,
+            focusWindow: false,
+          }, execution).then(function () { return tabId; });
         });
       }
       var readyPromise = getRememberedPageTabId(pageId).then(function (tabId) {
@@ -474,8 +463,6 @@
       runtimeTabIdFromParams: runtimeTabIdFromParams,
       requireRuntimeTabId: requireRuntimeTabId,
       getRememberedPageTabId: getRememberedPageTabId,
-      foregroundRequested: foregroundRequested,
-      mergeNodeForegroundOptions: mergeNodeForegroundOptions,
       raceWithStop: raceWithStop,
       openPage: openPage,
       refreshPage: refreshPage,

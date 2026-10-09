@@ -238,7 +238,8 @@
     var original = String(value === undefined || value === null ? '' : value).trim();
     if (!original) return '';
     if (original === '已计划') return '待执行';
-    if (original === '已延后' || original === '完成（无副作用）') return '未执行';
+    if (original === '已延后') return '未执行';
+    if (original === '完成（无副作用）') return '完成';
     var normalized = original.toLowerCase().replace(/[\s-]+/g, '_');
     // This is a provider finish reason, not a user-facing event status. The
     // corresponding tool events carry the visible operation and progress.
@@ -415,7 +416,9 @@
     '.conversation-event-copy{box-sizing:border-box;display:grid;place-items:center;width:24px;min-width:24px;max-width:24px;height:24px;min-height:24px;max-height:24px;flex:0 0 24px;padding:0;border:1px solid var(--control-border);border-radius:var(--control-radius);background:var(--control-bg);color:var(--accent);line-height:1;cursor:pointer;appearance:none;}',
     '.conversation-event-copy svg{display:block;width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}',
     '.conversation-event-copy:hover{background:var(--control-bg-hover);border-color:var(--accent);color:var(--accent);}.conversation-event-retry{font-size:15px;}',
-    '.conversation-event summary{margin-bottom:0;list-style:none;cursor:pointer;}.conversation-event summary::-webkit-details-marker{display:none;}.conversation-event[open] summary{margin-bottom:6px;}',
+    '.conversation-event>summary{min-height:24px;margin-bottom:0;list-style:none;cursor:pointer;}.conversation-event>summary::-webkit-details-marker{display:none;}.conversation-event[open]>summary{margin-bottom:6px;}',
+    '.conversation-event>summary::before{content:"";box-sizing:border-box;flex:0 0 8px;width:8px;height:8px;border:solid currentColor;border-width:0 2px 2px 0;color:var(--text-secondary);transform:translateX(-2px) rotate(-45deg);}.conversation-event[open]>summary::before{transform:translateY(-2px) rotate(45deg);}',
+    '.conversation-event>summary>.conversation-event-title{flex:1;}.conversation-event>summary:hover{background:var(--accent-soft);}.conversation-event>summary:hover::before{color:var(--accent);}.conversation-event>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}',
     '.conversation-event time{flex-shrink:0;color:var(--text-secondary);font-size:11px;font-weight:400;}',
     '.conversation-event p{margin:0;color:var(--text);font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word;}',
     '.conversation-markdown{color:var(--text);font-size:13px;line-height:1.58;word-break:break-word;}',

@@ -415,8 +415,6 @@
         parentStepLabel: ownDataValue(session, 'parentStepLabel') || '',
         trigger: ownDataValue(session, 'trigger'),
         entry: ownDataValue(session, 'entry'),
-        forceCdpKeepAlive: ownDataValue(session, 'forceCdpKeepAlive') === true,
-        sessionCdpKeepAlive: ownDataValue(session, 'sessionCdpKeepAlive') === true,
         ownerTabId: ownDataValue(session, 'ownerTabId') || 0,
         originTabId: ownDataValue(session, 'originTabId') || 0,
         originWindowId: ownDataValue(session, 'originWindowId') || 0,

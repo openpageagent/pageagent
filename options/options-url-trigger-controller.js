@@ -292,7 +292,7 @@
         return {
           known: true,
           kind: 'flow',
-          label: String(ownDataValue(flow, 'label') || ownDataValue(flow, 'name') || targetId),
+          label: String(ownDataValue(flow, 'label') || targetId),
         };
       }
       var kind = targetId.indexOf('flowGroup:') === 0 ? 'flowGroup' : 'flow';
@@ -330,7 +330,7 @@
         seen[flowId] = true;
         flowOptions += '<option value="' + esc(flowId) + '"'
           + (selectedValue === flowId ? ' selected' : '') + '>'
-          + esc(ownDataValue(flow, 'label') || ownDataValue(flow, 'name') || flowId)
+          + esc(ownDataValue(flow, 'label') || flowId)
           + (ownDataValue(flow, '__builtin') ? '（内置）' : '')
           + '</option>';
       }
@@ -426,9 +426,9 @@
         + '<div class="form-row"><label>URL 匹配模式（支持通配符 * ）</label><input type="text" id="urltrig-pattern" value="'
         + esc(triggerPattern(draft)) + '" placeholder="https://erp.company.com/report*"></div>'
         + '<p class="form-help">示例：<code>https://erp.company.com/*</code> 或 <code>https://*.internal.com/dashboard</code></p>'
-        + '<div class="form-row checkbox-row"><input type="checkbox" id="urltrig-enabled"'
+        + '<div class="form-row"><label class="switch-label"><input type="checkbox" id="urltrig-enabled"'
         + (ownDataValue(draft, 'enabled') !== false ? ' checked' : '')
-        + '><label for="urltrig-enabled">启用</label></div>'
+        + '><span class="switch-slider"></span><span class="switch-text">启用</span></label></div>'
         + '<div class="editor-actions">'
         + '<button class="btn-primary" data-action="save-url-trigger">保存</button>'
         + '<button class="btn-secondary" data-action="cancel-url-trigger">取消</button>'

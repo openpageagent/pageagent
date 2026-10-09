@@ -293,9 +293,6 @@
         parentFlowGroupLabel: options.parentFlowGroupLabel || '',
         parentStepIndex: options.parentStepIndex,
         parentStepLabel: options.parentStepLabel || '',
-        forceCdpKeepAlive: options.forceCdpKeepAlive === true
-          || String(options.trigger || trigger || '').indexOf('schedule:') === 0
-          || String(options.entry || '') === 'schedule',
       };
       return invokePromise(startSessionRun, ['user:' + normalizeFlowId(flowId), childOptions]).then(function (started) {
         var runId = started && (started.runId || started.sessionId);
@@ -318,7 +315,7 @@
 
     function stepTitle(step, index, config) {
       var flow = safeMapValue(ownDataValue(config, 'flows'), ownDataValue(step, 'flowId'));
-      return ownDataValue(step, 'label') || (flow && (ownDataValue(flow, 'label') || ownDataValue(flow, 'name')))
+      return ownDataValue(step, 'label') || (flow && ownDataValue(flow, 'label'))
         || ownDataValue(step, 'flowId') || ('步骤 ' + (index + 1));
     }
 
@@ -385,9 +382,6 @@
           error: '',
           trigger: options.trigger || 'manual',
           entry: options.entry || 'flowGroup',
-          forceCdpKeepAlive: options.forceCdpKeepAlive === true
-            || String(options.trigger || '').indexOf('schedule:') === 0
-            || String(options.entry || '') === 'schedule',
           ownerTabId: options.ownerTabId || options.originTabId || 0,
           originTabId: options.originTabId || options.ownerTabId || 0,
           originWindowId: options.originWindowId || 0,
@@ -622,7 +616,7 @@
           var stepIndex = index;
           var step = steps[index++];
           var flow = safeMapValue(ownDataValue(config, 'flows'), ownDataValue(step, 'flowId'));
-          var flowLabel = flow && (ownDataValue(flow, 'label') || ownDataValue(flow, 'name')) || ownDataValue(step, 'flowId');
+          var flowLabel = flow && ownDataValue(flow, 'label') || ownDataValue(step, 'flowId');
           var stepLabel = ownDataValue(step, 'label') || flowLabel;
           var nodeId = runtimeStepNodeId(step, stepIndex);
           setStepStatus(nodeId, 'running');
@@ -653,7 +647,6 @@
             parentFlowGroupLabel: flowGroupLabel,
             parentStepIndex: stepIndex,
             parentStepLabel: stepLabel,
-            forceCdpKeepAlive: session.forceCdpKeepAlive === true,
           }), session).then(function (result) {
             clearChildRun();
             mergeStepResult(step, stepIndex, flowLabel, stepLabel, childContext, runTabMode, result);

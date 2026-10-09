@@ -955,8 +955,6 @@
               selector: verifySelector,
             });
             if (!verifyParams.timeoutMs) verifyParams.timeoutMs = 2000;
-            verifyParams.reveal = true;
-            if (!verifyParams.highlightMs) verifyParams.highlightMs = 1800;
             return executeNodeInstance({
               type: 'elementInfo',
               label: '验证选择器',

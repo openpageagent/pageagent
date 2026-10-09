@@ -57,7 +57,7 @@
     name: { type: 'string', minLength: 1, maxLength: 300 },
     description: { type: 'string', maxLength: 10000 },
     prompt: { type: 'string', maxLength: 100000 },
-    skillIds: RESOURCE_ID_LIST_SCHEMA,
+    skillIds: { type: 'array', items: RESOURCE_ID_LIST_SCHEMA.items },
     mcpServerIds: RESOURCE_ID_LIST_SCHEMA,
     resourcePolicy: RESOURCE_POLICY_SCHEMA,
     modelServiceId: { type: 'string', maxLength: 240 },

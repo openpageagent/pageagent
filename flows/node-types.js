@@ -1518,10 +1518,29 @@
       outputHint: '{ passed:true, mismatchPct?, baselineCreated?, baselineKey, verification }',
     },
     {
-      type: 'httpRequest',
-      label: 'HTTP 请求 (API 测试)',
+      type: 'sendEmail',
+      label: '邮件通知',
       needsPage: false,
-      description: '发送 HTTP 请求并输出响应（status/json/body），配合「断言: 变量/数据」「JSON 数据提取」做接口断言',
+      description: '通过 WebSocket 连接的 MCP Server 使用「连接配置 → 邮件通知」中唯一的 SMTP 发件账户发送邮件。必须先连接支持邮件发送的 MCP Server。收件人、抄送、密送至少填一项；支持模板、文本/HTML 正文和附件。此节点有投递副作用，不允许自动重试。',
+      params: [
+        { key: 'to', label: '收件人（支持模板）', kind: 'text', placeholder: 'a@example.com; b@example.com', description: '仅填写邮箱地址，多个地址用逗号、分号、空格或换行分隔。' },
+        { key: 'cc', label: '抄送（可选，支持模板）', kind: 'text', placeholder: 'cc@example.com' },
+        { key: 'bcc', label: '密送 / 隐私抄送（可选，支持模板）', kind: 'text', placeholder: 'bcc@example.com', description: '密送地址不会出现在邮件头中。' },
+        { key: 'subject', label: '邮件主题（支持模板）', kind: 'text', required: true, placeholder: '流程完成：{{reportName}}' },
+        { key: 'bodyFormat', label: '正文格式', kind: 'select', default: 'text', options: [
+          { value: 'text', label: '纯文本' },
+          { value: 'html', label: 'HTML' },
+        ] },
+        { key: 'body', label: '正文（支持模板，最多 1MB）', kind: 'textarea', placeholder: '运行结果：\n{{json last}}' },
+        { key: 'attachments', label: '附件（JSON 数组，可选）', kind: 'textarea', placeholder: '[{"fileName":"report.json","content":"{{json last}}"}]', description: '最多 20 个，总计 20MB。文本：{fileName,content}；Base64：{fileName,content,contentMode:"base64"}；可选 mimeType。也可填写 {{json attachments}} 引用整个数组。插件无法仅凭本地文件路径读取附件，请提供文件内容。' },
+      ],
+      outputHint: '{ messageId, acceptedCount, rejectedCount:0 }（表示 SMTP 已接受，不代表已进入收件箱；部分拒收时节点失败，请核对投递记录后仅补发未接受的地址）',
+    },
+    {
+      type: 'httpRequest',
+      label: 'HTTP 请求',
+      needsPage: false,
+      description: '向指定 URL 发送 HTTP 请求，返回状态码、JSON 数据和响应正文，供后续节点使用',
       params: [
         { key: 'url', label: '请求 URL（支持模板）', kind: 'text', required: true, placeholder: 'https://api.example.com/orders' },
         { key: 'method', label: '方法', kind: 'select', default: 'GET', options: [
@@ -1962,9 +1981,9 @@
     },
     {
       type: 'randomData',
-      label: '生成测试数据',
+      label: '生成数据',
       needsPage: false,
-      description: '本地生成自动化测试数据，支持单值、批量数组和字段模板对象（数字/字符串/姓名/手机号/邮箱/身份证/银行卡/地址等）',
+      description: '本地生成数据，支持单值、批量数组和字段模板对象（数字/字符串/姓名/手机号/邮箱/身份证/银行卡/地址等）',
       params: [
         { key: 'kind', label: '数据类型', kind: 'select', default: 'string', options: [
           { value: 'uuid', label: 'UUID' },
@@ -2057,7 +2076,7 @@
       type: 'closePage',
       label: '关闭页面',
       needsPage: true,
-      description: '关闭该页面对应的标签页（测试收尾清理）',
+      description: '关闭该页面对应的标签页',
       params: [],
       outputHint: '{ closed, tabId, kind:"closeTab", status, performed, confirmed, actionReceipt, receipt, result }',
     },
@@ -2198,7 +2217,7 @@
         ], description: '选择 json 时会解析 Assistant 的最终回答并写入 result；prompt 应明确给出期望的 JSON 结构，无法解析时以 ASSISTANT_INVALID_JSON 失败。' },
         { key: 'maxIterations', label: '最大迭代次数（0=使用助手配置）', kind: 'number', default: 0, minimum: 0, maximum: 1000 },
         { key: 'maxToolCalls', label: '最大工具调用数（0=使用助手配置）', kind: 'number', default: 0, minimum: 0, maximum: 10000 },
-        { key: 'timeoutMs', label: '等待助手完成超时(ms)', kind: 'number', default: 900000, minimum: 1000, maximum: 86400000 },
+        { key: 'timeoutMs', label: '等待助手完成超时(ms，0=不限时)', kind: 'number', default: 0, minimum: 0, maximum: 86400000 },
       ],
       outputHint: '{ assistantId, assistantName, serviceId, conversationId, generationId, state, reason, finalAnswer, result, counters, usage, startedAt, endedAt, durationMs }',
     },
@@ -2674,7 +2693,7 @@
     { id: 'session', label: '🔑 会话与存储', types: ['webStorage', 'setCookie', 'getCookie', 'clearCookies', 'setProxy', 'clearProxy'] },
     { id: 'flow-report', label: '📋 流程报告', types: ['exportTestReport', 'attachArtifact', 'exportRunSummary', 'exitGate'] },
     { id: 'debug', label: '🧪 诊断与注入', types: ['accessibilityCheck', 'mockNetwork'] },
-    { id: 'misc', label: '📤 输出与集成', types: ['logData', 'saveFile', 'screenshot', 'cdp.screenshot', 'executePageJavascript', 'patchPage', 'callPageFunction', 'runtimeModuleAction', 'runScript', 'webhook', 'httpRequest', 'httpLoadTest'] },
+    { id: 'misc', label: '📤 输出与集成', types: ['logData', 'saveFile', 'screenshot', 'cdp.screenshot', 'executePageJavascript', 'patchPage', 'callPageFunction', 'runtimeModuleAction', 'runScript', 'webhook', 'sendEmail', 'httpRequest', 'httpLoadTest'] },
   ];
 
   function getType(type) {
@@ -2773,9 +2792,6 @@
       onFailure: node.onFailure === 'continue' ? 'continue' : 'abort',
       retries: isNodeReplaySafe(node) ? Math.max(0, Number(node.retries) || 0) : 0,
       retryDelayMs: Math.max(0, resolveNumberValue(node.retryDelayMs, 1000)),
-      requiresForeground: node.requiresForeground === true,
-      foreground: node.foreground === true,
-      reveal: node.reveal === true,
     };
   }
 
@@ -2959,6 +2975,21 @@
     }
     if (node.type === 'runScript' && !String(params.scriptId || '').trim() && !String(params.inlineCode || '').trim()) {
       errors.push('[' + (node.title || def.label) + '] 必须选择已保存脚本或填写内联代码');
+    }
+    if (node.type === 'sendEmail') {
+      if (!['to', 'cc', 'bcc'].some(function (key) { return String(params[key] || '').trim(); })) {
+        errors.push('[' + (node.title || def.label) + '] 收件人、抄送、密送至少填写一项');
+      }
+      var mailAttachments = params.attachments;
+      if (typeof mailAttachments === 'string' && mailAttachments.trim()
+          && !/^\s*\{\{[^{}]+\}\}\s*$/.test(mailAttachments)) {
+        try { mailAttachments = JSON.parse(mailAttachments); }
+        catch (_) { errors.push('[' + (node.title || def.label) + '] 附件必须为 JSON 数组；内容模板请写在 JSON 字符串内'); }
+      }
+      if (mailAttachments && typeof mailAttachments !== 'string'
+          && (!Array.isArray(mailAttachments) || mailAttachments.length > 20)) {
+        errors.push('[' + (node.title || def.label) + '] 附件必须为数组，最多 20 个');
+      }
     }
     if (node.type === 'forEachParallel' && /^(?:httpRequest|webhook)$/.test(String(params.action || 'identity'))
         && !String(params.url || '').trim()) {

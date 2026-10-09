@@ -55,7 +55,7 @@
     maxModelRequests: 100,
     maxIterations: 100,
     maxToolCalls: 200,
-    maxWallTimeMs: 900000,
+    maxWallTimeMs: 0, // 0 means no generation wall-time limit.
     maxContextTokens: 1000000,
     maxOutputTokens: 4096,
   });
@@ -170,7 +170,7 @@
     strictObject(input, 'budgets', Object.keys(DEFAULT_BUDGETS), []);
     var output = {};
     Object.keys(DEFAULT_BUDGETS).forEach(function (key) {
-      var minimum = key === 'maxToolCalls' ? 0 : 1;
+      var minimum = key === 'maxToolCalls' || key === 'maxWallTimeMs' ? 0 : 1;
       output[key] = hasOwn(input, key)
         ? integer(input[key], 'budgets.' + key, minimum, BUDGET_LIMITS[key])
         : DEFAULT_BUDGETS[key];

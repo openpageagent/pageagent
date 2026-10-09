@@ -137,7 +137,7 @@
           try { controller.abort(new Error('模型调用超时')); } catch (_) { controller.abort(); }
         }, timeoutMs);
 
-        return fetch(modelRequest.url, {
+        return globalThis.PageAutomationUserAgent.fetchModel(modelRequest.url, {
           method: 'POST',
           headers: modelRequest.headers,
           body: JSON.stringify(body),

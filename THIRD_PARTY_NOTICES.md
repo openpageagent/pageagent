@@ -14,6 +14,9 @@
 | zod | 4.4.3（根目录） | schema 校验 | MIT |
 | @modelcontextprotocol/sdk | 0.5.0 | MCP Server 协议实现（同时进入发布的 MCP 单文件包） | MIT |
 | ws | 8.21.0（lockfile 解析版本） | MCP Server WebSocket 传输 | MIT |
+| nodemailer | 8.0.11 | MCP Server SMTP/MIME 邮件发送 | MIT-0 |
+
+Nodemailer 8.0.11 支持当前 MCP Server 的 Node.js 16+ 环境，无额外运行时依赖。其 MIT-0（MIT No Attribution）许可证允许使用、修改和分发；完整许可证保留在 [`mcp-server/NODEMAILER_LICENSE`](mcp-server/NODEMAILER_LICENSE)，随发布包提供。
 
 MCP Server 的 lockfile 还包含由上述组件引入的 `bytes`、`content-type`、`depd`、`http-errors`、`iconv-lite`、`inherits`、`raw-body`、`safer-buffer`、`setprototypeof`、`statuses`、`toidentifier`、`unpipe` 和 `zod`。它们的版本、许可证和完整依赖关系以 `mcp-server/package-lock.json` 为准；MCP 单文件构建会保留上游 legal comments。
 

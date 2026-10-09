@@ -43,6 +43,152 @@
     var serverInfo = null;
     var connectionWaiters = [];
     var localRequestSequence = 0;
+    var mailRequests = new Map();
+    var localToolsEnabled = deps.localToolsEnabled !== false;
+    var localWorkingDirectory = String(deps.localWorkingDirectory || '').trim();
+    var localRequests = new Map();
+
+    function effectiveLocalDirectory() {
+      return localWorkingDirectory || String(serverInfo && serverInfo.workingDirectory || '').trim();
+    }
+
+    function finishLocal(requestId, error, result, cancel) {
+      var pending = localRequests.get(requestId);
+      if (!pending) return;
+      localRequests.delete(requestId);
+      clearTimeout(pending.timer);
+      if (pending.signal) pending.signal.removeEventListener('abort', pending.onAbort);
+      if (cancel && pending.socket.readyState === WebSocket.OPEN) {
+        try { pending.socket.send(JSON.stringify({ type: 'local.cancel', requestId: requestId })); } catch (_) {}
+      }
+      if (error) { error.retryable = false; pending.reject(error); }
+      else pending.resolve(result);
+    }
+
+    function rejectLocalRequests() {
+      localRequests.forEach(function (_, requestId) {
+        finishLocal(requestId, new Error('本地操作已停用或连接中断；执行结果可能未知，请确认后再重试'), null, true);
+      });
+    }
+
+    function configureLocalTools(value, directory) {
+      var enabled = value === true;
+      var nextDirectory = String(directory || '').trim();
+      if (localToolsEnabled === enabled && localWorkingDirectory === nextDirectory) return;
+      if (!enabled || localWorkingDirectory !== nextDirectory) rejectLocalRequests();
+      localToolsEnabled = enabled;
+      localWorkingDirectory = nextDirectory;
+      sendHello();
+    }
+
+    function callLocal(operation, input, options) {
+      options = options || {};
+      return new Promise(function (resolve, reject) {
+        if (!localToolsEnabled || !effectiveLocalDirectory() || !connected || !ws || ws.readyState !== WebSocket.OPEN
+            || !serverInfo || serverInfo.localOperations !== 'local/1') {
+          reject(new Error('请在连接配置中启用本地文件与命令操作，并连接支持该能力的 MCP Server'));
+          return;
+        }
+        var url = new URL(wsUrl);
+        if (url.protocol !== 'wss:' && ['127.0.0.1', 'localhost', '[::1]'].indexOf(url.hostname) < 0) {
+          reject(new Error('远程本地操作必须使用 wss:// 连接 MCP Server'));
+          return;
+        }
+        var requestId = nextLocalRequestId();
+        var pending = { socket: ws, resolve: resolve, reject: reject, signal: options.signal };
+        pending.onAbort = function () {
+          finishLocal(requestId, new Error('本地操作已取消；已经完成的修改不会撤销'), null, true);
+        };
+        pending.timer = setTimeout(function () {
+          finishLocal(requestId, new Error('等待本地操作结果超时；执行结果可能未知，请确认后再重试'), null, true);
+        }, 75000);
+        localRequests.set(requestId, pending);
+        if (pending.signal) {
+          pending.signal.addEventListener('abort', pending.onAbort, { once: true });
+          if (pending.signal.aborted) { pending.onAbort(); return; }
+        }
+        try {
+          pending.socket.send(JSON.stringify({ type: 'local.call', requestId: requestId, operation: operation,
+            workingDirectory: effectiveLocalDirectory(), input: input }));
+        } catch (error) { finishLocal(requestId, error); }
+      });
+    }
+
+    function finishMail(requestId, error, result, cancel) {
+      var pending = mailRequests.get(requestId);
+      if (!pending) return;
+      mailRequests.delete(requestId);
+      clearTimeout(pending.timer);
+      if (pending.signal) pending.signal.removeEventListener('abort', pending.onAbort);
+      pending.payload = null;
+      if (cancel && pending.sent && pending.socket.readyState === WebSocket.OPEN) {
+        try { pending.socket.send(JSON.stringify({ type: 'mail.cancel', requestId: requestId })); } catch (_) {}
+      }
+      if (error) {
+        error.retryable = false;
+        pending.reject(error);
+      } else pending.resolve(result);
+    }
+
+    function rejectMailRequests() {
+      mailRequests.forEach(function (pending, requestId) {
+        finishMail(requestId, new Error(pending.sent
+          ? 'MCP 连接中断，邮件投递结果未知，请确认后再重试'
+          : 'MCP 连接中断，邮件尚未发送'));
+      });
+    }
+
+    function postMail(requestId, pending) {
+      if (!serverInfo || pending.sent || pending.socket !== ws) return;
+      if (serverInfo.mail !== 'smtp/1') {
+        finishMail(requestId, new Error('当前 MCP Server 不支持邮件发送，请更新服务端后重新连接'));
+        return;
+      }
+      try {
+        var frame = JSON.stringify({ type: 'mail.send', requestId: requestId, payload: pending.payload });
+        if (new TextEncoder().encode(frame).length > root.PageAutomationMailSettings.MAX_REQUEST_BYTES) throw new Error('邮件请求超过 32MB，请减小附件或正文');
+        pending.socket.send(frame);
+        pending.sent = true;
+        pending.payload = null;
+        clearTimeout(pending.timer);
+        pending.timer = setTimeout(function () {
+          finishMail(requestId, new Error('等待邮件排队及发送结果超过 150 秒，投递结果未知，请确认后再重试'), null, true);
+        }, root.PageAutomationMailSettings.DELIVERY_LIMITS.resultTimeoutMs);
+      } catch (_) {
+        finishMail(requestId, new Error('邮件请求无法发送或超过 32MB，请检查连接和附件大小'));
+      }
+    }
+
+    function sendMail(payload, options) {
+      options = options || {};
+      return new Promise(function (resolve, reject) {
+        if (!connected || !ws || ws.readyState !== WebSocket.OPEN) {
+          reject(new Error('请先连接 MCP Server，邮件尚未发送'));
+          return;
+        }
+        var url = new URL(wsUrl);
+        if (url.protocol !== 'wss:' && ['127.0.0.1', 'localhost', '[::1]'].indexOf(url.hostname) < 0) {
+          reject(new Error('远程邮件发送必须使用 wss:// 连接 MCP Server，以保护邮箱授权码'));
+          return;
+        }
+        var requestId = nextLocalRequestId();
+        var pending = { socket: ws, payload: payload, resolve: resolve, reject: reject, signal: options.signal, sent: false };
+        pending.onAbort = function () {
+          finishMail(requestId, new Error(pending.sent
+            ? '邮件发送已取消；如已提交 SMTP，邮件仍可能送达，请确认后再重试'
+            : '邮件发送已取消'), null, true);
+        };
+        pending.timer = setTimeout(function () {
+          finishMail(requestId, new Error('MCP Server 尚未确认邮件发送能力，请检查连接或更新服务端'));
+        }, 5000);
+        mailRequests.set(requestId, pending);
+        if (pending.signal) {
+          pending.signal.addEventListener('abort', pending.onAbort, { once: true });
+          if (pending.signal.aborted) { pending.onAbort(); return; }
+        }
+        postMail(requestId, pending);
+      });
+    }
 
     function normalizeClientInfo(info) {
       info = info || {};
@@ -172,7 +318,8 @@
     function sendHello() {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       try {
-        ws.send(JSON.stringify({ type: 'hello', protocol: 'arp/1', clientInfo: clientInfo, sentAt: Date.now() }));
+        ws.send(JSON.stringify({ type: 'hello', protocol: 'arp/1', clientInfo: clientInfo,
+          localToolsEnabled: localToolsEnabled, localWorkingDirectory: effectiveLocalDirectory(), sentAt: Date.now() }));
       } catch (error) {
         addLog('error', '发送 MCP 客户端 hello 失败', { error: error.message });
       }
@@ -259,6 +406,7 @@
         addLog('info', '准备连接 MCP Server', { url: wsUrl, protocol: 'arp/1' });
         var socket = new WebSocket(wsUrl);
         ws = socket;
+        serverInfo = null;
 
         socket.onopen = function () {
           if (ws !== socket) { try { socket.close(); } catch (_) {} return; }
@@ -275,12 +423,30 @@
           try {
             var message = JSON.parse(event.data);
             if (message && message.type === 'hello') {
+              var firstHello = !serverInfo;
               serverInfo = message;
+              if (firstHello && localToolsEnabled && !localWorkingDirectory && effectiveLocalDirectory()) sendHello();
+              mailRequests.forEach(function (pending, requestId) { postMail(requestId, pending); });
               addLog('success', 'MCP Server 已确认 ARP 客户端', {
                 clientId: message.clientId || clientInfo.clientId,
                 connectedClients: message.connectedClients,
                 protocol: message.protocol || '',
               });
+              return;
+            }
+            if (message && message.type === 'mail.result') {
+              var result = message.result;
+              if (message.ok === true && result && typeof result.messageId === 'string'
+                  && Number.isInteger(result.acceptedCount) && result.acceptedCount > 0 && result.rejectedCount === 0) {
+                finishMail(message.requestId, null, result);
+              } else {
+                finishMail(message.requestId, new Error(message.error || 'MCP Server 返回无效邮件结果，请确认投递情况后再重试'));
+              }
+              return;
+            }
+            if (message && message.type === 'local.result') {
+              finishLocal(message.requestId, message.ok === true && isRecord(message.result)
+                ? null : new Error(message.error || 'MCP Server 返回无效的本地操作结果'), message.result);
               return;
             }
             handleRequest(message);
@@ -293,6 +459,9 @@
           if (ws !== socket) return;
           connected = false;
           ws = null;
+          serverInfo = null;
+          rejectMailRequests();
+          rejectLocalRequests();
           stopHeartbeat();
           addLog('warn', 'MCP Server 连接已断开', {
             url: wsUrl,
@@ -334,6 +503,9 @@
 
     function disconnect() {
       shouldReconnect = false;
+      rejectMailRequests();
+      rejectLocalRequests();
+      serverInfo = null;
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
       stopHeartbeat();
@@ -355,6 +527,8 @@
         protocol: 'arp/1',
         clientInfo: clientInfo,
         serverInfo: serverInfo,
+        localToolsEnabled: localToolsEnabled,
+        localWorkingDirectory: effectiveLocalDirectory(),
         retryCount: retryCount,
         logs: getLogs(),
       };
@@ -367,6 +541,9 @@
       isConnected: function () { return connected; },
       getStatus: getStatus,
       clearLogs: clearLogs,
+      sendMail: sendMail,
+      callLocal: callLocal,
+      configureLocalTools: configureLocalTools,
     };
   }
 

@@ -33,21 +33,20 @@
     hostnames: { type: 'string', maxLength: 20000 },
     urlIncludes: { type: 'string', maxLength: 20000 },
   });
-  var KEEP_ALIVE_PROPERTIES = Object.freeze({
+  var PAGE_HEARTBEAT_PROPERTIES = Object.freeze({
     enabled: { type: 'boolean' }, intervalMinutes: { type: 'number', minimum: 1 },
-    requestUrl: { type: 'string', maxLength: 20000 }, method: { type: 'string', enum: ['GET', 'HEAD', 'POST'] },
-    expectedStatus: { type: 'string', maxLength: 1000 }, requestTimeoutMs: { type: 'integer', minimum: 1000, maximum: 60000 },
+    requestUrl: { type: 'string', maxLength: 20000, description: '携带 Cookie 的会话保活请求，可用无业务副作用的普通接口或相对 URL；是否续期取决于服务端' },
+    method: { type: 'string', enum: ['GET', 'HEAD', 'POST'] },
     headers: { type: 'string', maxLength: 20000 }, body: { type: 'string', maxLength: 200000 },
-    lockedSelector: { type: 'string', maxLength: 10000 }, healthySelector: { type: 'string', maxLength: 10000 },
-    versionUrl: { type: 'string', maxLength: 20000 }, activityMode: { type: 'string', enum: ['none', 'cdpMouseMove'] },
-    reloadOnSessionExpired: { type: 'boolean' }, reloadOnLocked: { type: 'boolean' },
-    reloadOnVersionChange: { type: 'boolean' }, reloadDiscarded: { type: 'boolean' },
+    expectedStatus: { type: 'string', maxLength: 1000 },
+    requestTimeoutMs: { type: 'integer', minimum: 1000, maximum: 60000 },
   });
   var PAGE_SOURCE_PROPERTIES = Object.freeze({
     id: { type: 'string', maxLength: 240 }, label: { type: 'string', maxLength: 300 },
     url: { type: 'string', minLength: 1, maxLength: 20000 },
-    matchers: closedObject(MATCHERS_PROPERTIES), keepAlive: closedObject(KEEP_ALIVE_PROPERTIES),
-    autoRefreshMinutes: { type: 'number', minimum: 0 }, captureNetwork: { type: 'boolean' }, stealthMode: { type: 'boolean' },
+    matchers: closedObject(MATCHERS_PROPERTIES),
+    keepAlive: closedObject(PAGE_HEARTBEAT_PROPERTIES),
+    autoCloseOnComplete: { type: 'boolean' }, captureNetwork: { type: 'boolean' },
   });
   var URL_TRIGGER_PROPERTIES = Object.freeze({
     id: { type: 'string', maxLength: 240 }, label: { type: 'string', maxLength: 300 },

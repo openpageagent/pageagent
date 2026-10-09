@@ -3,11 +3,12 @@
   'use strict';
   var commonJs = typeof module === 'object' && module.exports;
   var arp = commonJs ? require('../protocol') : root.AgentResourceProtocol;
+  var mailSettings = commonJs ? require('../../settings/mail-settings.js') : root.PageAutomationMailSettings;
   if (!arp) throw new Error('AgentResourceProtocol must load before AgentResourceService');
-  var api = factory(root, arp);
+  var api = factory(root, arp, mailSettings);
   if (commonJs) module.exports = api;
   else root.AgentResourceService = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (root, arp) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (root, arp, mailSettings) {
   'use strict';
 
   var CONFIG_SECTIONS = Object.freeze([
@@ -168,8 +169,23 @@
     var maxEntries = Math.max(10, Number(options.maxEntries) || 500);
     var records = new Map();
     var writeQueue = Promise.resolve();
+    var persistedRecords = new Map();
+
+    function recordKey(id) { return storageKey + ':item:' + encodeURIComponent(id); }
 
     function persist() {
+      if (options.entryStorage === true) {
+        var patch = {};
+        patch[storageKey] = { version: 2, ids: Array.from(records.keys()), updatedAt: Date.now() };
+        records.forEach(function (item, id) {
+          if (persistedRecords.get(id) !== item) patch[recordKey(id)] = item;
+        });
+        persistedRecords.forEach(function (_, id) {
+          // Tombstones clear the content in the same write as the catalog index.
+          if (!records.has(id)) patch[recordKey(id)] = null;
+        });
+        return storageCall(storageArea, 'set', patch).then(function () { persistedRecords = new Map(records); });
+      }
       var items = Array.from(records.values()).sort(function (left, right) {
         return Number(right.updatedAt || right.startedAt || 0) - Number(left.updatedAt || left.startedAt || 0);
       });
@@ -195,6 +211,15 @@
 
     var ready = storageCall(storageArea, 'get', storageKey).then(function (stored) {
       var value = stored && stored[storageKey];
+      if (options.entryStorage === true && value && value.version === 2 && Array.isArray(value.ids)) {
+        return storageCall(storageArea, 'get', value.ids.map(recordKey)).then(function (entries) {
+          value.ids.forEach(function (id) {
+            var item = entries && entries[recordKey(id)];
+            if (item && item.id === id) records.set(id, item);
+          });
+          persistedRecords = new Map(records);
+        });
+      }
       var items = Array.isArray(value) ? value : value && Array.isArray(value.items) ? value.items : [];
       items.forEach(function (item) {
         if (!item || !item.id) return;
@@ -214,8 +239,17 @@
     }
     function mutate(callback) {
       return ready.then(function () {
-        writeQueue = writeQueue.then(callback).then(function (result) { return persist().then(function () { return result; }); });
-        return writeQueue;
+        var operation = writeQueue.then(function () {
+          var previous = new Map(records);
+          return Promise.resolve().then(callback).then(function (result) {
+            return persist().then(function () { return result; });
+          }).catch(function (error) {
+            records = previous;
+            throw error;
+          });
+        });
+        writeQueue = operation.catch(function () {});
+        return operation;
       });
     }
     function normalize(value, id) {
@@ -229,7 +263,10 @@
 
     return Object.freeze({
       ready: ready,
-      list: function () { return afterWrites(function () { return clone(Array.from(records.values())); }); },
+      list: function (project) { return afterWrites(function () {
+        var items = Array.from(records.values());
+        return clone(typeof project === 'function' ? items.map(project) : items);
+      }); },
       get: function (id) { return afterWrites(function () { return records.has(String(id)) ? clone(records.get(String(id))) : null; }); },
       save: function (value) { return mutate(function () { var next = normalize(value); records.set(next.id, next); return clone(next); }); },
       upsert: function (id, value) { if (value === undefined) { value = id; id = value && value.id; } return mutate(function () { var next = normalize(value, id); records.set(next.id, next); return clone(next); }); },
@@ -347,13 +384,14 @@
       storageArea: options.storageArea,
       storageKey: options.storageKey || (options.incognito ? 'arp_skill_catalog_incognito' : 'arp_skill_catalog'),
       idPrefix: 'skill',
-      maxEntries: options.maxEntries || 1000,
+      // Skills are user data: never evict earlier imports when the catalog grows.
+      entryStorage: true,
     });
     var seedPromise = null;
 
     function ensureSeeded() {
       if (seedPromise) return seedPromise;
-      seedPromise = store.list().then(function (items) {
+      seedPromise = store.list(skillSummary).then(function (items) {
         if (items.length || typeof options.sourceLoader !== 'function') return items;
         return Promise.resolve(options.sourceLoader()).then(function (loaded) {
           loaded = Array.isArray(loaded) ? loaded : loaded && (loaded.items || loaded.matches || loaded.packages) || [];
@@ -361,12 +399,21 @@
           if (!normalized.length) return [];
           return store.replaceAll(normalized);
         });
-      }).finally(function () { seedPromise = null; });
+      }).then(function () {}, function (error) { seedPromise = null; throw error; });
       return seedPromise;
+    }
+
+    function skillSummary(item) {
+      var summary = Object.assign({}, item, { resources: [], resourceCount: (item.resources || []).length });
+      delete summary.instructions;
+      return summary;
     }
 
     return Object.freeze({
       ready: store.ready,
+      listSummaries: function () {
+        return ensureSeeded().then(function () { return store.list(skillSummary); });
+      },
       list: function (query) {
         query = query || {};
         return ensureSeeded().then(function () { return store.list(); }).then(function (items) {
@@ -664,6 +711,13 @@
     function inspectFlowRepresentation(flowId, flow, config) {
       var errors = [];
       var warnings = [];
+      if (flow.mailNotification !== undefined) {
+        try {
+          requireDependency(mailSettings, 'PageAutomationMailSettings').validateFlowNotification(flow.mailNotification);
+        } catch (error) {
+          errors.push('流程结束邮件通知: ' + error.message);
+        }
+      }
       var usedNodeIds = Object.create(null);
       var definitions = nodeTypes && Array.isArray(nodeTypes.TYPES) ? nodeTypes.TYPES : [];
       var definitionMap = definitions.reduce(function (map, item) { map[item.type] = item; return map; }, Object.create(null));
@@ -1176,6 +1230,22 @@
 
     function runSchedule(scheduleId, body, context) {
       return itemInConfig('schedules', cleanId(scheduleId, 'scheduleId')).then(function (schedule) {
+        var input = scheduler && typeof scheduler.resolveContext === 'function'
+          ? scheduler.resolveContext(schedule, Date.now()) : Promise.resolve(cloneObject(schedule.context));
+        return input.then(function (initialContext) {
+          body = cloneObject(body);
+          var overrides = body.options && body.options.initialContext || body.context || body.options && body.options.context || {};
+          body.context = Object.assign({}, initialContext, overrides);
+          if (schedule.includeCalendar || schedule.trigger && schedule.trigger.dayFilter && schedule.trigger.dayFilter !== 'all') {
+            body.context.calendar = initialContext.calendar;
+          }
+          body.options = Object.assign({}, body.options || {}, { initialContext: clone(body.context) });
+          return runScheduleTarget(scheduleId, schedule, body, context);
+        });
+      });
+    }
+
+    function runScheduleTarget(scheduleId, schedule, body, context) {
         var task = schedule.task || {};
         var flowGroupId = schedule.flowGroupId || schedule.groupId || task.flowGroupId || task.groupId;
         var rawTaskKind = String(schedule.taskType || schedule.targetKind || task.kind || task.type || '').trim();
@@ -1184,19 +1254,17 @@
         if ((taskKind === 'flowGroup' || taskKind === 'flow-group') && flowGroupId) {
           var groupRun = options.runFlowGroup || (groupRunner && groupRunner.runFlowGroup);
           requireFunction(groupRun, 'FlowGroupController.runFlowGroup');
-          return groupRun.call(groupRunner || null, String(flowGroupId).replace(/^flowGroup:/, ''), Object.assign({}, body || {}, {
+          return groupRun.call(groupRunner || null, String(flowGroupId).replace(/^flowGroup:/, ''), Object.assign(runOptionsFromBody(body, context), {
             trigger: 'schedule:' + scheduleId,
             entry: 'schedule',
             scheduleId: scheduleId,
-            forceCdpKeepAlive: true,
           }));
         }
         var flowId = schedule.flowId || task.flowId;
-        if (flowId) return createFlowRun(flowId, Object.assign({}, body || {}, { trigger: 'schedule:' + scheduleId, entry: 'schedule', forceCdpKeepAlive: true }), context);
+        if (flowId) return createFlowRun(flowId, Object.assign({}, body || {}, { trigger: 'schedule:' + scheduleId, entry: 'schedule' }), context);
         assertAssistantLaunchAllowed(context, { scheduleId: String(scheduleId || '') });
         if (options.runSchedule) return options.runSchedule(schedule, body || {});
         fail('SCHEMA_VALIDATION_FAILED', 'Schedule does not address a runnable Flow');
-      });
     }
 
     function runScript(scriptId, body) {
@@ -1508,7 +1576,7 @@
             maxModelRequests: Math.max(1, Number(settings.maxIterations) || 30),
             maxIterations: Math.max(1, Number(settings.maxIterations) || 30),
             maxToolCalls: Math.max(0, Number(settings.maxToolCalls) || 100),
-            maxWallTimeMs: 15 * 60 * 1000,
+            maxWallTimeMs: 0,
           }, cloneObject(body.budgets));
           return dispatchConversationCommand('START_TURN', {
             schemaVersion: 1,
@@ -1782,6 +1850,7 @@
     }
 
     function listAllCatalogSkills() {
+      if (typeof skillCatalog.listSummaries === 'function') return skillCatalog.listSummaries();
       var items = [];
       var cursor = '';
       function readPage() {
@@ -1864,13 +1933,14 @@
     }
 
     function projectUserSkill(item, summaryOnly) {
-      item = clone(item);
+      var resourceCount = item.resourceCount === undefined ? (item.resources || []).length : Number(item.resourceCount) || 0;
+      item = summaryOnly ? clone(Object.assign({}, item, { instructions: undefined, resources: [] })) : clone(item);
       var paths = skillPaths(item.id);
       var resources = (Array.isArray(item.resources) ? item.resources : []).map(function (resource, index) {
         return projectUserResource(item.id, resource, index);
       });
       var projected = Object.assign({}, item, paths, {
-        resourceCount: resources.length,
+        resourceCount: summaryOnly ? resourceCount : resources.length,
         resources: summaryOnly ? [] : resources,
         managedSkill: false,
       });
@@ -2202,7 +2272,9 @@
     }
 
     function createSchedule(body) {
-      if (scheduler && typeof scheduler.validateCronExpression === 'function') {
+      if (scheduler && typeof scheduler.validateSchedule === 'function') {
+        scheduler.validateSchedule(body);
+      } else if (scheduler && typeof scheduler.validateCronExpression === 'function') {
         var trigger = body && body.trigger || {};
         if (trigger.kind === 'cron') scheduler.validateCronExpression(trigger.expression || trigger.cron || '');
       }
@@ -2213,8 +2285,10 @@
 
     function updateSchedule(scheduleId, patch) {
       return itemInConfig('schedules', cleanId(scheduleId, 'scheduleId')).then(function (current) {
-        if (scheduler && typeof scheduler.validateCronExpression === 'function') {
-          var next = applyPatch(current, patch) || {};
+        var next = applyPatch(current, patch) || {};
+        if (scheduler && typeof scheduler.validateSchedule === 'function') {
+          scheduler.validateSchedule(next);
+        } else if (scheduler && typeof scheduler.validateCronExpression === 'function') {
           var trigger = next.trigger || {};
           if (trigger.kind === 'cron') scheduler.validateCronExpression(trigger.expression || trigger.cron || '');
         }

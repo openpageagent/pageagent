@@ -15,10 +15,11 @@
 
   var lifecycleApi = root && root.PageAutomationLifecycle;
   if (commonJs && !lifecycleApi) lifecycleApi = require('../ui/lifecycle.js');
-  var api = factory(lifecycleApi);
+  var scheduleUtils = commonJs ? require('../shared/schedule-utils.js') : root.ScheduleUtils;
+  var api = factory(lifecycleApi, scheduleUtils);
   if (commonJs) module.exports = api;
   if (root) root.OptionsScheduleController = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (LifecycleApi) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (LifecycleApi, ScheduleUtils) {
   'use strict';
 
   function requireFunction(value, name) {
@@ -142,9 +143,13 @@
 
   function scheduleTriggerText(trigger) {
     trigger = trigger || {};
-    if (trigger.kind === 'daily') return '每天 ' + (trigger.time || '08:00');
-    if (trigger.kind === 'cron') return 'Cron ' + (trigger.expression || trigger.cron || '');
-    return '每 ' + (trigger.minutes || 30) + ' 分钟';
+    var times = (trigger.times || [trigger.time || '08:00']).join('、');
+    var text = '每 ' + (trigger.minutes || 30) + ' 分钟';
+    if (trigger.kind === 'daily') text = '每天 ' + times;
+    if (trigger.kind === 'dates') text = (trigger.dates || []).join('、') + ' ' + times;
+    if (trigger.kind === 'cron') text = 'Cron ' + (trigger.expression || trigger.cron || '');
+    var filter = { workday: '仅工作日', holiday: '仅节假日', restday: '仅休息日' }[trigger.dayFilter];
+    return text + (filter ? ' · ' + filter : '');
   }
 
   function create(options) {
@@ -184,6 +189,101 @@
     var saveInFlight = null;
     var saveRevision = -1;
     var deleteInFlight = Object.create(null);
+    var inputSequence = 0;
+    var calendarQuerySequence = 0;
+    var autoContextValue = null;
+
+    function targetInputExample(kind, id) {
+      if (kind !== 'flow' && kind !== 'flowGroup') return '';
+      var config = currentConfig();
+      var items = kind === 'flowGroup' ? config.flowGroups : config.flows;
+      var target = id && hasOwn(items, id) ? items[id] : null;
+      return target && typeof target.inputExample === 'string' ? target.inputExample : '';
+    }
+
+    function fillInputExample() {
+      var field = $('#sched-context');
+      if (!field || field.value.trim() && field.value !== autoContextValue) return;
+      var kind = $('#sched-task-kind').value;
+      var id = kind === 'flowGroup' ? $('#sched-flow-group').value : $('#sched-flow').value;
+      autoContextValue = targetInputExample(kind, id);
+      field.value = autoContextValue;
+    }
+
+    function timeOrDateRow(type, value) {
+      var id = 'sched-value-' + (++inputSequence);
+      return '<div class="form-grid" id="' + id + '"><div class="form-row">'
+        + '<input type="' + type + '" aria-label="' + (type === 'date' ? '运行日期' : '运行时刻') + '" value="' + esc(value) + '"></div>'
+        + '<div><button type="button" class="btn-small" data-action="sched-remove-value" data-id="' + id + '">移除</button></div></div>';
+    }
+
+    function calendarSettings() {
+      var mode = $('#sched-calendar-mode').value;
+      return mode === 'publicHolidays' ? { mode: mode, countryCode: $('#sched-country').value.trim().toUpperCase() } : { mode: mode };
+    }
+
+    function sameCalendar(left, right) {
+      return (left.mode || 'cn') === (right.mode || 'cn')
+        && (left.mode !== 'publicHolidays' || left.countryCode === right.countryCode);
+    }
+
+    function renderCalendarChoices(selectedDates) {
+      var container = $('#sched-calendar-choices');
+      var saved = draft && draft.calendar || {};
+      if (!container || !sameCalendar(saved, calendarSettings())) {
+        if (container) container.innerHTML = '';
+        return;
+      }
+      var filter = $('#sched-day-filter').value;
+      container.innerHTML = (saved.days || []).map(function (day) {
+        var checked = selectedDates ? selectedDates.indexOf(day.date) !== -1 : ScheduleUtils.matchesDay(filter, day);
+        var label = day.date + ' · ' + (day.isWorkday ? '工作日' : '休息日')
+          + (day.isHoliday ? ' · 节假日' : '') + (day.name ? ' · ' + day.name : '');
+        return '<div class="form-row checkbox-row"><input type="checkbox" id="sched-check-' + day.date + '" value="' + day.date + '"'
+          + (checked ? ' checked' : '') + '><label for="sched-check-' + day.date + '">' + esc(label) + '</label></div>';
+      }).join('');
+    }
+
+    function previewCalendar() {
+      var result = $('#sched-calendar-result');
+      var start = $('#sched-calendar-start').value;
+      var end = $('#sched-calendar-end').value;
+      var settings = calendarSettings();
+      var sequence = ++calendarQuerySequence;
+      result.textContent = '正在获取日历…';
+      return Promise.resolve().then(function () {
+        var readCalendar = ScheduleUtils.createCalendarReader({
+          fetch: function (url, init) {
+            return chrome.runtime.sendMessage({ type: 'SYSTEM_HTTP_TEXT', payload: { url: url } }).then(function (response) {
+              if (init.signal && init.signal.aborted) throw new Error('日历请求已取消或超时');
+              if (!response || !response.ok) throw new Error(response && response.error || '日历请求失败');
+              var result = response.payload;
+              return {
+                ok: result.ok, status: result.status,
+                text: function () { return Promise.resolve(result.data); },
+                json: function () { return Promise.resolve(result.data).then(JSON.parse); },
+              };
+            });
+          },
+        });
+        return Promise.all(ScheduleUtils.dateRange(start, end).map(function (date) { return readCalendar(date, settings); }));
+      }).then(function (days) {
+        if (destroyed || sequence !== calendarQuerySequence || $('#sched-calendar-result') !== result) return;
+        draft.calendar = Object.assign({}, settings, { days: days });
+        renderCalendarChoices();
+        result.textContent = '已获取 ' + start + ' 至 ' + end + ' 的日历，请勾选日期并点击“采用勾选日期”。保存后运行只使用本地日期和日历信息。';
+      }).catch(function (error) {
+        if (!destroyed && sequence === calendarQuerySequence && $('#sched-calendar-result') === result) result.textContent = '日历获取失败：' + (error && error.message || error);
+      });
+    }
+
+    function applyCalendarDates() {
+      var selected = Array.from($('#sched-calendar-choices').querySelectorAll('input:checked')).map(function (input) { return input.value; });
+      if (!selected.length) { toast('请先获取日历并勾选至少一个日期', true); return; }
+      $('#sched-dates').innerHTML = selected.map(function (date) { return timeOrDateRow('date', date); }).join('');
+      $('#sched-include-calendar').checked = true;
+      $('#sched-calendar-result').textContent = '已采用 ' + selected.length + ' 个日期，请设置运行时刻并保存。';
+    }
 
     function hasOwn(value, key) {
       return Object.prototype.hasOwnProperty.call(value || {}, key);
@@ -321,7 +421,7 @@
               ? '流程组 · ' + (flowGroup.label || flowGroup.name || flowGroupId)
               : missingReferenceLabel('流程组', flowGroupId))
             : (flow
-              ? (flow.label || flow.name || flowId)
+              ? (flow.label || flowId)
               : missingReferenceLabel('流程', flowId)));
         return '<div class="item-card' + (draft && draft.id === schedule.id ? ' selected' : '') + '" data-action="edit-schedule" data-id="' + esc(schedule.id) + '">'
           + '<span class="item-title">' + esc(schedule.label || '(未命名)') + '</span>'
@@ -349,6 +449,31 @@
       var selectedFlowGroupId = scheduleFlowGroupId(schedule);
       var selectedAssistantId = scheduleAssistantId(schedule);
       var selectedMessage = scheduleMessage(schedule);
+      var hasContext = schedule.context !== undefined && schedule.context !== null;
+      var contextText = hasContext ? JSON.stringify(schedule.context, null, 2)
+        : targetInputExample(taskKind, taskKind === 'flowGroup' ? selectedFlowGroupId : selectedFlowId);
+      autoContextValue = hasContext ? null : contextText;
+      var calendar = schedule.calendar || { mode: 'cn' };
+      var selectedCountryCode = String(calendar.countryCode || 'US').trim().toUpperCase();
+      var countries = [['US', '美国'], ['GB', '英国'], ['DE', '德国'], ['FR', '法国'], ['CA', '加拿大'], ['AU', '澳大利亚'], ['NZ', '新西兰'], ['IT', '意大利'], ['ES', '西班牙']];
+      var countryOptions = countries.map(function (entry) {
+        return '<option value="' + entry[0] + '"' + (selectedCountryCode === entry[0] ? ' selected' : '') + '>' + entry[1] + '（' + entry[0] + '）</option>';
+      }).join('');
+      if (!countries.some(function (entry) { return entry[0] === selectedCountryCode; })) {
+        countryOptions += '<option value="' + esc(selectedCountryCode) + '" selected>' + esc(selectedCountryCode) + '（已保存）</option>';
+      }
+      var dayFilter = trigger.dayFilter || 'all';
+      var timeValues = Array.isArray(trigger.times) ? trigger.times : [trigger.time || '08:00'];
+      var dateValues = Array.isArray(trigger.dates) ? trigger.dates : [ScheduleUtils.localDate(new Date())];
+      // Convert previously saved date filters to the explicit dates shown in the editor.
+      if (trigger.kind === 'dates' && dayFilter !== 'all') {
+        dateValues = dateValues.filter(function (date) {
+          return ScheduleUtils.matchesDay(dayFilter, ScheduleUtils.calendarDay(date, calendar));
+        });
+      }
+      var savedDays = calendar.days || [];
+      var rangeStart = savedDays.length ? savedDays[0].date : dateValues[0] || ScheduleUtils.localDate(new Date());
+      var rangeEnd = savedDays.length ? savedDays[savedDays.length - 1].date : rangeStart.slice(0, 7) + '-' + String(new Date(Number(rangeStart.slice(0, 4)), Number(rangeStart.slice(5, 7)), 0).getDate()).padStart(2, '0');
       var flows = listableFlows();
       if (selectedFlowId && config.flows && hasOwn(config.flows, selectedFlowId)
           && !flows.some(function (flow) { return flow.id === selectedFlowId; })) {
@@ -390,23 +515,56 @@
         + '<div class="form-row" id="sched-conversation-assistant-row"' + (taskKind !== 'conversation' ? ' style="display:none"' : '') + '><label>绑定助手</label><select id="sched-assistant">' + assistantOptions + '</select></div>'
         + '</div>'
         + '<div class="form-row" id="sched-conversation-message-row"' + (taskKind !== 'conversation' ? ' style="display:none"' : '') + '><label>输入对话内容</label><textarea id="sched-message" rows="5" placeholder="定时发送给助手的内容">' + esc(selectedMessage) + '</textarea></div>'
+        + '<div class="form-row"><label for="sched-context">输入参数（JSON 对象，可留空）</label><textarea id="sched-context" rows="4" placeholder="' + esc('{"reportType":"daily"}') + '">' + esc(contextText) + '</textarea>'
+        + '<p class="form-help">选择流程或流程组时自动带入其运行入参示例，可按需修改。可通过 {{reportType}} 等变量读取参数；对话会将参数附在输入内容之后。</p></div>'
         + '<div class="form-grid">'
         + '<div class="form-row"><label>触发方式</label><select id="sched-kind">'
-        + '<option value="interval"' + (trigger.kind !== 'daily' && trigger.kind !== 'cron' ? ' selected' : '') + '>固定间隔</option>'
-        + '<option value="daily"' + (trigger.kind === 'daily' ? ' selected' : '') + '>每天固定时间</option>'
+        + '<option value="interval"' + (trigger.kind === 'interval' ? ' selected' : '') + '>固定间隔</option>'
+        + '<option value="daily"' + (trigger.kind === 'daily' ? ' selected' : '') + '>每天多个时刻</option>'
+        + '<option value="dates"' + (trigger.kind === 'dates' ? ' selected' : '') + '>指定日期和时刻</option>'
         + '<option value="cron"' + (trigger.kind === 'cron' ? ' selected' : '') + '>Cron</option>'
         + '</select></div>'
-        + '<div class="form-row" id="sched-interval-row"' + (trigger.kind === 'daily' || trigger.kind === 'cron' ? ' style="display:none"' : '') + '><label>间隔（分钟，最小 1）</label><input type="number" id="sched-minutes" min="1" value="' + esc(trigger.minutes || 30) + '"></div>'
-        + '<div class="form-row" id="sched-daily-row"' + (trigger.kind !== 'daily' ? ' style="display:none"' : '') + '><label>触发时间</label><input type="time" id="sched-time" value="' + esc(trigger.time || '08:00') + '"></div>'
-        + '<div class="form-row" id="sched-cron-row"' + (trigger.kind !== 'cron' ? ' style="display:none"' : '') + '><label>Cron 表达式</label><input type="text" id="sched-cron" value="' + esc(trigger.expression || trigger.cron || schedule.cronExpression || '') + '" placeholder="*/30 * * * *"></div>'
+        + '<div class="form-row" id="sched-interval-row"' + (trigger.kind !== 'interval' ? ' style="display:none"' : '') + '><label>间隔（分钟，最小 1）</label><input type="number" id="sched-minutes" min="1" step="1" value="' + esc(trigger.minutes || 30) + '"><p class="form-help">每隔指定分钟数运行一次。</p></div>'
+        + '<div class="form-row" id="sched-cron-row"' + (trigger.kind !== 'cron' ? ' style="display:none"' : '') + '><label>Cron 表达式</label><input type="text" id="sched-cron" value="' + esc(trigger.expression || trigger.cron || schedule.cronExpression || '') + '" placeholder="*/30 * * * *"><p class="form-help">按表达式运行，依次为：分、时、日、月、周。</p></div>'
         + '</div>'
-        + '<div class="form-row checkbox-row"><input type="checkbox" id="sched-enabled"' + (schedule.enabled !== false ? ' checked' : '') + '><label for="sched-enabled">启用</label></div>'
+        + '<div class="form-row" id="sched-dates-row"' + (trigger.kind !== 'dates' ? ' style="display:none"' : '') + '><label>运行日期</label><div id="sched-dates">'
+        + dateValues.map(function (value) { return timeOrDateRow('date', value); }).join('')
+        + '</div><button type="button" class="btn-small" data-action="sched-add-date">添加日期</button><p class="form-help">只在列出的日期运行，也可以展开下方日历批量选日。</p></div>'
+        + '<details class="form-row" id="sched-calendar-panel"' + (trigger.kind !== 'dates' ? ' style="display:none"' : '') + (savedDays.length ? ' open' : '') + '><summary>从日历批量选日（可选）</summary>'
+        + '<p class="form-help">选择范围和条件，获取日历后勾选日期，再点击“采用勾选日期”替换上方的运行日期。</p>'
+        + '<div class="form-grid"><div class="form-row"><label for="sched-day-filter">日历选日条件</label><select id="sched-day-filter">'
+        + [['all', '全部日期'], ['workday', '仅工作日'], ['holiday', '仅节假日'], ['restday', '仅休息日（含周末、节假日）']].map(function (entry) {
+          return '<option value="' + entry[0] + '"' + (dayFilter === entry[0] ? ' selected' : '') + '>' + entry[1] + '</option>';
+        }).join('') + '</select></div>'
+        + '<div class="form-row"><label for="sched-calendar-mode">日历模式</label><select id="sched-calendar-mode">'
+        + [['cn', '中国大陆（Apple iCloud，含调休）'], ['publicHolidays', '国外公众假日（全国）'], ['weekdays', '仅周一至周五（无需联网）']].map(function (entry) {
+          return '<option value="' + entry[0] + '"' + ((calendar.mode || 'cn') === entry[0] ? ' selected' : '') + '>' + entry[1] + '</option>';
+        }).join('') + '</select></div></div>'
+        + '<div class="form-row" id="sched-country-row"' + (calendar.mode !== 'publicHolidays' ? ' style="display:none"' : '') + '><label for="sched-country">国家</label><select id="sched-country">' + countryOptions + '</select><p class="form-help">按周六、周日和全国公众假日判断休息日，不含地方假日或特殊工作周。</p></div>'
+        + '<div class="form-row"><label class="switch-label"><input type="checkbox" id="sched-include-calendar"' + (schedule.includeCalendar || trigger.kind === 'dates' && dayFilter !== 'all' ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">将所选日期的日历信息传入运行参数</span></label></div>'
+        + '<p class="form-help">可读取 {{calendar.date}}、{{calendar.isWorkday}}、{{calendar.isHoliday}}、{{calendar.isRestDay}}。日历仅在点击获取时读取公开数据，定时运行使用已保存的信息；仅周一至周五模式的 isHoliday 为 null。</p>'
+        + '<div class="form-grid"><div class="form-row"><label for="sched-calendar-start">日历开始日期</label><input type="date" id="sched-calendar-start" value="' + esc(rangeStart) + '"></div>'
+        + '<div class="form-row"><label for="sched-calendar-end">日历结束日期（最多 366 天）</label><input type="date" id="sched-calendar-end" value="' + esc(rangeEnd) + '"></div></div>'
+        + '<div class="editor-actions"><button type="button" class="btn-secondary" data-action="sched-preview-calendar">获取日历并选日</button>'
+        + '<button type="button" class="btn-secondary" data-action="sched-apply-calendar">采用勾选日期</button></div>'
+        + '<div id="sched-calendar-choices" style="max-height:280px;overflow:auto"></div>'
+        + '<p class="form-help" id="sched-calendar-result" role="status"></p>'
+        + '<p class="form-help">选日条件仅用于勾选日历。采用后可继续手动增删运行日期，保存后按上方日期列表执行。</p>'
+        + '<p class="form-help">公开日历：<a href="https://calendars.icloud.com/holidays/cn_zh.ics/" target="_blank" rel="noopener noreferrer">Apple iCloud 中国大陆日历（ICS）</a> · '
+        + '<a href="https://date.nager.at" target="_blank" rel="noopener noreferrer">各国公众假日</a> · '
+        + '<a href="https://date.nager.at/api/v3/AvailableCountries" target="_blank" rel="noopener noreferrer">支持的国家代码</a>。运行时刻始终使用浏览器所在时区。</p>'
+        + '</details>'
+        + '<div class="form-row" id="sched-times-row"' + (trigger.kind !== 'daily' && trigger.kind !== 'dates' ? ' style="display:none"' : '') + '><label id="sched-times-label">' + (trigger.kind === 'daily' ? '每天的运行时刻' : '每个选定日期的运行时刻') + '</label><div id="sched-times">'
+        + timeValues.map(function (value) { return timeOrDateRow('time', value); }).join('')
+        + '</div><button type="button" class="btn-small" data-action="sched-add-time">添加时刻</button></div>'
+        + '<div class="form-row"><label class="switch-label"><input type="checkbox" id="sched-enabled"' + (schedule.enabled !== false ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">启用</span></label></div>'
         + '<div class="editor-actions">'
         + '<button class="btn-primary" data-action="save-schedule">保存</button>'
         + '<button class="btn-secondary" data-action="cancel-schedule">取消</button>'
         + '<span class="spacer"></span>'
         + (schedule.id ? '<button class="btn-danger" data-action="delete-schedule" data-id="' + esc(schedule.id) + '">删除</button>' : '')
         + '</div>';
+      renderCalendarChoices(trigger.kind === 'dates' ? dateValues : null);
     }
 
     function handleEditorChange(event) {
@@ -420,12 +578,33 @@
         $('#sched-flow-group-row').style.display = isFlowGroup ? '' : 'none';
         $('#sched-conversation-assistant-row').style.display = isConversation ? '' : 'none';
         $('#sched-conversation-message-row').style.display = isConversation ? '' : 'none';
+        fillInputExample();
+      } else if (target.id === 'sched-flow' || target.id === 'sched-flow-group') {
+        fillInputExample();
       } else if (target.id === 'sched-kind') {
+        calendarQuerySequence++;
         var isDaily = target.value === 'daily';
+        var isDates = target.value === 'dates';
         var isCron = target.value === 'cron';
-        $('#sched-interval-row').style.display = (isDaily || isCron) ? 'none' : '';
-        $('#sched-daily-row').style.display = isDaily ? '' : 'none';
+        $('#sched-interval-row').style.display = (isDaily || isCron || isDates) ? 'none' : '';
+        $('#sched-times-row').style.display = isDaily || isDates ? '' : 'none';
+        $('#sched-dates-row').style.display = isDates ? '' : 'none';
+        $('#sched-calendar-panel').style.display = isDates ? '' : 'none';
+        $('#sched-times-label').textContent = isDaily ? '每天的运行时刻' : '每个选定日期的运行时刻';
         $('#sched-cron-row').style.display = isCron ? '' : 'none';
+      } else if (target.id === 'sched-calendar-mode' || target.id === 'sched-country') {
+        calendarQuerySequence++;
+        $('#sched-country-row').style.display = $('#sched-calendar-mode').value === 'publicHolidays' ? '' : 'none';
+        renderCalendarChoices();
+        $('#sched-calendar-result').textContent = '';
+      } else if (target.id === 'sched-day-filter') {
+        if ($('#sched-calendar-mode').value === 'weekdays' && target.value === 'holiday') {
+          toast('周一至周五模式不判断法定节假日，请选择公开日历', true);
+        }
+        renderCalendarChoices();
+      } else if (target.id === 'sched-calendar-start' || target.id === 'sched-calendar-end') {
+        calendarQuerySequence++;
+        $('#sched-calendar-result').textContent = '日期范围已更改，请点击获取日历。';
       }
     }
 
@@ -492,19 +671,43 @@
       var taskKindValue = $('#sched-task-kind').value;
       var taskKind = taskKindValue === 'conversation' ? 'conversation' : (taskKindValue === 'flowGroup' ? 'flowGroup' : 'flow');
       var trigger;
-      if (kind === 'daily') {
-        trigger = { kind: 'daily', time: $('#sched-time').value || '08:00' };
+      if (kind === 'daily' || kind === 'dates') {
+        trigger = { kind: kind, times: Array.from($('#sched-times').querySelectorAll('input')).map(function (input) { return input.value; }) };
+        if (kind === 'dates') trigger.dates = Array.from($('#sched-dates').querySelectorAll('input')).map(function (input) { return input.value; });
       } else if (kind === 'cron') {
         trigger = { kind: 'cron', expression: $('#sched-cron').value.trim() };
       } else {
-        trigger = { kind: 'interval', minutes: Math.max(1, Number($('#sched-minutes').value) || 30) };
+        trigger = { kind: 'interval', minutes: Number($('#sched-minutes').value) };
       }
+      // Explicitly reset the legacy filter because existing schedules are saved with merge-patch.
+      trigger.dayFilter = 'all';
       var item = Object.assign({}, draft, {
         label: $('#sched-label').value.trim(),
         taskType: taskKind,
         enabled: $('#sched-enabled').checked,
         trigger: trigger,
+        includeCalendar: kind === 'dates' && $('#sched-include-calendar').checked,
       });
+      if (kind === 'dates') {
+        item.calendar = calendarSettings();
+        if (draft.calendar && draft.calendar.days && sameCalendar(draft.calendar, item.calendar)) {
+          item.calendar.days = cloneData(draft.calendar.days);
+        }
+      } else {
+        delete item.calendar;
+      }
+      try {
+        item.context = JSON.parse($('#sched-context').value.trim() || '{}');
+        ScheduleUtils.validate(item);
+        if (kind === 'daily' || kind === 'dates') trigger.times = ScheduleUtils.times(trigger);
+        if (kind === 'dates') {
+          trigger.dates = ScheduleUtils.dates(trigger);
+          if (item.enabled && ScheduleUtils.nextTime(trigger) === null) return validationFailure('所选日期和时刻均已过去，请选择未来的运行时刻');
+        }
+      } catch (error) {
+        return validationFailure(error instanceof SyntaxError ? '输入参数不是有效的 JSON 对象' : error.message);
+      }
+      if (kind !== 'dates' && draft.id && hasOwn(draft, 'calendar')) item.calendar = null;
       delete item.task;
       delete item.cronExpression;
       if (taskKind === 'conversation') {
@@ -612,6 +815,27 @@
     }
 
     function handleAction(action, scheduleId) {
+      if (action === 'sched-add-date' || action === 'sched-add-time') {
+        if (!draft || destroyed) return true;
+        var type = action === 'sched-add-date' ? 'date' : 'time';
+        $(type === 'date' ? '#sched-dates' : '#sched-times').insertAdjacentHTML('beforeend', timeOrDateRow(type, ''));
+        return true;
+      }
+      if (action === 'sched-remove-value') {
+        if (draft && !destroyed && /^sched-value-\d+$/.test(scheduleId || '')) {
+          var row = $('#' + scheduleId);
+          if (row) row.remove();
+        }
+        return true;
+      }
+      if (action === 'sched-preview-calendar') {
+        if (draft && !destroyed && $('#sched-kind').value === 'dates') previewCalendar();
+        return true;
+      }
+      if (action === 'sched-apply-calendar') {
+        if (draft && !destroyed && $('#sched-kind').value === 'dates') applyCalendarDates();
+        return true;
+      }
       if (action === 'edit-schedule') {
         edit(scheduleId);
         return true;

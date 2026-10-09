@@ -187,6 +187,9 @@ button:focus-visible {
   gap: 10px;
 }
 .runtime-help-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   border: 0;
   padding: 0;
   background: transparent;
@@ -194,6 +197,19 @@ button:focus-visible {
   font: inherit;
   line-height: 1;
   cursor: pointer;
+}
+.runtime-help-link::before {
+  content: '';
+  box-sizing: border-box;
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  transform: translateX(-2px) rotate(-45deg);
+}
+.runtime-help-link[aria-expanded="true"]::before {
+  transform: translateY(-2px) rotate(45deg);
 }
 .runtime-help-link:hover,
 .runtime-help-link:focus-visible {
@@ -691,16 +707,44 @@ button:focus-visible {
 }
 
 .tree-toggle {
-  display: inline-block;
-  width: 12px;
-  min-width: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
+  border-radius: var(--radius);
   background: none;
-  font-size: 10px;
   color: var(--text-secondary);
   line-height: 1;
   cursor: pointer;
+}
+.tree-toggle[aria-expanded]::before,
+.trace-header::before {
+  content: '';
+  box-sizing: border-box;
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  transform: translateX(-2px) rotate(-45deg);
+}
+.tree-toggle[aria-expanded="true"]::before,
+.trace-item:not(.collapsed) > .trace-header::before {
+  transform: translateY(-2px) rotate(45deg);
+}
+.tree-toggle[aria-expanded]:hover,
+.trace-header:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.tree-toggle[aria-expanded]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .tree-toggle.placeholder {
@@ -767,12 +811,16 @@ button:focus-visible {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
+  min-height: 24px;
   margin-bottom: 4px;
   cursor: pointer;
   user-select: none;
 }
 
 .trace-node-info {
+  flex: 1;
+  min-width: 0;
   font-weight: 500;
   font-size: 12px;
 }

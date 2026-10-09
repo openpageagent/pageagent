@@ -1,4 +1,4 @@
-// Session Tab Access — per-run tab ownership, visibility, and CDP keep-alive policy.
+// Session Tab Access — per-run tab ownership, visibility, and CDP leases.
 (function attachSessionTabAccess(root, factory) {
   root.SessionTabAccess = factory();
 })(globalThis, function () {
@@ -9,6 +9,7 @@
     if (!cdpSessionManager || typeof cdpSessionManager.acquire !== 'function') throw new Error('SessionTabAccess requires CdpSessionManager');
     var pageAutomation = deps.pageAutomation;
     if (!pageAutomation || !pageAutomation.action || typeof pageAutomation.action.act !== 'function'
+      || typeof pageAutomation.action.cleanupOwner !== 'function'
       || !pageAutomation.perception || typeof pageAutomation.perception.perceive !== 'function'
       || !pageAutomation.verification || typeof pageAutomation.verification.createFactReceipt !== 'function'
       || typeof pageAutomation.verification.waitForPageLoad !== 'function') {
@@ -88,8 +89,8 @@
         });
       }
 
-      // CDP 防节流保活在流程运行期就是“后台稳定模式”：
-      // 1. 页面命令只激活目标 tab，不主动聚焦浏览器窗口。
+      // 页面执行统一按运行会话管理 CDP 连接：
+      // 1. 普通页面命令不切换标签页；打开页面或显式激活时才激活目标 tab。
       // 2. debugger attach 在流程期间复用，并在流程结束时统一 detach。
       // 3. 意外断线由 CdpSessionManager 立即重接并重试当前命令。
       function activateTabWithoutFocusingWindow(tabId, knownTab, returnDetails) {
@@ -103,9 +104,7 @@
 
       function updateRunTab(tabId, url, options) {
         options = options || {};
-        var foreground = options.focusWindow === true
-          || options.foreground === true
-          || options.requiresForeground === true;
+        var foreground = options.focusWindow === true;
         var actionResult = null;
         var activationResult = null;
         var update = activateTabWithoutFocusingWindow(tabId, null, true).then(function (activated) {
@@ -219,9 +218,7 @@
         if (session.windowCreating) {
           return session.windowCreating.then(function () { return ensureSessionWindow(url, options); });
         }
-        var foreground = options.focusWindow === true
-          || options.foreground === true
-          || options.requiresForeground === true;
+        var foreground = options.focusWindow === true;
 
         var check = session.windowId
           ? chrome.windows.get(session.windowId).then(function () { return session.windowId; }, function (error) {
@@ -370,6 +367,9 @@
       function openCreatedTab(source, tab, url, mode, label, options) {
         options = options || {};
         if (!tab || !tab.id) throw new Error('创建标签页失败');
+        // 只在实际新建时记录，后续复用同一标签页不能覆盖其创建归属。
+        session.createdTabs = session.createdTabs || {};
+        session.createdTabs[tab.id] = pageIdFromSource(source);
         var activationResult = null;
         return claimAfterWait(source, tab.id, label).then(function () {
           return activateTabWithoutFocusingWindow(tab.id, tab, true);
@@ -391,9 +391,7 @@
 
       function createTabInRunWindow(url, options) {
         options = options || {};
-        var foreground = options.focusWindow === true
-          || options.foreground === true
-          || options.requiresForeground === true;
+        var foreground = options.focusWindow === true;
         if (session.originWindowId) {
           return chrome.windows.get(session.originWindowId).then(function () {
             return executeLifecycleAction(0, 'createTab', { windowId: session.originWindowId, url: url, active: foreground }, options).then(function (result) {
@@ -518,13 +516,9 @@
       }
 
       function ensureBackgroundStableTab(tabId, knownTab) {
-        if (!isSessionCdpKeepAliveEnabled()) return Promise.resolve(tabId);
-        return Promise.resolve(knownTab || chrome.tabs.get(tabId)).then(function (tab) {
-          return tab;
-        }).then(function (tab) {
-          return recoverDiscardedTabForStableMode(tabId, tab);
-        }).then(function () {
-          return ensureKeepAlive(tabId);
+        var signal = session._runAbortController && session._runAbortController.signal;
+        return recoverDiscardedTabForStableMode(tabId, knownTab).then(function () {
+          return ensureKeepAlive(tabId, signal);
         }).then(function () {
           return tabId;
         });
@@ -534,14 +528,10 @@
         options = options || {};
         var activation = activateTabWithoutFocusingWindow(tabId, knownTab, true);
         var stable = activation.then(function () {
-          return isSessionCdpKeepAliveEnabled()
-            ? ensureBackgroundStableTab(tabId, null)
-            : recoverDiscardedTabForStableMode(tabId, null);
+          return ensureBackgroundStableTab(tabId, null);
         });
         return stable.then(function () {
           return options.focusWindow === true
-            || options.foreground === true
-            || options.requiresForeground === true
             ? focusTabForCommand(tabId, null, options.returnDetails === true)
             : tabId;
         });
@@ -549,49 +539,22 @@
 
       function preparePageCommandTab(tabId, knownTab, options) {
         options = options || {};
-        var activation = activateTabWithoutFocusingWindow(tabId, knownTab, false);
-        var stable = activation.then(function () {
-          return isSessionCdpKeepAliveEnabled()
-            ? ensureBackgroundStableTab(tabId, null)
-            : recoverDiscardedTabForStableMode(tabId, null);
-        });
+        var stable = ensureBackgroundStableTab(tabId, knownTab);
         return stable.then(function () {
           return options.focusWindow === true
-            || options.foreground === true
-            || options.requiresForeground === true
             ? focusTabForCommand(tabId, null)
             : tabId;
         });
       }
 
-      function ensureForegroundOrCdp(tabId, knownTab, options) {
-        return preparePageCommandTab(tabId, knownTab, options);
-      }
-
-      function isSessionCdpKeepAliveForced() {
-        return session.forceCdpKeepAlive === true
-          || String(session.trigger || '').indexOf('schedule:') === 0
-          || String(session.entry || '') === 'schedule';
-      }
-
-      function isSessionCdpKeepAliveEnabled() {
-        return isSessionCdpKeepAliveForced() || session.sessionCdpKeepAlive === true;
-      }
-
-      function ensureKeepAlive(tabId, options) {
-        options = options || {};
-        if (!isSessionCdpKeepAliveEnabled()) {
-          if (!session.keepAliveDisabledLogged) {
-            session.keepAliveDisabledLogged = true;
-            session.addLog('本流程未启用 CDP 防节流保活：不建立 session 级长期 debugger lease；页面命令仍会按需使用短 CDP lease');
-          }
-          return Promise.resolve();
-        }
-        if (session.keepAliveClosing === true && session.status === 'running' && session.detachKeepAlivePromise) {
-          return session.detachKeepAlivePromise.then(function () { return ensureKeepAlive(tabId); });
-        }
-        if (session.status !== 'running') {
+      function ensureKeepAlive(tabId, signal) {
+        var currentSignal = session._runAbortController && session._runAbortController.signal;
+        if (session.status !== 'running' || (session.controller && !session.controller.isRunning())
+            || signal !== currentSignal || (signal && signal.aborted)) {
           return Promise.reject(new Error('当前 Flow 已结束，不能再创建 CDP lease'));
+        }
+        if (session.keepAliveClosing === true && session.detachKeepAlivePromise) {
+          return session.detachKeepAlivePromise.then(function () { return ensureKeepAlive(tabId, signal); });
         }
         if (session.keepAliveClosing === true) {
           return Promise.reject(new Error('当前 Flow 正在释放 CDP lease，不能创建新 lease'));
@@ -604,19 +567,16 @@
           return Promise.resolve();
         }
 
-        if (!session.backgroundStableModeLogged) {
-          session.backgroundStableModeLogged = true;
-          session.addLog('已启用 CDP 后台稳定模式：运行期间保持 debugger 附加，只激活目标 tab；意外断线会重接并重试当前命令，流程结束后自动 detach', { scope: 'run' });
-        }
-
         function finishAttached(lease) {
           session.keepAliveTabs[tabId] = true;
           session.keepAliveLeases = session.keepAliveLeases || {};
           session.keepAliveLeases[tabId] = lease;
-          session.addLog('已开启 CDP 防节流保活 (tabId=' + tabId + ')', { scope: 'run', tabId: tabId });
+          session.addLog('已建立运行会话 CDP 连接 (tabId=' + tabId + ')', { scope: 'run', tabId: tabId });
           return lease;
         }
-        var attaching = cdpSessionManager.acquire(tabId, { owner: 'FlowRun:' + String(session.runId || session.flowId || ''), type: 'flow-run' })
+        var attaching = cdpSessionManager.acquire(tabId, {
+          owner: 'FlowRun:' + String(session.runId || session.flowId || ''), type: 'flow-run', signal: signal,
+        })
           .then(finishAttached);
         session.keepAlivePromises[tabId] = attaching.finally(function () {
           if (session.keepAlivePromises && session.keepAlivePromises[tabId] === attachingPromise) {
@@ -627,6 +587,26 @@
         return attachingPromise;
       }
 
+      function closeCreatedTabs() {
+        var createdTabs = session.createdTabs || {};
+        session.createdTabs = {};
+        var pages = getConfig().pages || {};
+        return Promise.all(Object.keys(createdTabs).map(function (id) {
+          var tabId = Number(id);
+          var page = pages[createdTabs[id]];
+          if (!page || page.autoCloseOnComplete === false) return;
+          return aliveOrNull(tabId).then(function (alive) {
+            if (!alive || isTabClaimedByOther(session, tabId)) return;
+            return executeLifecycleAction(tabId, 'closeTab', {}, {}).then(function () {
+              session.addLog('流程完成，已自动关闭本次新打开的标签页 (tabId=' + tabId + ')', { scope: 'run', tabId: tabId });
+            });
+          }).catch(function (error) {
+            session.addLog('流程完成后自动关闭标签页失败 (tabId=' + tabId + '): ' + errorMessage(error), { level: 'warn', scope: 'run', tabId: tabId });
+          });
+        }));
+      }
+      session.closeCreatedTabs = closeCreatedTabs;
+
       function detachKeepAlive() {
         if (session.detachKeepAlivePromise) return session.detachKeepAlivePromise;
         session.keepAliveClosing = true;
@@ -634,8 +614,8 @@
           return Promise.resolve(session.keepAlivePromises[tid]).catch(function () { return null; });
         });
         var cleanup = Promise.all(pending).then(function () {
-          return cdpSessionManager.releaseOwner(
-            'FlowRun:' + String(session.runId || session.flowId || ''),
+          return pageAutomation.action.cleanupOwner(
+            String(session.runId || session.flowId || ''),
             { detachImmediately: true }
           );
         }).finally(function () {

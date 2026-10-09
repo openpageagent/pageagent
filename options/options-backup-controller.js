@@ -11,10 +11,12 @@
     return;
   }
 
-  var api = factory(root);
+  var configMigration = typeof module === 'object' && module.exports
+    ? require('../shared/config-migration.js') : root.PageAutomationConfigMigration;
+  var api = factory(root, configMigration);
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.OptionsBackupController = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (root, ConfigMigration) {
   'use strict';
 
   function requireFunction(value, name) {
@@ -319,6 +321,7 @@
       { id: 'mcpServers', label: 'HTTP MCP 服务器', note: '包含 Bearer Token 与自定义 Header 原值' },
       { id: 'modelSettings', label: '模型配置', note: 'API Key、Header 值等密钥不会导出' },
       { id: 'mcpSettings', label: 'MCP 服务器' },
+      { id: 'mailSettings', label: '邮件通知', note: '包含 SMTP 密码／授权码原值；导入会覆盖当前唯一发件账户' },
     ].concat(CONFIG_BACKUP_SECTIONS);
     var BACKUP_MODULE_IDS = dictionary();
     BACKUP_MODULE_DEFS.forEach(function (def) { setOwn(BACKUP_MODULE_IDS, def.id, true); });
@@ -439,7 +442,7 @@
     }
 
     function storageConfigForExport(sourceConfig) {
-      return safeClone(sourceConfig || {});
+      return ConfigMigration.cleanConfig(safeClone(sourceConfig || {}));
     }
 
     function objectFromArrayById(items, fallbackPrefix) {
@@ -636,6 +639,17 @@
     function connectionForBackup(connection) {
       connection = connection && typeof connection === 'object' && !Array.isArray(connection) ? connection : {};
       return safeClone(connection);
+    }
+
+    function mailSettingsForBackup(raw) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+          || typeof raw.port !== 'number'
+          || ['host', 'security', 'username', 'password', 'from', 'fromName'].some(function (key) {
+            return typeof raw[key] !== 'string';
+          })) {
+        throw backupError('invalid-mail-settings', '邮件通知配置格式无效，须包含完整的 SMTP 账户字段');
+      }
+      return safeClone(globalThis.PageAutomationMailSettings.validate(raw, true));
     }
 
     function skillForBackup(skill) {
@@ -848,6 +862,15 @@
         modules.mcpSettings = { label: backupModuleLabel('mcpSettings'), source: '/connections', items: mcpItems, order: mcpOrder };
       }
 
+      if (source.mailSettings !== undefined && source.mailSettings !== null) {
+        modules.mailSettings = {
+          label: backupModuleLabel('mailSettings'),
+          source: globalThis.PageAutomationMailSettings.SETTINGS_KEY,
+          items: { smtp: mailSettingsForBackup(source.mailSettings) },
+          order: ['smtp'],
+        };
+      }
+
       return modules;
     }
 
@@ -862,6 +885,7 @@
         readSkillsForBackup(),
         readMcpServersForBackup(),
         readMcpConnectionsForBackup(),
+        readLocalStorageValue(globalThis.PageAutomationMailSettings.SETTINGS_KEY),
       ]).then(function (results) {
         var runtimeConfig = results[0];
         if (!runtimeConfig || typeof runtimeConfig !== 'object' || Array.isArray(runtimeConfig)) {
@@ -877,6 +901,7 @@
           skills: results[6],
           mcpServers: results[7],
           mcpConnections: results[8],
+          mailSettings: results[9],
         };
       });
     }
@@ -894,7 +919,7 @@
         exportedAt: new Date().toISOString(),
         modules: selected,
         notes: {
-          scope: 'canonical ARP resources plus owned local HTTP MCP server state',
+          scope: 'canonical ARP resources plus owned local HTTP MCP server and SMTP mail settings',
           importMode: 'merge by default; replace mode clears selected Flow/FlowGroup collections through canonical resources',
           configDependencies: 'flow and flow group dependencies are included in pages, scripts and flows when present in the source config',
           conversations: 'Conversation JSON contains Artifact references but not image bytes; use the per-topic ZIP export for a restorable media-complete archive',
@@ -967,6 +992,7 @@
       if (moduleId === 'skills') return item.name || id;
       if (moduleId === 'mcpServers') return item.name || item.url || id;
       if (moduleId === 'mcpSettings') return item.clientName || item.url || id;
+      if (moduleId === 'mailSettings') return item.fromName ? item.fromName + ' <' + item.from + '>' : item.from || 'SMTP 发件账户';
       return id;
     }
 
@@ -992,6 +1018,7 @@
       if (moduleId === 'knowledge') return [item.sourceLabel || item.sourceKind || item.source && item.source.kind || '', item.type || '', item.updatedAt ? fmtTime(item.updatedAt) : ''].filter(Boolean).join(' · ');
       if (moduleId === 'skills') return [item.description || '', item.version || ''].filter(Boolean).join(' · ');
       if (moduleId === 'mcpServers') return [item.enabled === false ? '已停用' : '已启用', item.url || ''].filter(Boolean).join(' · ');
+      if (moduleId === 'mailSettings') return item.host + ':' + item.port + ' · ' + item.security.toUpperCase() + ' · 含密码／授权码，覆盖当前发件账户';
       return '';
     }
 
@@ -1163,6 +1190,14 @@
           if (moduleId === 'modelSettings' && hasOwn(rawModule, 'value')
               && (!rawModule.value || typeof rawModule.value !== 'object' || Array.isArray(rawModule.value))) {
             throw backupError('invalid-module-value', '备份模块 modelSettings 的 value 必须是对象');
+          }
+          if (moduleId === 'mailSettings') {
+            var mailItems = backupModuleItemsObject(module);
+            if (Object.keys(mailItems).length !== 1 || !hasOwn(mailItems, 'smtp')) {
+              throw backupError('invalid-mail-settings', '邮件通知备份必须且只能包含一个 SMTP 发件账户');
+            }
+            module.items = { smtp: mailSettingsForBackup(mailItems.smtp) };
+            module.order = ['smtp'];
           }
           setOwn(pkg.modules, moduleId, filterBuiltinBackupItems(moduleId, module));
         });
@@ -1436,7 +1471,7 @@
         ids.forEach(function (id) {
           if (!hasOwn(items, id)) return;
           if (isBuiltinConfigImport(def.configSection, id, items[id], runtimeConfig)) return;
-          var importedItem = sanitizeRuntimeValue(items[id]);
+          var importedItem = ConfigMigration.cleanItem(def.configSection, sanitizeRuntimeValue(items[id]));
           setOwn(section, id, def.configSection === 'flows' ? migrateLegacyPageNodes(importedItem) : importedItem);
         });
       });
@@ -1636,7 +1671,7 @@
 
     function upsertFlowBackupResource(section, id, item) {
       var spec = flowBackupResourceSpec(section);
-      var body = sanitizeRuntimeValue(item || {});
+      var body = ConfigMigration.cleanItem(section, sanitizeRuntimeValue(item || {}));
       body.id = String(id || body.id || '').trim();
       if (!body.id) return Promise.reject(new Error(section + ' 导入项缺少 ID'));
       if (section === 'flows' && !Array.isArray(body.nodes)) body.nodes = [];
@@ -1732,7 +1767,7 @@
           if (!hasOwn(sourceItems, id)) return;
           if (section !== 'urlTriggers' && isBuiltinConfigImport(section, id, sourceItems[id], preflight.runtimeConfig)) return;
           operation = operation.then(function () {
-            var item = sanitizeRuntimeValue(sourceItems[id]);
+            var item = ConfigMigration.cleanItem(section, sanitizeRuntimeValue(sourceItems[id]));
             if (!item.id) item.id = id;
             if (section === 'flows') migrateLegacyPageNodes(item);
             if (section === 'schedules') remapScheduleAssistant(item, preflight, '定时运行 ' + id);
@@ -2260,7 +2295,7 @@
               return;
             }
             var patch = dictionary();
-            ['enabled', 'url', 'clientName', 'runTabMode'].forEach(function (key) {
+            ['enabled', 'url', 'clientName', 'runTabMode', 'localToolsEnabled', 'localWorkingDirectory'].forEach(function (key) {
               if (hasOwn(backupItem, key)) setOwn(patch, key, safeClone(backupItem[key]));
             });
             if (!Object.keys(patch).length) {
@@ -2299,6 +2334,14 @@
         if (id.indexOf('service:') === 0) return id.slice('service:'.length);
       }
       return '';
+    }
+
+    function applyMailSettingsBackupImport(pkg, plan) {
+      if (!hasOwn(plan, 'mailSettings') || !pkg.modules.mailSettings) return Promise.resolve('');
+      var config = mailSettingsForBackup(pkg.modules.mailSettings.items.smtp);
+      return runtimeMessage('MAIL_SETTINGS_SAVE', config).then(function () {
+        return backupModuleLabel('mailSettings');
+      });
     }
 
     function refreshAfterBackupImport(pkg, plan) {
@@ -2351,6 +2394,9 @@
       }
       if (hasOwn(plan, 'mcpSettings')) {
         add('mcpSettings', function () { return applyMcpSettingsBackupImport(pkg, plan); });
+      }
+      if (hasOwn(plan, 'mailSettings')) {
+        add('mailSettings', function () { return applyMailSettingsBackupImport(pkg, plan); });
       }
       return steps;
     }

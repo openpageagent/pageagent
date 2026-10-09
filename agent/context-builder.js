@@ -463,12 +463,15 @@
     function remainingBudgets(input, active) {
       var budgets = input.budgets || {};
       var counters = active.counters || {};
-      return {
+      var remaining = {
         modelRequests: Math.max(0, Number(budgets.maxModelRequests) - Number(counters.modelRequestCount || 0)),
         iterations: Math.max(0, Number(budgets.maxIterations) - Number(counters.loopIterationCount || 0)),
         toolCalls: Math.max(0, Number(budgets.maxToolCalls) - Number(counters.toolCallCount || 0)),
-        wallTimeMs: Math.max(0, Number(budgets.maxWallTimeMs) - (Number(clock()) - Number(active.startedAt || clock()))),
       };
+      if (Number(budgets.maxWallTimeMs) > 0) {
+        remaining.wallTimeMs = Math.max(0, Number(budgets.maxWallTimeMs) - (Number(clock()) - Number(active.startedAt || clock())));
+      }
+      return remaining;
     }
     function incompleteUnits(units, throughSequence) {
       return units.filter(function (unit) { return unit.endSequence > throughSequence && unit.atomicComplete === false; });

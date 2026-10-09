@@ -126,9 +126,7 @@
     function reuseOrCreateTab(source, url, options) {
       options = options || {};
       var canonical = resolveCanonicalSource(source);
-      var foreground = options.focusWindow === true
-        || options.foreground === true
-        || options.requiresForeground === true;
+      var foreground = options.focusWindow === true;
       var existing = options.forceNew === true ? 0 : getTabId(canonical);
       function output(tabId, details) {
         return options.returnDetails === true ? Object.assign({ tabId: tabId }, details || {}) : tabId;

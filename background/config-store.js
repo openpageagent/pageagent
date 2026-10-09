@@ -149,7 +149,7 @@
         }
       }
       delete config['sui' + 'tes'];
-      return migrateLegacyFlowConfig(config);
+      return migrateLegacyFlowConfig(globalThis.PageAutomationConfigMigration.cleanConfig(config));
     }
 
     function stripRuntimeMetadata(value) {
@@ -179,6 +179,7 @@
     }
 
     function writeConfig(config) {
+      config = ensureConfig(config);
       return new Promise(function (resolve, reject) {
         chrome.storage.local.set({ [CONFIG_KEY]: config }, function () {
           if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));

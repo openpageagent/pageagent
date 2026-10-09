@@ -10,6 +10,9 @@
   var resourceClient = null;
   var renderSequence = 0;
   var searchTimer = 0;
+  var composingSearch = null;
+  var knowledgeLoadSequence = 0;
+  var skillLoadSequence = 0;
   var settingsSaveChain = Promise.resolve();
   var idempotencySequence = 0;
   var DEFAULT_PAGE_SIZE = 50;
@@ -65,6 +68,12 @@
   var knowledgeDraft = null;
   var skillDraft = null;
   var skillImportDraft = null;
+  var skillFilter = { q: '', page: 0 };
+  var selectedSkills = new Set();
+  var selectedKnowledge = new Set();
+  var activeTask = null;
+  var skillTrees = { skill: new Map(), import: new Map() };
+  var treeExpansion = { skill: new Map(), import: new Map() };
   var mcpDraft = null;
   var toolCallDraft = null;
   var operations = Object.create(null);
@@ -98,6 +107,172 @@
     var code = error && error.code ? '[' + error.code + '] ' : '';
     var message = error && error.message ? error.message : String(error || fallback || '资源操作失败');
     return code + message;
+  }
+
+  function yieldToPage() {
+    return new Promise(function (resolve) { root.setTimeout(resolve, 0); });
+  }
+
+  function taskRunning() { return !!(activeTask && activeTask.running); }
+
+  function renderTaskStatus() {
+    if (!activeTask) return '';
+    var task = activeTask;
+    return '<div class="knowledge-task-status" role="status" aria-live="polite">'
+      + '<span>' + esc(task.label) + '：' + esc(task.done) + ' / ' + esc(task.total)
+      + ' · 成功 ' + esc(task.succeeded) + ' · 失败 ' + esc(task.failures.length)
+      + (task.running ? (task.cancelled ? ' · 正在停止…' : ' · 处理中') : (task.cancelled ? ' · 已停止' : ' · 已结束')) + '</span>'
+      + '<progress max="' + Math.max(1, task.total) + '" value="' + task.done + '"></progress>'
+      + (task.detail ? '<span class="knowledge-task-detail">' + esc(task.detail) + '</span>' : '')
+      + (task.running ? '<button class="btn-small" data-knowledge-action="stop-task"' + (task.cancelled ? ' disabled' : '') + '>停止后续处理</button>'
+        : '<button type="button" class="btn-small" data-knowledge-action="dismiss-task" aria-label="关闭进度提示">关闭</button>')
+      + (task.failures.length ? '<details><summary>失败详情（显示前 20 项）</summary>'
+        + task.failures.slice(0, 20).map(function (failure) { return '<div>' + esc(failure) + '</div>'; }).join('') + '</details>' : '')
+      + '</div>';
+  }
+
+  function updateTaskStatus() {
+    var status = $('#knowledge-task-status');
+    if (status) status.innerHTML = renderTaskStatus();
+  }
+
+  function beginTask(label, total) {
+    root.clearTimeout(searchTimer);
+    renderSequence += 1;
+    knowledgeLoadSequence += 1;
+    skillLoadSequence += 1;
+    activeTask = { label: label, total: total, done: 0, succeeded: 0, failures: [], cancelled: false, running: true, detail: '' };
+    renderCurrentState();
+    scrollIntoView('#knowledge-task-status');
+    return activeTask;
+  }
+
+  async function runBatch(label, items, process, refresh) {
+    if (taskRunning()) return;
+    var task = beginTask(label, items.length);
+    try {
+      for (var index = 0; index < items.length; index += 1) {
+        if (task.cancelled) break;
+        var item = items[index];
+        task.detail = String(item.name || item.title || item.path || item.id || item);
+        updateTaskStatus();
+        await yieldToPage();
+        if (task.cancelled) break;
+        try {
+          await process(item, task);
+          task.succeeded += 1;
+        } catch (error) {
+          if (task.cancelled && error && error.name === 'AbortError') break;
+          task.failures.push(task.detail + '：' + errorText(error));
+        }
+        task.done += 1;
+      }
+      task.detail = '正在刷新列表…';
+      updateTaskStatus();
+      await refresh();
+    } catch (error) {
+      task.failures.push(errorText(error));
+    } finally {
+      task.running = false;
+      task.detail = '';
+      renderCurrentState(true);
+    }
+  }
+
+  function checkTaskCancelled(task) {
+    if (task && task.cancelled) throw new DOMException('已停止', 'AbortError');
+  }
+
+  function renderLocalPagination(page, total, action) {
+    var pages = Math.max(1, Math.ceil(total / DEFAULT_PAGE_SIZE));
+    return '<div class="knowledge-pagination"><span>第 ' + (page + 1) + ' / ' + pages + ' 页 · 共 ' + total + ' 项</span>'
+      + '<div class="knowledge-pagination-controls"><button class="btn-small" data-skill-action="' + action + '" data-page="' + (page - 1) + '"' + (page > 0 ? '' : ' disabled') + '>上一页</button>'
+      + '<button class="btn-small" data-skill-action="' + action + '" data-page="' + (page + 1) + '"' + (page + 1 < pages ? '' : ' disabled') + '>下一页</button></div></div>';
+  }
+
+  function renderSelectionToolbar(kind, count, allLabel) {
+    return '<div class="knowledge-batch-toolbar" data-selection-toolbar="' + kind + '">'
+      + '<span data-selection-count>已选 ' + count + ' 项</span>'
+      + '<button class="btn-small" data-knowledge-action="select-items" data-kind="' + kind + '" title="' + esc(allLabel) + '">全选</button>'
+      + '<button class="btn-small" data-knowledge-action="clear-selection" data-kind="' + kind + '" title="清空选择">清空</button>'
+      + '<button class="btn-small btn-danger-outline" data-knowledge-action="delete-selected" data-kind="' + kind + '" title="删除所选"' + (count ? '' : ' disabled') + '>删除</button></div>';
+  }
+
+  function updateSelectionCount(kind) {
+    var toolbar = $('[data-selection-toolbar="' + kind + '"]');
+    if (!toolbar) return;
+    var count = (kind === 'skill' ? selectedSkills : selectedKnowledge).size;
+    toolbar.querySelector('[data-selection-count]').textContent = '已选 ' + count + ' 项';
+    toolbar.querySelector('[data-knowledge-action="delete-selected"]').disabled = !count;
+  }
+
+  function renderSkillTree(items, kind, state, renderItem) {
+    var directories = new Map();
+    var tree = { children: new Map(), items: [], depth: -1 };
+    items.forEach(function (item) {
+      var directory = kind === 'import' ? item.rootDir : item.source && item.source.packageRoot;
+      var parts = String(directory || '').replace(/\\/g, '/').split('/').filter(Boolean);
+      var parent = tree;
+      var path = '';
+      var eligible = kind === 'import' || !skillReadonly(item);
+      var selected = kind === 'import' ? item.selected !== false : selectedSkills.has(item.id);
+      parts.forEach(function (part, depth) {
+        path += (path ? '/' : '') + part;
+        if (!parent.children.has(part)) {
+          var node = { path: path, name: part, depth: depth, children: new Map(), items: [], total: 0, eligible: 0, selected: 0 };
+          parent.children.set(part, node);
+          directories.set(path, node);
+        }
+        parent = parent.children.get(part);
+        parent.total += 1;
+        if (eligible) {
+          parent.eligible += 1;
+          if (selected) parent.selected += 1;
+        }
+      });
+      parent.items.push(item);
+    });
+    skillTrees[kind] = directories;
+    var rows = [];
+    function visit(node) {
+      node.children.forEach(function (child) {
+        var expanded = treeExpansion[kind].has(child.path) ? treeExpansion[kind].get(child.path) : (child.depth === 0 || !!state.q);
+        rows.push({ node: child, expanded: expanded, depth: child.depth });
+        if (expanded) visit(child);
+      });
+      node.items.forEach(function (item) { rows.push({ item: item, depth: node.depth + 1 }); });
+    }
+    visit(tree);
+    state.page = Math.min(state.page || 0, Math.max(0, Math.ceil(rows.length / DEFAULT_PAGE_SIZE) - 1));
+    return '<div class="skill-directory-tree">' + rows.slice(state.page * DEFAULT_PAGE_SIZE, (state.page + 1) * DEFAULT_PAGE_SIZE).map(function (row) {
+      var indent = ' style="--tree-depth:' + Math.min(12, row.depth) + '"';
+      if (row.item) return '<div class="skill-tree-entry"' + indent + '>' + renderItem(row.item) + '</div>';
+      var node = row.node;
+      return '<div class="skill-tree-folder"' + indent + '>'
+        + '<button type="button" class="btn-small" data-skill-action="tree-toggle" data-tree-kind="' + kind + '" data-tree-path="' + esc(node.path) + '" aria-expanded="' + row.expanded + '" aria-label="' + (row.expanded ? '收起 ' : '展开 ') + esc(node.path) + '"></button>'
+        + '<input type="checkbox" data-skill-tree-select="' + kind + '" data-tree-path="' + esc(node.path) + '" aria-label="选择目录 ' + esc(node.path) + ' 下的全部可选 Skill"'
+        + (node.eligible && node.selected === node.eligible ? ' checked' : '') + (!node.eligible ? ' disabled' : '')
+        + (node.selected > 0 && node.selected < node.eligible ? ' data-indeterminate="true"' : '') + '>'
+        + '<button type="button" class="skill-tree-folder-name" data-skill-action="tree-toggle" data-tree-kind="' + kind + '" data-tree-path="' + esc(node.path) + '" title="' + esc(node.path) + '">' + esc(node.name) + '</button>'
+        + '<span>' + node.total + ' 个 Skill · 已选 ' + node.selected + '</span></div>';
+    }).join('') + '</div>' + renderLocalPagination(state.page, rows.length, kind === 'import' ? 'import-page' : 'page')
+      + '<div class="form-help">按原目录展示，每页最多 50 个目录或 Skill 节点；目录勾选包含未展开、未显示在本页的子项。搜索时仅选择匹配项。</div>';
+  }
+
+  function selectSkillDirectory(kind, path, checked) {
+    var node = skillTrees[kind].get(path);
+    if (!node) return;
+    function select(directory) {
+      directory.items.forEach(function (item) {
+        if (kind === 'import') item.selected = checked;
+        else if (!skillReadonly(item)) {
+          if (checked) selectedSkills.add(item.id); else selectedSkills.delete(item.id);
+        }
+      });
+      directory.children.forEach(select);
+    }
+    select(node);
+    renderCurrentState(false, 'skill');
   }
 
   function ensureClient() {
@@ -241,11 +416,14 @@
   }
 
   function loadKnowledgePage() {
+    var sequence = ++knowledgeLoadSequence;
     var query = currentKnowledgeQuery();
     return ensureClient().get('/knowledge', { query: query }).then(function (envelope) {
+      if (sequence !== knowledgeLoadSequence) return;
       viewState.knowledgePage = normalizeCollection(envelopeData(envelope, '知识列表'), { limit: query.limit });
       delete viewState.errors.knowledge;
     }, function (error) {
+      if (sequence !== knowledgeLoadSequence) return;
       viewState.knowledgePage = { items: [], total: 0, cursor: 0, nextCursor: null, limit: query.limit };
       viewState.errors.knowledge = errorText(error, '知识列表读取失败');
     });
@@ -262,15 +440,23 @@
   }
 
   function loadSkills() {
+    var sequence = ++skillLoadSequence;
     return collectPagedResources('/skills', {
       limit: 100,
       includeArchived: true,
       includeDisabled: true,
     }).then(function (result) {
-      viewState.skills = result.items;
+      if (sequence !== skillLoadSequence) return;
+      viewState.skills = result.items.sort(function (left, right) {
+        if (isBuiltinSkill(left) !== isBuiltinSkill(right)) return isBuiltinSkill(left) ? -1 : 1;
+        return Number(right.updatedAt || 0) - Number(left.updatedAt || 0);
+      });
       viewState.skillTotal = result.total;
+      var available = new Set(result.items.filter(function (item) { return !skillReadonly(item); }).map(function (item) { return item.id; }));
+      selectedSkills.forEach(function (id) { if (!available.has(id)) selectedSkills.delete(id); });
       delete viewState.errors.skills;
     }, function (error) {
+      if (sequence !== skillLoadSequence) return;
       viewState.skills = [];
       viewState.skillTotal = 0;
       viewState.errors.skills = errorText(error, 'Skill 列表读取失败');
@@ -367,8 +553,8 @@
       + '<input type="search" id="knowledge-search" placeholder="搜索知识" value="' + esc(queryState.q) + '">'
       + '<select id="knowledge-filter-type">' + renderTypeOptions(queryState.type, true) + '</select>'
       + '<select id="knowledge-filter-source">' + renderSourceOptions(queryState.sourceKind) + '</select>'
-      + '<label class="knowledge-check"><input type="checkbox" id="knowledge-include-archived"' + (queryState.includeArchived ? ' checked' : '') + '>包含归档</label>'
-      + '<label class="knowledge-check"><input type="checkbox" id="knowledge-include-stale"' + (queryState.includeStale ? ' checked' : '') + '>包含陈旧和拒绝项</label>'
+      + '<label class="switch-label"><input type="checkbox" id="knowledge-include-archived"' + (queryState.includeArchived ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">包含归档</span></label>'
+      + '<label class="switch-label"><input type="checkbox" id="knowledge-include-stale"' + (queryState.includeStale ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">包含陈旧和拒绝项</span></label>'
       + '</div>';
   }
 
@@ -417,6 +603,7 @@
       badges += '<span class="badge' + (item.verificationState === 'verified' ? ' on' : (danger ? ' danger' : '')) + '">' + esc(item.verificationState) + '</span>';
     }
     return '<div class="item-card knowledge-card' + (knowledgeDraft && knowledgeDraft.id === item.id ? ' selected' : '') + '">'
+      + (!readonly ? '<input type="checkbox" data-knowledge-select="' + esc(item.id) + '" aria-label="选择 ' + esc(item.title || item.id) + '"' + (selectedKnowledge.has(item.id) ? ' checked' : '') + '>' : '')
       + '<div class="knowledge-card-main" data-knowledge-action="edit" data-id="' + esc(item.id) + '">'
       + '<span class="item-title">' + esc(item.title || '未命名知识') + '</span>'
       + '<span class="item-sub">' + esc(item.summary || item.snippet || '') + '</span>'
@@ -461,8 +648,8 @@
       + '<div class="form-row"><label>来源地址</label><input type="text" value="' + esc(source.uri || '') + '" disabled></div>'
       + '</div>'
       + '<div class="knowledge-editor-checks">'
-      + '<label><input type="checkbox" id="knowledge-pinned"' + (item.pinned ? ' checked' : '') + (readonly ? ' disabled' : '') + '>置顶</label>'
-      + '<label><input type="checkbox" id="knowledge-archived"' + (item.archived ? ' checked' : '') + (readonly ? ' disabled' : '') + '>归档</label>'
+      + '<label class="switch-label"><input type="checkbox" id="knowledge-pinned"' + (item.pinned ? ' checked' : '') + (readonly ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">置顶</span></label>'
+      + '<label class="switch-label"><input type="checkbox" id="knowledge-archived"' + (item.archived ? ' checked' : '') + (readonly ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">归档</span></label>'
       + '</div>'
       + '<div class="editor-actions">'
       + (readonly ? '' : '<button class="btn-primary" data-knowledge-action="save">保存知识</button>')
@@ -477,6 +664,7 @@
       + '<div class="knowledge-mcp-head"><div><h3>知识库</h3><p>维护对话可检索的事实、步骤和经验。内置知识与外部来源保持只读。</p></div></div>'
       + renderError(viewState.errors.knowledge)
       + renderToolbar() + renderSettings() + renderStats() + renderPagination()
+      + renderSelectionToolbar('knowledge', selectedKnowledge.size, '全选本页可删除项')
       + '<div class="item-list knowledge-list">'
       + (items.length ? items.map(renderKnowledgeItem).join('') : '<div class="placeholder">没有匹配的知识。</div>')
       + '</div>' + renderPagination()
@@ -490,20 +678,25 @@
       || source.kind === 'builtin' || source.managed === 'builtin' || source.importer === 'builtin-skill-loader'));
   }
 
+  function skillReadonly(item) { return isBuiltinSkill(item) || !!(item && item.managedSkill); }
+
   function renderSkillCard(item) {
     var builtin = isBuiltinSkill(item);
+    var readonly = skillReadonly(item);
     return '<div class="item-card knowledge-skill-card">'
+      + (!readonly ? '<input type="checkbox" data-skill-select="' + esc(item.id) + '" aria-label="选择 ' + esc(item.name || item.id) + '"' + (selectedSkills.has(item.id) ? ' checked' : '') + '>' : '')
       + '<div class="knowledge-card-main" data-skill-action="edit" data-id="' + esc(item.id) + '">'
       + '<span class="item-title">' + esc(item.name || item.id || 'Skill') + '</span>'
       + '<span class="item-sub">' + esc(item.description || '') + '</span>'
-      + '<span class="knowledge-meta">资源 ' + esc((item.resources || []).length) + ' 个 · 更新 ' + esc(fmtTime(item.updatedAt)) + '</span>'
+      + (item.source && item.source.packageRoot ? '<span class="knowledge-meta">目录：' + esc(item.source.packageRoot) + '</span>' : '')
+      + '<span class="knowledge-meta">资源 ' + esc(item.resourceCount || (item.resources || []).length) + ' 个 · 更新 ' + esc(fmtTime(item.updatedAt)) + '</span>'
       + '</div>'
       + (builtin ? '<span class="badge builtin">内置</span>' : '<span class="badge">用户</span>')
       + (item.enabled === false ? '<span class="badge">停用</span>' : '')
       + (item.archived ? '<span class="badge">归档</span>' : '')
       + '<button class="btn-small" data-skill-action="edit" data-id="' + esc(item.id) + '">查看</button>'
-      + (!item.archived ? '<button class="btn-small btn-danger-outline" data-skill-action="archive" data-id="' + esc(item.id) + '">归档</button>' : '')
-      + '<button class="btn-small btn-danger-outline" data-skill-action="delete" data-id="' + esc(item.id) + '">删除</button>'
+      + (!item.archived && !readonly ? '<button class="btn-small btn-danger-outline" data-skill-action="archive" data-id="' + esc(item.id) + '">归档</button>' : '')
+      + (!readonly ? '<button class="btn-small btn-danger-outline" data-skill-action="delete" data-id="' + esc(item.id) + '">删除</button>' : '')
       + '</div>';
   }
 
@@ -518,30 +711,46 @@
     skillDraft.archived = $('#skill-edit-archived').checked;
   }
 
+  function renderSkillResources(item) {
+    var resources = item.resources || [];
+    return '<div class="form-row"><label>附带资源（' + resources.length + ' 个，不含 SKILL.md）</label>'
+      + (resources.length ? '<div class="skill-resource-list">' + resources.map(function (resource, index) {
+        var metadataOnly = resource.textStored === false;
+        return '<details><summary' + (metadataOnly ? '' : ' data-skill-action="view-resource" data-resource-index="' + index + '"') + '>'
+          + '<span class="skill-resource-path">' + esc(resource.path || resource.name || resource.id) + '</span>'
+          + (metadataOnly ? '<span class="skill-import-file-size">仅保存文件信息</span>' : '')
+          + '</summary><pre class="mcp-snippet">' + (metadataOnly ? '此文件未保存原始内容，无法预览；agent 也只能读取文件信息。' : '展开后读取文本内容。')
+          + '</pre></details>';
+      }).join('') + '</div>' : '<div class="form-help">没有附带资源。</div>')
+      + '</div>';
+  }
+
   function renderSkillEditor() {
     if (!skillDraft) return '';
     var item = skillDraft;
-    var builtin = isBuiltinSkill(item);
+    var builtin = skillReadonly(item);
     return '<div class="editor knowledge-skill-editor">'
       + '<h3>' + esc(item.name || 'Skill') + '</h3>'
-      + (builtin ? '<div class="readonly-banner">内置 Skill 由扩展维护。保存、归档或删除会被拒绝，并显示具体原因。</div>' : '')
+      + (builtin ? '<div class="readonly-banner">此 Skill 由扩展维护，只读。</div>' : '')
+      + (item.source && item.source.packageRoot ? '<div class="form-help">目录：' + esc(item.source.packageRoot) + '</div>' : '')
       + '<div class="form-grid">'
       + '<div class="form-row"><label>名称</label><input type="text" id="skill-edit-name" value="' + esc(item.name || '') + '"' + (builtin ? ' disabled' : '') + '></div>'
       + '<div class="form-row"><label>版本</label><input type="text" id="skill-edit-version" value="' + esc(item.version || '1') + '"' + (builtin ? ' disabled' : '') + '></div>'
       + '</div>'
       + '<div class="form-row"><label>说明</label><textarea id="skill-edit-description" rows="3"' + (builtin ? ' disabled' : '') + '>' + esc(item.description || '') + '</textarea></div>'
-      + '<div class="form-row"><label>指令</label><textarea id="skill-edit-instructions" rows="14"' + (builtin ? ' disabled' : '') + '>' + esc(item.instructions || '') + '</textarea></div>'
+      + '<div class="form-row"><label>指令（SKILL.md 正文）</label><textarea id="skill-edit-instructions" rows="14"' + (builtin ? ' disabled' : '') + '>' + esc(item.instructions || '') + '</textarea></div>'
+      + renderSkillResources(item)
       + '<div class="form-row"><label>标签</label><input type="text" id="skill-edit-tags" value="' + esc((item.tags || []).join(', ')) + '"' + (builtin ? ' disabled' : '') + '></div>'
       + '<div class="knowledge-editor-checks">'
-      + '<label><input type="checkbox" id="skill-edit-enabled"' + (item.enabled !== false ? ' checked' : '') + (builtin ? ' disabled' : '') + '>启用</label>'
-      + '<label><input type="checkbox" id="skill-edit-archived"' + (item.archived ? ' checked' : '') + (builtin ? ' disabled' : '') + '>归档</label>'
+      + '<label class="switch-label"><input type="checkbox" id="skill-edit-enabled"' + (item.enabled !== false ? ' checked' : '') + (builtin ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">启用</span></label>'
+      + '<label class="switch-label"><input type="checkbox" id="skill-edit-archived"' + (item.archived ? ' checked' : '') + (builtin ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">归档</span></label>'
       + '<span>资源 ' + esc((item.resources || []).length) + ' 个</span>'
       + '</div>'
       + '<div class="editor-actions">'
-      + '<button class="btn-primary" data-skill-action="save" data-id="' + esc(item.id) + '">保存 Skill</button>'
+      + (!builtin ? '<button class="btn-primary" data-skill-action="save" data-id="' + esc(item.id) + '">保存 Skill</button>' : '')
       + '<button class="btn-secondary" data-skill-action="cancel-edit">取消</button>'
       + '<span class="spacer"></span>'
-      + '<button class="btn-danger" data-skill-action="delete" data-id="' + esc(item.id) + '">删除</button>'
+      + (!builtin ? '<button class="btn-danger" data-skill-action="delete" data-id="' + esc(item.id) + '">删除</button>' : '')
       + '</div></div>';
   }
 
@@ -554,10 +763,6 @@
     return index === -1 ? '' : String(path).slice(0, index);
   }
 
-  function pathWithin(path, directory) {
-    return !directory || path === directory || path.indexOf(directory + '/') === 0;
-  }
-
   function isSkillMarkdown(path) {
     return /(^|\/)skill\.md$/i.test(String(path || ''));
   }
@@ -567,29 +772,52 @@
       || /(^|\/)\.ds_store$/i.test(path);
   }
 
-  function detectSkillPackages(files) {
-    files = Array.prototype.slice.call(files || []).filter(function (file) {
+  async function detectSkillPackages(files, task) {
+    var entries = [];
+    var paths = [];
+    var packagesByRoot = new Map();
+    for (var index = 0; index < files.length; index += 1) {
+      if (index % 250 === 0) {
+        task.done = index;
+        task.detail = '查找 SKILL.md';
+        updateTaskStatus();
+        await yieldToPage();
+        checkTaskCancelled(task);
+      }
+      var file = files[index];
       var path = normalizeSkillFilePath(file);
-      return path && !isIgnoredImportPath(path);
-    });
-    var entries = files.filter(function (file) { return isSkillMarkdown(normalizeSkillFilePath(file)); }).map(function (file) {
-      var path = normalizeSkillFilePath(file);
-      return { id: path, path: path, rootDir: pathDirectory(path), file: file, selected: true, files: [] };
-    }).sort(function (left, right) {
-      return left.path.split('/').length - right.path.split('/').length || left.path.localeCompare(right.path);
-    });
-    entries.forEach(function (entry) {
-      var childRoots = entries.filter(function (candidate) {
-        return candidate !== entry && candidate.rootDir && pathWithin(candidate.rootDir, entry.rootDir);
-      }).map(function (candidate) { return candidate.rootDir; });
-      entry.files = files.filter(function (file) {
-        var path = normalizeSkillFilePath(file);
-        if (!pathWithin(path, entry.rootDir)) return false;
-        return !childRoots.some(function (childRoot) {
-          return path !== entry.path && pathWithin(path, childRoot);
-        });
-      });
-    });
+      if (!path || isIgnoredImportPath(path)) continue;
+      paths.push({ file: file, path: path });
+      if (!isSkillMarkdown(path)) continue;
+      var directory = pathDirectory(path);
+      if (packagesByRoot.has(directory)) continue;
+      var entry = { id: path, path: path, rootDir: directory, file: file, selected: true, files: [] };
+      packagesByRoot.set(directory, entry);
+      entries.push(entry);
+    }
+    // Each file belongs to its nearest ancestor containing SKILL.md.
+    var owners = new Map();
+    for (var position = 0; position < paths.length; position += 1) {
+      if (position % 250 === 0) {
+        task.done = files.length + position;
+        task.detail = '分配资源文件 · 已发现 ' + entries.length + ' 个 Skill';
+        updateTaskStatus();
+        await yieldToPage();
+        checkTaskCancelled(task);
+      }
+      var fileEntry = paths[position];
+      var parent = pathDirectory(fileEntry.path);
+      var visited = [];
+      while (!packagesByRoot.has(parent) && !owners.has(parent) && parent) {
+        visited.push(parent);
+        parent = pathDirectory(parent);
+      }
+      var owner = packagesByRoot.get(parent) || owners.get(parent) || null;
+      visited.forEach(function (dir) { owners.set(dir, owner); });
+      if (owner) owner.files.push(fileEntry.file);
+    }
+    task.done = task.total;
+    task.succeeded = files.length;
     return entries;
   }
 
@@ -662,11 +890,13 @@
     return 'resource';
   }
 
-  function readSkillPackage(skillPackage, sourceUri) {
-    var entryFile = skillPackage.files.filter(function (file) {
-      return normalizeSkillFilePath(file) === skillPackage.path;
-    })[0] || skillPackage.file;
+  function readSkillPackage(skillPackage, sourceUri, task) {
+    var entryFile = skillPackage.file;
     if (!entryFile) return Promise.reject(new Error('Skill 包缺少 SKILL.md'));
+    if (entryFile.size > 2000000) return Promise.reject(new Error('SKILL.md 超过 2 MB'));
+    if (skillPackage.files.length > 1001) return Promise.reject(new Error('Skill 资源超过 1000 个'));
+    var textBytes = skillPackage.files.reduce(function (total, file) { return total + (isLikelyTextFile(file) ? file.size : 0); }, 0);
+    if (textBytes > 16 * 1024 * 1024) return Promise.reject(new Error('Skill 文本资源合计超过 16 MiB，请精简后重试'));
     return readFileText(entryFile).then(function (markdown) {
       var parsed = parseFrontmatter(markdown);
       var name = String(parsed.metadata.name || '').trim();
@@ -680,6 +910,7 @@
         var fullPath = normalizeSkillFilePath(file);
         if (fullPath === skillPackage.path) return;
         chain = chain.then(function () {
+          checkTaskCancelled(task);
           var path = relativeSkillPath(fullPath, skillPackage.rootDir);
           var resource = {
             path: path,
@@ -731,39 +962,61 @@
   }
 
   function renderSkillImportEditor() {
-    if (!skillImportDraft) return '';
+    if (!skillImportDraft) { skillTrees.import.clear(); return ''; }
     var packages = skillImportDraft.packages || [];
-    var packageHtml = packages.map(function (pkg) {
-      return '<label class="skill-import-file-row">'
+    var query = String(skillImportDraft.q || '').trim().toLowerCase();
+    var filtered = packages.filter(function (pkg) { return !query || pkg.path.toLowerCase().indexOf(query) !== -1; });
+    var packageHtml = renderSkillTree(filtered, 'import', skillImportDraft, function (pkg) {
+      return '<div class="skill-import-package"><label class="skill-import-file-row">'
         + '<input type="checkbox" data-skill-package-select="' + esc(pkg.id) + '"' + (pkg.selected !== false ? ' checked' : '') + '>'
-        + '<span class="skill-import-file-path">' + esc(pkg.rootDir || pkg.path) + '</span>'
-        + '<span class="skill-import-file-size">' + esc(pkg.files.length) + ' 个文件</span>'
-        + '</label>';
-    }).join('');
+        + '<span class="skill-import-file-path" title="' + esc(pkg.path) + '">SKILL.md</span>'
+        + '<span class="skill-import-file-size">' + esc(pkg.files.length) + ' 个文件（含 SKILL.md）</span>'
+        + (pkg.error ? '<span class="skill-import-error">' + esc(pkg.error) + '</span>' : '')
+        + '</label><details class="skill-import-files"><summary>查看文件清单</summary>'
+        + '<ul class="skill-import-file-list">' + pkg.files.map(function (file) {
+          var fullPath = normalizeSkillFilePath(file);
+          var path = relativeSkillPath(fullPath, pkg.rootDir);
+          var kind = fullPath === pkg.path ? '入口文件' : (isLikelyTextFile(file) ? '文本资源' : '仅记录文件信息');
+          return '<li class="skill-import-resource-row">'
+            + '<span class="skill-import-file-path" title="' + esc(path) + '">' + esc(path) + '</span>'
+            + '<span class="skill-import-file-size">' + kind + '</span></li>';
+        }).join('') + '</ul></details></div>';
+    });
     return '<div class="editor knowledge-skill-editor">'
       + '<h3>导入 Skill</h3>'
       + '<div class="readonly-banner">选择包含 SKILL.md 的 Skill 包。指令和文本资源会作为本地 Skill 内容保存，脚本与资源文件不会在导入时执行。</div>'
+      + '<div class="form-help">单个 SKILL.md 最大 2 MB；每个 Skill 最多 1000 个资源，文本合计最大 16 MiB。超限项会单独报告。</div>'
       + '<div class="form-grid">'
       + '<div class="form-row"><label>选择 Skill 文件夹</label><input type="file" id="skill-import-directory" webkitdirectory multiple></div>'
       + '<div class="form-row"><label>选择 SKILL.md 和资源</label><input type="file" id="skill-import-files" multiple></div>'
       + '</div>'
-      + (packages.length ? '<div class="skill-import-drawer-list">' + packageHtml + '</div>' : '')
+      + (packages.length ? '<input type="search" id="skill-import-search" aria-label="搜索待导入目录路径（不含 Skill 内容）" placeholder="搜索待导入目录路径（不含 Skill 内容）" title="仅匹配待导入 SKILL.md 的文件路径，不搜索文件内的名称、说明或正文" value="' + esc(skillImportDraft.q || '') + '">'
+        + '<div class="knowledge-batch-toolbar"><span id="skill-import-selected-count">已选 ' + packages.filter(function (pkg) { return pkg.selected !== false; }).length + ' / ' + packages.length + ' 个 Skill</span>'
+        + '<button class="btn-small" data-skill-action="import-select-all" title="全选搜索结果">全选</button><button class="btn-small" data-skill-action="import-clear" title="清空选择">清空</button></div>'
+        + '<div class="skill-import-drawer-list">' + packageHtml + '</div>' : '')
       + '<div class="form-row"><label>来源地址</label><input type="text" id="skill-import-source-uri" value="' + esc(skillImportDraft.sourceUri || '') + '" placeholder="可选"></div>'
       + '<div class="form-row"><label>或粘贴 SKILL.md</label><textarea id="skill-import-markdown" rows="12" placeholder="---&#10;name: example&#10;description: ...&#10;---&#10;&#10;# Instructions">' + esc(skillImportDraft.markdown || '') + '</textarea></div>'
       + '<div class="editor-actions"><button class="btn-primary" data-skill-action="import">导入 Skill</button><button class="btn-secondary" data-skill-action="cancel-import">取消</button></div>'
       + '</div>';
   }
 
-  function renderSkillSection() {
-    var skills = viewState.skills.slice().sort(function (left, right) {
-      if (isBuiltinSkill(left) !== isBuiltinSkill(right)) return isBuiltinSkill(left) ? -1 : 1;
-      return Number(right.updatedAt || 0) - Number(left.updatedAt || 0);
+  function filteredSkills() {
+    var query = skillFilter.q.trim().toLowerCase();
+    return viewState.skills.filter(function (item) {
+      return !query || [item.name, item.description, item.id, item.source && item.source.packageRoot, (item.tags || []).join(' ')].join(' ').toLowerCase().indexOf(query) !== -1;
     });
+  }
+
+  function renderSkillSection() {
+    var skills = filteredSkills();
+    if (!skills.length) skillTrees.skill.clear();
     return '<div class="knowledge-skill-section">'
       + '<div class="knowledge-mcp-head"><div><h3>Skill</h3><p>Skill 把可复用指令和参考资源组织成一个可管理的能力包。</p></div><button class="btn-secondary" data-skill-action="new-import">导入 Skill</button></div>'
       + renderError(viewState.errors.skills)
+      + '<input type="search" id="skill-search" aria-label="搜索 Skill" placeholder="搜索 Skill 名称、说明、标签或目录" value="' + esc(skillFilter.q) + '">'
+      + renderSelectionToolbar('skill', selectedSkills.size, '全选搜索结果中可删除项')
       + '<div class="item-list knowledge-skill-list">'
-      + (skills.length ? skills.map(renderSkillCard).join('') : '<div class="placeholder">尚无 Skill。可以选择 Skill 文件夹或粘贴 SKILL.md。</div>')
+      + (skills.length ? renderSkillTree(skills, 'skill', skillFilter, renderSkillCard) : '<div class="placeholder">没有匹配的 Skill。可以导入 Skill 或修改搜索条件。</div>')
       + '</div>'
       + '<div id="skill-import-editor-wrap">' + renderSkillImportEditor() + '</div>'
       + '<div id="skill-editor-wrap">' + renderSkillEditor() + '</div>'
@@ -898,8 +1151,8 @@
       + '<div class="form-row"><label>自定义 Header</label><textarea id="http-mcp-headers" rows="4" placeholder="' + (existing && auth.customHeaderNames && auth.customHeaderNames.length ? '已配置 ' + esc(auth.customHeaderNames.join(', ')) + '；留空保持不变' : 'X-Api-Key: ...') + '">' + esc(item._headersText || '') + '</textarea></div>'
       + '<div class="knowledge-editor-checks">'
       + '<label class="switch-label"><input type="checkbox" id="http-mcp-enabled"' + (item.enabled !== false ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">启用</span></label>'
-      + '<label class="knowledge-check"><input type="checkbox" id="http-mcp-browser-cookies"' + (item.useBrowserCookies === true ? ' checked' : '') + '>使用浏览器登录 Cookie</label>'
-      + (existing ? '<label class="knowledge-check"><input type="checkbox" id="http-mcp-clear-token"' + (item._clearBearerToken ? ' checked' : '') + '>清除 Token</label><label class="knowledge-check"><input type="checkbox" id="http-mcp-clear-headers"' + (item._clearHeaders ? ' checked' : '') + '>清除 Header</label>' : '<input type="checkbox" id="http-mcp-clear-token" hidden><input type="checkbox" id="http-mcp-clear-headers" hidden>')
+      + '<label class="switch-label"><input type="checkbox" id="http-mcp-browser-cookies"' + (item.useBrowserCookies === true ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">使用浏览器登录 Cookie</span></label>'
+      + (existing ? '<label class="switch-label"><input type="checkbox" id="http-mcp-clear-token"' + (item._clearBearerToken ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">清除 Token</span></label><label class="switch-label"><input type="checkbox" id="http-mcp-clear-headers"' + (item._clearHeaders ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">清除 Header</span></label>' : '<input type="checkbox" id="http-mcp-clear-token" hidden><input type="checkbox" id="http-mcp-clear-headers" hidden>')
       + '</div>'
       + '<p class="form-help">Cookie 默认隔离。开启后尝试复用当前浏览器登录态，需服务端支持 Cookie 认证并符合浏览器 Cookie 策略。仅使用 Cookie 时，请清除已保存的 Token 和 Authorization Header。</p>'
       + '<div class="editor-actions"><button class="btn-primary" data-http-mcp-action="save">保存服务器</button><button class="btn-secondary" data-http-mcp-action="cancel">取消</button></div>'
@@ -985,17 +1238,25 @@
     captureToolCallDraft();
   }
 
-  function renderCurrentState(skipCapture) {
+  function renderCurrentState(skipCapture, section) {
     if (skipCapture !== true) captureDrafts();
     var element = $('#knowledge-root');
     if (!element) return;
     // innerHTML 重建会替换搜索框节点导致失焦；重建后恢复焦点与光标。
     var active = document.activeElement;
-    var restoreSearch = !!(active && active.id === 'knowledge-search');
+    var restoreSearch = isSearchInput(active);
+    var searchId = restoreSearch ? active.id : '';
     var caret = restoreSearch ? active.selectionStart : 0;
-    element.innerHTML = renderMcpSection() + renderSkillSection() + renderKnowledgeSection();
+    var skillSection = section === 'skill' && element.querySelector('.knowledge-skill-section');
+    var knowledgeSection = section === 'knowledge' && element.querySelector('.knowledge-domain-section');
+    if (skillSection) skillSection.outerHTML = renderSkillSection();
+    else if (knowledgeSection) knowledgeSection.outerHTML = renderKnowledgeSection();
+    else element.innerHTML = '<div id="knowledge-task-status">' + renderTaskStatus() + '</div>'
+        + '<fieldset class="knowledge-content"' + (taskRunning() ? ' disabled' : '') + '>'
+        + renderMcpSection() + renderSkillSection() + renderKnowledgeSection() + '</fieldset>';
+    element.querySelectorAll('[data-indeterminate]').forEach(function (input) { input.indeterminate = true; });
     if (restoreSearch) {
-      var search = $('#knowledge-search');
+      var search = $('#' + searchId);
       if (search) {
         search.focus();
         try { search.setSelectionRange(caret, caret); } catch (_) {}
@@ -1005,6 +1266,7 @@
 
   function render() {
     if (!initialized) init(deps);
+    if (taskRunning()) return Promise.resolve();
     var sequence = ++renderSequence;
     captureDrafts();
     return loadAll().then(function () {
@@ -1028,6 +1290,7 @@
   }
 
   function newKnowledge() {
+    if (taskRunning()) return;
     knowledgeDraft = {
       type: 'custom', title: '', summary: '', content: '', tags: [], sourceKind: 'auto',
       source: { kind: 'auto' }, pinned: false, archived: false, confidence: 0.8,
@@ -1079,16 +1342,34 @@
   }
 
   function deleteKnowledge(id) {
-    id = String(id || '').trim();
-    if (!id || !confirmAction('删除这条知识？')) return Promise.resolve();
-    var uri = knowledgeUri(id);
-    return ensureClient().get(uri).then(function () {
-      return ensureClient().authorizedDelete(uri, mutationOptions({ ifMatch: 'cached' }));
-    }).then(function () {
-      if (knowledgeDraft && knowledgeDraft.id === id) knowledgeDraft = null;
-      toast('知识已删除');
-      return render();
-    }).catch(function (error) { toast(errorText(error), true); });
+    return deleteItems('knowledge', id ? [id] : []);
+  }
+
+  function deleteItems(kind, ids) {
+    if (taskRunning() || !ids.length || !confirmAction('删除所选的 ' + ids.length + ' 个' + (kind === 'skill' ? ' Skill' : '知识条目') + '？此操作不可恢复。')) return Promise.resolve();
+    var selection = kind === 'skill' ? selectedSkills : selectedKnowledge;
+    var names = new Map((kind === 'skill' ? viewState.skills : viewState.knowledgePage.items).map(function (item) {
+      return [item.id, item.name || item.title];
+    }));
+    var items = ids.map(function (id) { return { id: id, name: names.get(id) || id }; });
+    return runBatch('删除' + (kind === 'skill' ? ' Skill' : '知识'), items, async function (item) {
+      var id = item.id;
+      var uri = kind === 'skill' ? skillUri(id) : knowledgeUri(id);
+      await ensureClient().get(uri);
+      await ensureClient().authorizedDelete(uri, mutationOptions({ ifMatch: 'cached' }));
+      selection.delete(id);
+      if (kind === 'skill' && skillDraft && skillDraft.id === id) skillDraft = null;
+      if (kind === 'knowledge' && knowledgeDraft && knowledgeDraft.id === id) knowledgeDraft = null;
+    }, async function () {
+      if (kind === 'skill') await loadSkills();
+      else {
+        await loadKnowledgePage();
+        if (queryState.cursor >= viewState.knowledgePage.total && queryState.cursor > 0) {
+          queryState.cursor = Math.max(0, Math.ceil(viewState.knowledgePage.total / queryState.limit) - 1) * queryState.limit;
+          await loadKnowledgePage();
+        }
+      }
+    });
   }
 
   function saveKnowledgeSettings() {
@@ -1119,6 +1400,26 @@
       renderCurrentState(true);
       scrollIntoView('#skill-editor-wrap .knowledge-skill-editor');
     }).catch(function (error) { toast(errorText(error), true); });
+  }
+
+  function viewSkillResource(target) {
+    var resource = skillDraft && (skillDraft.resources || [])[Number(target.dataset.resourceIndex)];
+    var details = target.closest('details');
+    if (!resource || !details) return;
+    details.open = !details.open;
+    if (!details.open || details.dataset.loaded || details.dataset.loading) return;
+    var preview = details.querySelector('pre');
+    details.dataset.loading = 'true';
+    preview.textContent = '正在读取…';
+    return ensureClient().get(resource.href).then(function (envelope) {
+      var data = envelopeData(envelope, 'Skill 资源');
+      preview.textContent = data.content === '' ? '（空文件）' : String(data.content);
+      details.dataset.loaded = 'true';
+    }).catch(function (error) {
+      preview.textContent = '读取失败：' + errorText(error) + '。请收起后重新展开重试。';
+    }).finally(function () {
+      delete details.dataset.loading;
+    });
   }
 
   function saveSkill() {
@@ -1157,27 +1458,33 @@
   }
 
   function deleteSkill(id) {
-    if (!id || !confirmAction('删除这个 Skill？此操作不可恢复。')) return Promise.resolve();
-    var uri = skillUri(id);
-    return ensureClient().get(uri).then(function () {
-      return ensureClient().authorizedDelete(uri, mutationOptions({ ifMatch: 'cached' }));
-    }).then(function () {
-      if (skillDraft && skillDraft.id === id) skillDraft = null;
-      toast('Skill 已删除');
-      return render();
-    }).catch(function (error) { toast(errorText(error), true); });
+    return deleteItems('skill', id ? [id] : []);
   }
 
-  function selectSkillFiles(input) {
+  async function selectSkillFiles(input) {
+    if (taskRunning() || !skillImportDraft || !input.files.length) return;
     captureSkillImportDraft();
-    var files = Array.prototype.slice.call(input && input.files || []);
-    skillImportDraft.files = files;
-    skillImportDraft.packages = detectSkillPackages(files);
-    if (!skillImportDraft.packages.length) toast('没有发现 SKILL.md', true);
-    renderCurrentState();
+    var files = input.files;
+    var task = beginTask('解析目录', files.length * 2);
+    try {
+      var packages = await detectSkillPackages(files, task);
+      checkTaskCancelled(task);
+      skillImportDraft.packages = packages;
+      skillImportDraft.page = 0;
+      skillImportDraft.q = '';
+      treeExpansion.import.clear();
+      if (!packages.length) toast('没有发现 SKILL.md', true);
+    } catch (error) {
+      if (!task.cancelled) task.failures.push(errorText(error));
+    } finally {
+      task.running = false;
+      task.detail = '识别到 ' + (skillImportDraft.packages || []).length + ' 个 Skill';
+      renderCurrentState();
+    }
   }
 
   function importSkills() {
+    if (taskRunning() || !skillImportDraft) return Promise.resolve();
     captureSkillImportDraft();
     var selected = (skillImportDraft && skillImportDraft.packages || []).filter(function (pkg) { return pkg.selected !== false; });
     var pasted = String(skillImportDraft && skillImportDraft.markdown || '').trim();
@@ -1192,10 +1499,9 @@
         file: null, files: [], pasted: pasted,
       });
     }
-    var created = 0;
-    var chain = Promise.resolve();
-    packages.forEach(function (pkg) {
-      chain = chain.then(function () {
+    var draft = skillImportDraft;
+    return runBatch('导入 Skill', packages, async function (pkg, task) {
+      try {
         var payloadPromise;
         if (pkg.pasted) {
           var parsed = parseFrontmatter(pkg.pasted);
@@ -1208,25 +1514,28 @@
             description: description,
             instructions: parsed.body,
             version: String(parsed.metadata.version || '1'),
-            source: { kind: 'skill', uri: String(skillImportDraft.sourceUri || '').trim(), entryPath: 'SKILL.md', importer: 'options-skill-import' },
+            source: { kind: 'skill', uri: String(draft.sourceUri || '').trim(), entryPath: 'SKILL.md', importer: 'options-skill-import' },
             resources: [], tags: parseFrontmatterTags(parsed.metadata.tags || ''), enabled: true, archived: false,
           });
         } else {
-          payloadPromise = readSkillPackage(pkg, skillImportDraft.sourceUri);
+          payloadPromise = readSkillPackage(pkg, draft.sourceUri, task);
         }
-        return payloadPromise.then(function (payload) {
-          return ensureClient().authorizedPost('/skills', payload, mutationOptions());
-        }).then(function () { created += 1; });
-      });
-    });
-    toast('正在导入 Skill…');
-    return chain.then(function () {
-      skillImportDraft = null;
-      toast('已导入 ' + created + ' 个 Skill');
-      return render();
-    }).catch(function (error) {
-      toast((created ? '已导入 ' + created + ' 个；' : '') + errorText(error), true);
-      return render();
+        var payload = await payloadPromise;
+        checkTaskCancelled(task);
+        pkg.importKey = pkg.importKey || makeIdempotencyKey('skill_import');
+        await ensureClient().authorizedPost('/skills', payload, mutationOptions({ idempotencyKey: pkg.importKey }));
+        pkg.imported = true;
+        pkg.selected = false;
+        delete pkg.error;
+        if (pkg.pasted) draft.markdown = '';
+      } catch (error) {
+        if (!task.cancelled) pkg.error = errorText(error);
+        throw error;
+      }
+    }, function () {
+      draft.packages = draft.packages.filter(function (pkg) { return !pkg.imported; });
+      if (!draft.packages.length && !draft.markdown.trim()) skillImportDraft = null;
+      return loadSkills();
     });
   }
 
@@ -1408,6 +1717,18 @@
   }
 
   function handleClick(event) {
+    var stopTarget = event.target && event.target.closest && event.target.closest('[data-knowledge-action="stop-task"]');
+    if (stopTarget && taskRunning()) {
+      event.preventDefault();
+      event.stopPropagation();
+      activeTask.cancelled = true;
+      updateTaskStatus();
+      return;
+    }
+    if (taskRunning() && event.target && event.target.closest && event.target.closest('.knowledge-content')) {
+      event.preventDefault();
+      return;
+    }
     var mcpTarget = event.target && event.target.closest && event.target.closest('[data-http-mcp-action]');
     if (mcpTarget) {
       event.preventDefault();
@@ -1435,12 +1756,34 @@
       var skillAction = skillTarget.dataset.skillAction;
       var skillId = skillTarget.dataset.id || '';
       if (skillAction === 'new-import') {
-        skillImportDraft = { sourceUri: '', markdown: '', files: [], packages: [] };
+        skillImportDraft = { sourceUri: '', markdown: '', packages: [] };
+        treeExpansion.import.clear();
         renderCurrentState(true);
         scrollIntoView('#skill-import-editor-wrap .knowledge-skill-editor');
       } else if (skillAction === 'cancel-import') { skillImportDraft = null; renderCurrentState(); }
+      else if (skillAction === 'tree-toggle') {
+        var treeKind = skillTarget.dataset.treeKind;
+        var treePath = skillTarget.dataset.treePath;
+        var node = skillTrees[treeKind].get(treePath);
+        if (node) {
+          var state = treeKind === 'import' ? skillImportDraft : skillFilter;
+          var expanded = treeExpansion[treeKind].has(treePath) ? treeExpansion[treeKind].get(treePath) : (node.depth === 0 || !!state.q);
+          treeExpansion[treeKind].set(treePath, !expanded);
+          renderCurrentState(false, 'skill');
+        }
+      }
+      else if (skillAction === 'page') { skillFilter.page = Math.max(0, Number(skillTarget.dataset.page) || 0); renderCurrentState(false, 'skill'); }
+      else if (skillAction === 'import-page' && skillImportDraft) { skillImportDraft.page = Math.max(0, Number(skillTarget.dataset.page) || 0); renderCurrentState(false, 'skill'); }
+      else if ((skillAction === 'import-select-all' || skillAction === 'import-clear') && skillImportDraft) {
+        var importQuery = String(skillImportDraft.q || '').trim().toLowerCase();
+        skillImportDraft.packages.forEach(function (pkg) {
+          if (skillAction === 'import-clear' || !importQuery || pkg.path.toLowerCase().indexOf(importQuery) !== -1) pkg.selected = skillAction === 'import-select-all';
+        });
+        renderCurrentState(false, 'skill');
+      }
       else if (skillAction === 'import') importSkills();
       else if (skillAction === 'edit') editSkill(skillId);
+      else if (skillAction === 'view-resource') viewSkillResource(skillTarget);
       else if (skillAction === 'save') saveSkill();
       else if (skillAction === 'cancel-edit') { skillDraft = null; renderCurrentState(); }
       else if (skillAction === 'archive') archiveSkill(skillId);
@@ -1454,24 +1797,67 @@
     event.stopPropagation();
     var action = knowledgeTarget.dataset.knowledgeAction;
     var id = knowledgeTarget.dataset.id || '';
-    if (action === 'edit') editKnowledge(id);
+    if (action === 'dismiss-task') {
+      if (!taskRunning()) {
+        activeTask = null;
+        updateTaskStatus();
+      }
+      return;
+    }
+    if (action === 'select-items' || action === 'clear-selection' || action === 'delete-selected') {
+      var kind = knowledgeTarget.dataset.kind;
+      var selection = kind === 'skill' ? selectedSkills : selectedKnowledge;
+      if (action === 'delete-selected') { deleteItems(kind, Array.from(selection)); return; }
+      if (action === 'clear-selection') selection.clear();
+      else (kind === 'skill' ? filteredSkills() : viewState.knowledgePage.items).forEach(function (item) {
+        if (!(kind === 'skill' ? skillReadonly(item) : knowledgeReadonly(item))) selection.add(item.id);
+      });
+      renderCurrentState(false, kind);
+    }
+    else if (action === 'edit') editKnowledge(id);
     else if (action === 'save') saveKnowledge();
     else if (action === 'delete') deleteKnowledge(id);
     else if (action === 'cancel') { knowledgeDraft = null; renderCurrentState(); }
     else if (action === 'page-prev' || action === 'page-next') {
       queryState.cursor = normalizeCursor(knowledgeTarget.dataset.cursor);
       knowledgeDraft = null;
-      render();
+      loadKnowledgePage().then(function () { renderCurrentState(false, 'knowledge'); });
     }
+  }
+
+  function isSearchInput(target) {
+    return !!(target && /^(knowledge-search|skill-search|skill-import-search)$/.test(target.id));
+  }
+
+  function handleSearchCompositionStart(event) {
+    if (!isSearchInput(event.target)) return;
+    composingSearch = event.target;
+    // 组词期间不能重建搜索框，包括组词开始前已排队的搜索刷新。
+    root.clearTimeout(searchTimer);
+  }
+
+  function handleSearchCompositionEnd(event) {
+    if (!isSearchInput(event.target)) return;
+    composingSearch = null;
+    handleInput(event);
   }
 
   function handleInput(event) {
     if (!event.target) return;
+    if (isSearchInput(event.target) && (event.isComposing || composingSearch === event.target)) return;
+    if (event.target.id === 'skill-search' || event.target.id === 'skill-import-search') {
+      if (event.target.id === 'skill-search') { skillFilter.q = event.target.value; skillFilter.page = 0; treeExpansion.skill.clear(); }
+      else if (skillImportDraft) { skillImportDraft.q = event.target.value; skillImportDraft.page = 0; treeExpansion.import.clear(); }
+      root.clearTimeout(searchTimer);
+      searchTimer = root.setTimeout(function () { renderCurrentState(false, 'skill'); }, 180);
+      return;
+    }
     if (event.target.id === 'knowledge-search') {
       queryState.q = event.target.value.trim();
       queryState.cursor = 0;
       root.clearTimeout(searchTimer);
-      searchTimer = root.setTimeout(render, 180);
+      selectedKnowledge.clear();
+      searchTimer = root.setTimeout(function () { loadKnowledgePage().then(function () { renderCurrentState(false, 'knowledge'); }); }, 180);
       return;
     }
     captureDrafts();
@@ -1480,6 +1866,19 @@
   function handleChange(event) {
     var target = event.target;
     if (!target) return;
+    if (target.hasAttribute('data-skill-tree-select')) {
+      selectSkillDirectory(target.dataset.skillTreeSelect, target.dataset.treePath, target.checked);
+      return;
+    }
+    if (target.matches && target.matches('[data-skill-select], [data-knowledge-select]')) {
+      var kind = target.hasAttribute('data-skill-select') ? 'skill' : 'knowledge';
+      var selection = kind === 'skill' ? selectedSkills : selectedKnowledge;
+      var selectedId = target.getAttribute('data-' + kind + '-select');
+      if (target.checked) selection.add(selectedId); else selection.delete(selectedId);
+      updateSelectionCount(kind);
+      if (kind === 'skill') renderCurrentState(false, 'skill');
+      return;
+    }
     if (target.id === 'skill-import-directory' || target.id === 'skill-import-files') {
       selectSkillFiles(target);
       return;
@@ -1489,13 +1888,16 @@
       (skillImportDraft && skillImportDraft.packages || []).forEach(function (pkg) {
         if (pkg.id === packageId) pkg.selected = target.checked;
       });
+      var count = $('#skill-import-selected-count');
+      if (count && skillImportDraft) count.textContent = '已选 ' + skillImportDraft.packages.filter(function (pkg) { return pkg.selected !== false; }).length + ' / ' + skillImportDraft.packages.length + ' 个 Skill';
+      renderCurrentState(false, 'skill');
       return;
     }
     if (target.matches && target.matches('[data-knowledge-page-size]')) {
       queryState.limit = normalizePageSize(target.value);
       queryState.cursor = 0;
       knowledgeDraft = null;
-      render();
+      loadKnowledgePage().then(function () { renderCurrentState(false, 'knowledge'); });
       return;
     }
     if (target.id === 'knowledge-filter-type' || target.id === 'knowledge-filter-source'
@@ -1503,7 +1905,8 @@
       currentKnowledgeQuery();
       queryState.cursor = 0;
       knowledgeDraft = null;
-      render();
+      selectedKnowledge.clear();
+      loadKnowledgePage().then(function () { renderCurrentState(false, 'knowledge'); });
       return;
     }
     if (/^knowledge-(?:enabled|auto-capture)$/.test(target.id || '')) {
@@ -1519,6 +1922,8 @@
     initialized = true;
     ensureClient();
     document.addEventListener('click', handleClick);
+    document.addEventListener('compositionstart', handleSearchCompositionStart);
+    document.addEventListener('compositionend', handleSearchCompositionEnd);
     document.addEventListener('input', handleInput);
     document.addEventListener('change', handleChange);
     var refreshButton = $('#btn-knowledge-refresh');

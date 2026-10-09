@@ -2,7 +2,7 @@
 
 Page Agent 是一个基于 Chromium Manifest V3 的页面自动化扩展。它把自然语言对话、人工操作和页面事实组织成可编辑、可重复运行的 Flow，并提供运行记录、触发器、知识和 MCP/ARP/1 资源接口。
 
-当前版本：`1.0.2`
+当前版本：`1.0.3`
 
 ## 从对话到可复用的产出
 
@@ -21,6 +21,7 @@ Page Agent 的核心路径是：说清楚页面目标，先观测当前页面，
 - 在真实网页中读取页面、执行操作并提取结果
 - 通过对话创建和维护可复用 Flow、脚本与页面配置
 - 手动、定时或 URL 触发 Flow，并查看运行报告
+- 在连接配置中保存 SMTP 账户，经已连接的 MCP Server 发送邮件通知，支持收件人、抄送、密送和附件（[SMTP 配置与用法](docs/Page-Agent-12-邮件通知.md)）
 - 连接 OpenAI Chat/Responses、Anthropic Messages 及兼容服务
 - 可选运行 MCP Server，通过 ARP/1 资源协议供外部 Agent 调用
 
@@ -44,9 +45,29 @@ Page Agent 的核心路径是：说清楚页面目标，先观测当前页面，
 
 ✅ 页面录制、回放素材、截图
 
+## 定时运行
+
+配置中心的「定时运行」支持流程、流程组和对话，输入参数填写 JSON 对象，例如 `{"reportType":"daily"}`。流程中可使用 `{{reportType}}`；对话会附加这些参数。每天或指定日期均可添加多个运行时刻，重复日期、时刻会自动去重。
+
+固定间隔只配置分钟数，每天多个时刻只配置时刻，Cron 只配置表达式。选择「指定日期和时刻」后，可以手动添加日期，或展开「从日历批量选日（可选）」：选择日历模式、日期范围和工作日/节假日条件，点击「获取日历并选日」，勾选日期后点击「采用勾选日期」，设置时刻并保存。选日条件只用于勾选日期，保存后按明确的日期列表执行；切换为其他触发方式并保存时，会清除日历配置。运行只读取保存的日期和日历快照，不会请求公开日历。需要更新节假日安排时，在配置页重新获取并保存。
+
+| 日历模式 | 公开数据地址示例 |
+| --- | --- |
+| 中国大陆（Apple iCloud，含调休） | https://calendars.icloud.com/holidays/cn_zh.ics/ |
+| 美国全国公众假日 | https://date.nager.at/api/v3/PublicHolidays/2026/US |
+| 德国全国公众假日 | https://date.nager.at/api/v3/PublicHolidays/2026/DE |
+| 支持的国家代码 | https://date.nager.at/api/v3/AvailableCountries |
+| 仅周一至周五 | 本地计算，无需联网，不判断法定节假日 |
+
+国外模式按周六、周日和全国公众假日判断休息日，不含地方假日或特殊工作周。传入日历信息后，可读取 `{{calendar.date}}`、`{{calendar.isWorkday}}`、`{{calendar.isHoliday}}` 和 `{{calendar.isRestDay}}`；仅周一至周五模式的 `isHoliday` 为 `null`。手动新增日期时，若需传入公开日历信息，应先获取覆盖该日期的日历。
+
+国内使用 Apple iCloud 的多年 ICS 日历，每次点击获取只请求一次，按其中的 `WORK-HOLIDAY`（放假）和 `ALTERNATE-WORKDAY`（补班）标记提取所选日期。普通节气、纪念日不视为放假；所选年份尚无完整放假调休数据时会提示，不按普通节日推算调休。
+
+所有运行时刻使用浏览器本地时区。浏览器需保持运行；错过超过 5 分钟的固定时刻不补跑，所有指定日期结束后不再创建下一次闹钟。
+
 ## 安装扩展
 
-可直接从 [GitHub Releases](https://github.com/openpageagent/pageagent/releases) 下载打包好的扩展，无需本地打包。需要 Chromium 114 或更高版本（使用 Manifest V3 Side Panel API）。
+可直接从 [GitHub Releases](https://github.com/openpageagent/pageagent/releases) 下载打包好的扩展，无需本地打包。需要 Chromium 116 或更高版本（使用 Manifest V3 Side Panel API）。
 
 1. 在 Release 的 Assets 中下载 `page-agent-extension-<version>.zip` 并解压。
 2. 打开 `chrome://extensions` 或 `edge://extensions`，启用开发者模式。

@@ -431,7 +431,7 @@
       var flowId = typeof displayStep.flowId === 'string' ? displayStep.flowId : '';
       var flow = flowForReference(flowId, flows);
       var label = flow
-        ? (displayStep.label || flow.label || flow.name || flowId)
+        ? (displayStep.label || flow.label || flowId)
         : (flowId ? '流程不存在（' + flowId + '）' : '未选择流程');
       var flags = '';
       var readonly = draftIsReadOnly();
@@ -643,7 +643,7 @@
         } else {
           html += '<div class="node-type-group"><div class="node-type-group-title">流程</div><div class="node-type-grid">'
             + items.map(function (flow) {
-              var label = flow.label || flow.name || flow.id;
+              var label = flow.label || flow.id;
               var searchText = (label + ' ' + flow.id + ' ' + (flow.description || '')).toLowerCase();
               var desc = (Array.isArray(flow.nodes) ? flow.nodes : []).length + ' 个节点' + (flow.description ? ' · ' + flow.description : '');
               return '<div class="node-type-option" data-action="select-flowGroup-flow" data-flow-id="' + esc(flow.id) + '" data-search="' + esc(searchText) + '" data-desc="' + esc(desc) + '">'
@@ -680,7 +680,7 @@
         draft.steps.push({
           stepId: nextStepId(reserved),
           flowId: flowId || '',
-          label: flow.label || flow.name || '',
+          label: flow.label || '',
           continueOnFailure: false,
         });
         draftRevision++;
@@ -725,14 +725,14 @@
         $('#drawer-title').textContent = readonly ? '查看流程步骤' : '编辑流程步骤';
         $('#drawer-content').innerHTML =
           '<div class="form-row"><label>流程</label><select id="flowGroup-step-flowId"' + (readonly ? ' disabled' : '') + '>' + flowGroupFlowOptions(step.flowId, flows) + '</select></div>'
-          + '<div class="form-row"><label>步骤名称</label><input type="text" id="flowGroup-step-label" value="' + esc(step.label || '') + '" placeholder="' + esc(flow.label || flow.name || '') + '"' + (readonly ? ' disabled' : '') + '></div>'
+          + '<div class="form-row"><label>步骤名称</label><input type="text" id="flowGroup-step-label" value="' + esc(step.label || '') + '" placeholder="' + esc(flow.label || '') + '"' + (readonly ? ' disabled' : '') + '></div>'
           + '<div class="form-row"><label>运行标签策略</label>' + runTabModeSelectHtml('flowGroup-step-runTabMode', step.runTabMode || '', readonly, true)
           + '<div class="form-help">仅覆盖当前步骤；不选则使用所选流程自己的运行标签策略。</div></div>'
           + '<div class="io-note drawer-io-note">'
           + '<b>输入 / 输出</b>'
           + '<span>该步骤运行时会自动接收上一步输出；第一步接收流程组运行入参。执行完成后，输出会交给下一步。</span>'
           + '</div>'
-          + '<div class="form-row checkbox-row"><input type="checkbox" id="flowGroup-step-continueOnFailure"' + (step.continueOnFailure ? ' checked' : '') + (readonly ? ' disabled' : '') + '><label for="flowGroup-step-continueOnFailure">该流程失败时继续执行下一步</label></div>';
+          + '<div class="form-row"><label class="switch-label"><input type="checkbox" id="flowGroup-step-continueOnFailure"' + (step.continueOnFailure ? ' checked' : '') + (readonly ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">该流程失败时继续执行下一步</span></label></div>';
         $('#drawer-actions').innerHTML = readonly
           ? '<button class="btn-secondary" data-action="cancel-node-edit">关闭</button>'
           : '<button class="btn-primary" data-action="save-flowGroup-step-edit" data-index="' + index + '">保存</button>'
@@ -776,7 +776,7 @@
           return { ok: false, error: '所选流程不存在' };
         }
         step.flowId = flowId;
-        step.label = drawerElement('flowGroup-step-label').value.trim() || flow.label || flow.name || '';
+        step.label = drawerElement('flowGroup-step-label').value.trim() || flow.label || '';
         step.continueOnFailure = !!drawerElement('flowGroup-step-continueOnFailure').checked;
         var runTabMode = drawerElement('flowGroup-step-runTabMode').value;
         if (runTabMode) step.runTabMode = normalizeRunTabMode(runTabMode);

@@ -879,15 +879,7 @@
       var keepAlive = session.keepAlive || createMap();
       var keepAliveCount = Object.keys(keepAlive).length;
       if (keepAliveCount > 0) {
-        var states = { on: 0, off: 0, failed: 0 };
-        Object.keys(keepAlive).forEach(function (tabId) {
-          states[keepAlive[tabId]] = (states[keepAlive[tabId]] || 0) + 1;
-        });
-        var parts = [];
-        if (states.on) parts.push(states.on + '个活跃');
-        if (states.off) parts.push(states.off + '个附加');
-        if (states.failed) parts.push(states.failed + '个失败');
-        titleDetails.push('防节流保活: ' + parts.join(', '));
+        titleDetails.push('运行会话 CDP 连接: ' + keepAliveCount + ' 个标签页');
       }
       detailsElement.textContent = details.length ? details.join(' · ') : '';
       detailsElement.title = titleDetails.concat(details).join(' · ');

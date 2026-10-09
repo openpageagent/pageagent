@@ -355,7 +355,7 @@
     function connectionInput(value) {
       value = object(value);
       var output = {};
-      ['enabled', 'url', 'clientName', 'runTabMode'].forEach(function (key) {
+      ['enabled', 'url', 'clientName', 'runTabMode', 'localToolsEnabled', 'localWorkingDirectory'].forEach(function (key) {
         if (Object.prototype.hasOwnProperty.call(value, key)) output[key] = clone(value[key]);
       });
       return output;
@@ -376,7 +376,7 @@
       });
     }
 
-    function patchConnection(id, patch) {
+    function patchConnection(id, patch, context) {
       id = cleanId(id, 'connectionId');
       return getConnection(id).then(function (current) {
         var next = applyPatch(current, patch);
@@ -386,6 +386,11 @@
         Object.keys(projected).forEach(function (key) {
           if (JSON.stringify(projected[key]) !== JSON.stringify(current[key])) changed[key] = projected[key];
         });
+        if ((Object.prototype.hasOwnProperty.call(changed, 'localToolsEnabled')
+            || Object.prototype.hasOwnProperty.call(changed, 'localWorkingDirectory'))
+            && !/^ui:/.test(String(context && context.actorId || ''))) {
+          fail('FORBIDDEN', '本地文件与命令操作开关和工作目录只能在连接配置中修改');
+        }
         return Object.keys(changed).length ? connectionRuntime.updateConnection(id, changed) : current;
       }).then(sanitize);
     }

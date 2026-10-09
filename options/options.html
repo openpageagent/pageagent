@@ -48,7 +48,7 @@
           <h2>页面配置</h2>
           <button class="btn-primary" id="btn-new-page">新建页面</button>
         </header>
-        <p class="section-desc">定义要自动化操作的网页地址。可设置自动刷新间隔与网络请求捕获。</p>
+        <p class="section-desc">定义网页地址与匹配规则，按需设置页面会话保活、网络请求捕获和标签页关闭行为。</p>
         <div id="pages-list" class="item-list"></div>
         <div id="page-editor" class="editor hidden"></div>
       </section>
@@ -90,7 +90,7 @@
           <button class="btn-primary" id="btn-new-script">新建脚本</button>
         </header>
         <p class="section-desc">自定义 JS 脚本在沙箱中执行，通过 api 对象调用全部节点能力。</p>
-        <details id="api-reference">
+        <details id="api-reference" class="reference-panel">
           <summary>脚本 API 速查</summary>
           <pre>// 页面操作：page.open(pageId) 打开页面并返回 tabId，后续操作只传 tabId
 const opened = await page.open(pageId, { urlOverride, waitStable, forceReopen, maxReuseMinutes: 60 })
@@ -133,7 +133,7 @@ return result                                          // 返回值写入节点�
           <h2>定时任务</h2>
           <button class="btn-primary" id="btn-new-schedule">新建定时任务</button>
         </header>
-        <p class="section-desc">按间隔、每天固定时间或 Cron 自动触发流程，也可以定时创建并运行对话。浏览器需保持运行（扩展 Service Worker 会被 alarm 自动唤醒）。</p>
+        <p class="section-desc">按间隔、每天多个时刻、指定日期或 Cron 运行流程、流程组或对话，支持输入参数。指定日期时可用日历批量选择工作日、节假日。时刻以浏览器所在时区为准；浏览器需保持运行，错过超过 5 分钟的固定时刻不补跑。</p>
         <div id="schedules-list" class="item-list"></div>
         <div id="schedule-editor" class="editor hidden"></div>
       </section>
@@ -169,67 +169,10 @@ return result                                          // 返回值写入节点�
         <header class="section-header">
           <h2>MCP 服务器连接</h2>
         </header>
-        <p class="section-desc">管理当前扩展环境与本地 MCP 服务的连接。连接用于外部客户端配置和管理自动化流程；关闭连接后，已保存的自动化仍可独立运行。</p>
+        <p class="section-desc">管理当前扩展环境与 MCP 服务的连接。连接用于外部客户端配置和管理自动化流程，也用于邮件通知及可选的本地文件与命令操作。</p>
 
-        <div class="mcp-settings">
-          <div class="setting-item">
-            <label class="switch-label">
-              <input type="checkbox" id="mcp-enabled">
-              <span class="switch-slider"></span>
-              <span class="switch-text">启用 MCP 服务器连接</span>
-            </label>
-          </div>
-
-          <div class="setting-item">
-            <label>WebSocket 地址</label>
-            <input type="text" id="mcp-url" value="ws://127.0.0.1:9999" placeholder="ws://127.0.0.1:9999">
-            <small>MCP 服务器的 WebSocket 地址</small>
-          </div>
-
-          <div class="setting-item">
-            <label>当前连接名称</label>
-            <input type="text" id="mcp-client-name" placeholder="例如 Chrome 工作资料 / Edge 测试资料">
-            <small>用于在本地 MCP 服务中识别当前扩展环境。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>当前连接 ID</label>
-            <input type="text" id="mcp-client-id" readonly>
-            <small>由当前扩展环境生成，可用于精确选择这个连接。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>MCP 页面操作标签策略</label>
-            <select id="mcp-run-tab-mode">
-              <option value="reuseOpenTab">复用已打开标签</option>
-              <option value="fixedCurrentTab">固定当前标签</option>
-              <option value="fixedNewTab">固定打开标签</option>
-            </select>
-            <small>仅影响 MCP 观测、点击、填充、evaluate、CDP 等页面操作；运行流程仍按流程或流程组步骤配置。</small>
-          </div>
-
-          <div class="mcp-actions">
-            <button class="btn-primary" id="btn-mcp-save-settings" disabled>保存连接设置</button>
-          </div>
-
-          <div class="mcp-status">
-            <div class="status-indicator">
-              <span class="status-dot" id="mcp-status-dot"></span>
-              <span id="mcp-status-text">未连接</span>
-            </div>
-            <button class="btn-small" id="btn-mcp-reconnect">重新连接</button>
-          </div>
-
-          <div class="mcp-log-panel">
-            <div class="mcp-log-header">
-              <h4>MCP 连接日志</h4>
-              <button class="btn-small" id="btn-mcp-clear-logs">清空日志</button>
-            </div>
-            <div class="mcp-log-list" id="mcp-log-list">
-              <div class="mcp-log-empty">暂无日志</div>
-            </div>
-          </div>
-
+        <details class="reference-panel">
+          <summary>MCP 连接与使用说明</summary>
           <div class="mcp-info">
             <h4>内置单文件 MCP 服务器</h4>
             <p>内部发布 ZIP 已包含 MCP 服务器单文件。解压后文件固定在：</p>
@@ -280,7 +223,7 @@ return result                                          // 返回值写入节点�
             <p>MCP 服务器启动后同时提供三类通道：MCP 客户端通过 stdio 调用工具，浏览器插件通过 WebSocket 连接 Server，外部系统可以通过 HTTP API 触发流程。</p>
             <ol>
               <li><b>MCP stdio</b>：Codex、Claude Code、Cherry Studio 等客户端通过 stdio 连接 MCP 服务器，调用下面这些工具和资源。</li>
-              <li><b>插件 WebSocket</b>：浏览器插件默认连接 <code>ws://127.0.0.1:9999</code>（可用 <code>--ws-port</code> 或 <code>WS_PORT</code> 覆盖），用于 MCP 服务器和 Extension 之间传递页面观测、操作、配置和运行请求。</li>
+              <li><b>插件 WebSocket</b>：浏览器插件默认连接 <code>ws://127.0.0.1:9999</code>（可用 <code>--ws-port</code> 或 <code>WS_PORT</code> 覆盖），用于 MCP 服务器和 Extension 之间传递页面观测、操作、配置、运行及邮件发送请求。</li>
               <li><b>多插件客户端</b>：同一个 MCP 服务器可接受多个浏览器插件连接。普通窗口和隐私窗口在 split incognito 模式下是两个独立客户端。先用 <code>list_mcp_clients</code> 或 <code>GET /mcp/clients</code> 查看 <code>mcpClientId</code>，再在 MCP 工具参数、HTTP header 或 query 中指定目标。</li>
               <li><b>能力发现</b>：<code>list_capabilities</code>、<code>list_node_catalog</code>、<code>get_node_type_details</code> 用于了解可用节点和参数。</li>
               <li><b>配置与检索</b>：<code>list_context_catalog</code>、<code>search_context</code>、<code>get_context_detail</code> 按证据缺口读取页面源、流程、流程组、运行历史等信息。</li>
@@ -304,12 +247,158 @@ return result                                          // 返回值写入节点�
               <li><b>解压插件 ZIP</b>：开发者模式加载解压后的 <code>page-agent-extension</code> 目录</li>
               <li><b>配置 Cherry Studio</b>：复制上方配置，把路径替换为实际解压目录</li>
               <li><b>启动 MCP 服务器</b>：由 Cherry Studio 启动，或在终端运行上方启动命令</li>
-              <li><b>开启连接</b>：勾选上方开关，Extension 会自动连接到 MCP 服务器</li>
+              <li><b>开启连接</b>：勾选下方开关，Extension 会自动连接到 MCP 服务器</li>
               <li><b>通过 MCP 客户端配置</b>：在 Cherry Studio 中说"列出所有自动化能力"或"创建一个流程"</li>
-              <li><b>配置完成后</b>：可以关闭 MCP 服务器，插件会继续按配置运行</li>
+              <li><b>配置完成后</b>：不依赖 MCP 服务器的流程可继续独立运行；邮件通知需要保持连接</li>
             </ol>
-            <p><b>注意</b>：MCP 服务器只是配置工具，不是运行时依赖。</p>
+            <p><b>邮件通知</b>：发送邮件时必须连接支持邮件发送的 MCP 服务器。</p>
           </div>
+        </details>
+
+        <div class="mcp-settings">
+          <div class="setting-item">
+            <label class="switch-label">
+              <input type="checkbox" id="mcp-enabled">
+              <span class="switch-slider"></span>
+              <span class="switch-text">启用 MCP 服务器连接</span>
+            </label>
+            <small role="status" aria-live="polite">
+              <span class="status-indicator">
+                <span class="status-dot" id="mcp-status-dot" aria-hidden="true"></span>
+                <span id="mcp-status-text">正在读取状态…</span>
+              </span>
+            </small>
+          </div>
+
+          <div class="setting-item">
+            <label>WebSocket 地址</label>
+            <input type="text" id="mcp-url" value="ws://127.0.0.1:9999" placeholder="ws://127.0.0.1:9999">
+            <small>MCP 服务器的 WebSocket 地址</small>
+          </div>
+
+          <div class="setting-item">
+            <label>当前连接名称</label>
+            <input type="text" id="mcp-client-name" placeholder="例如 Chrome 工作资料 / Edge 测试资料">
+            <small>用于在本地 MCP 服务中识别当前扩展环境。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>当前连接 ID</label>
+            <input type="text" id="mcp-client-id" readonly>
+            <small>由当前扩展环境生成，可用于精确选择这个连接。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>MCP 页面操作标签策略</label>
+            <select id="mcp-run-tab-mode">
+              <option value="reuseOpenTab">复用已打开标签</option>
+              <option value="fixedCurrentTab">固定当前标签</option>
+              <option value="fixedNewTab">固定打开标签</option>
+            </select>
+            <small>仅影响 MCP 观测、点击、填充、evaluate、CDP 等页面操作；运行流程仍按流程或流程组步骤配置。</small>
+          </div>
+
+          <div class="mcp-actions">
+            <button class="btn-primary" id="btn-mcp-save-settings" disabled>保存连接设置</button>
+          </div>
+
+          <div class="mcp-log-panel">
+            <div class="mcp-log-header">
+              <h4>MCP 连接日志</h4>
+              <div>
+                <button class="btn-small" id="btn-mcp-reconnect">重新连接</button>
+                <button class="btn-small" id="btn-mcp-clear-logs">清空日志</button>
+              </div>
+            </div>
+            <div class="mcp-log-list" id="mcp-log-list">
+              <div class="mcp-log-empty">暂无日志</div>
+            </div>
+          </div>
+
+          <section class="local-tools-settings" aria-labelledby="local-tools-title">
+            <h3 id="local-tools-title">本地文件与命令</h3>
+            <p class="form-help">通过 MCP Server 为对话提供本地文件操作与 Bash 命令执行能力。默认开启，仅在连接成功且服务端支持时向对话提供。</p>
+            <p class="form-help">五项能力统一使用下方工作目录；连接后默认回显服务端运行目录，也可指定其他绝对目录。命令以服务端进程权限运行。</p>
+
+            <div class="setting-item">
+              <label class="switch-label">
+                <input type="checkbox" id="mcp-local-tools-enabled" disabled>
+                <span class="switch-slider"></span>
+                <span class="switch-text">启用本地文件与命令</span>
+              </label>
+              <small id="mcp-local-tools-status" role="status" aria-live="polite"></small>
+            </div>
+
+            <div class="setting-item">
+              <label for="mcp-local-working-directory">本地操作工作目录（必填）</label>
+              <input type="text" id="mcp-local-working-directory" required maxlength="4096" placeholder="连接 MCP Server 后回显其运行目录">
+              <small>填写 MCP Server 上的绝对目录，保存后生效。</small>
+              <button class="btn-small" id="btn-mcp-local-directory-save" disabled>保存工作目录</button>
+            </div>
+
+            <div class="help-doc">
+              <table aria-label="本地文件与命令的五项能力">
+                <thead><tr><th scope="col">能力</th><th scope="col">名称</th><th scope="col">用途</th></tr></thead>
+                <tbody>
+                  <tr><td><code>read</code></td><td>读取文件</td><td>读取文本文件，支持按行分页查看内容。</td></tr>
+                  <tr><td><code>write</code></td><td>写入文件</td><td>创建或覆盖文本文件，自动创建所需目录。</td></tr>
+                  <tr><td><code>delete</code></td><td>删除文件</td><td>删除单个文件或符号链接，不递归删除目录。</td></tr>
+                  <tr><td><code>grep</code></td><td>查找内容</td><td>在文件或目录中搜索指定文本，返回文件路径、行号和匹配内容。</td></tr>
+                  <tr><td><code>bash</code></td><td>执行 Bash</td><td>从工作目录启动命令或脚本，返回执行输出。</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <form id="mail-settings-form" class="mail-settings-form">
+            <h3>邮件通知</h3>
+            <p class="form-help">通过 MCP Server 发送测试邮件、流程结束通知和邮件节点消息。默认开启，连接成功且服务端支持时可发送；关闭后停止后续发送，账户配置仍可编辑和保存。</p>
+            <p class="form-help">支持标准 SMTP（TLS / STARTTLS），请按邮件服务商提供的信息填写服务器、端口和认证信息。配置一个发件账户；整个流程的成功／失败通知请在「流程」编辑页配置，邮件节点可分别指定收件人、抄送和密送。</p>
+            <div class="setting-item">
+              <label class="switch-label">
+                <input type="checkbox" id="mail-enabled" disabled>
+                <span class="switch-slider"></span>
+                <span class="switch-text">启用邮件通知</span>
+              </label>
+              <small id="mail-connection-status" role="status" aria-live="polite">正在读取状态…</small>
+            </div>
+            <fieldset id="mail-settings-fields" disabled>
+              <div class="setting-item">
+                <label for="mail-host">SMTP 服务器</label>
+                <input id="mail-host" type="text" required maxlength="253" placeholder="smtp.example.com">
+              </div>
+              <div class="setting-item">
+                <label for="mail-port">端口</label>
+                <input id="mail-port" type="number" min="1" max="65535" step="1" required value="465">
+              </div>
+              <div class="setting-item">
+                <label for="mail-security">加密方式</label>
+                <select id="mail-security"><option value="tls">TLS（通常 465）</option><option value="starttls">STARTTLS（通常 587）</option></select>
+              </div>
+              <div class="setting-item">
+                <label for="mail-username">SMTP 用户名</label>
+                <input id="mail-username" type="text" autocomplete="off" placeholder="服务商提供的用户名或邮箱地址">
+              </div>
+              <div class="setting-item">
+                <label for="mail-password">SMTP 密码 / 授权码</label>
+                <input id="mail-password" type="password" autocomplete="new-password">
+                <small>填写服务商要求的 SMTP 密码、授权码或应用专用密码。配置保存在插件中，发送时经 WebSocket 交给已连接的 MCP Server，服务端不保存账户配置。远程服务须使用 wss:// 连接。</small>
+              </div>
+              <div class="setting-item">
+                <label for="mail-from">发件邮箱</label>
+                <input id="mail-from" type="text" required maxlength="254" placeholder="sender@example.com">
+              </div>
+              <div class="setting-item">
+                <label for="mail-from-name">发件人名称（默认 Page Agent）</label>
+                <input id="mail-from-name" type="text" maxlength="200" placeholder="Page Agent">
+              </div>
+              <div class="mcp-actions">
+                <button type="submit" class="btn btn-primary">保存邮件配置</button>
+                <button id="mail-test-open" type="button" class="btn btn-secondary">发送测试邮件</button>
+              </div>
+            </fieldset>
+            <p id="mail-settings-status" role="status" aria-live="polite"></p>
+          </form>
         </div>
       </section>
 
@@ -365,7 +454,7 @@ return result                                          // 返回值写入节点�
           <div class="setting-item">
             <label>User-Agent（可选）</label>
             <input type="text" id="model-user-agent" placeholder="例如 Mozilla/5.0 或自定义客户端标识">
-            <small>随该服务请求发送；留空时使用浏览器默认值。部分 Chromium 版本可能限制脚本覆盖 User-Agent。</small>
+            <small>通过浏览器网络规则随该服务请求发送；留空时使用浏览器默认值，始终独立于系统 User-Agent。</small>
           </div>
 
           <div class="setting-item">
@@ -477,6 +566,22 @@ return result                                          // 返回值写入节点�
         </header>
         <div class="help-doc">
 
+          <h3>v1.0.3</h3>
+          <ul>
+            <li><b>邮件通知</b>：新增统一 SMTP 发件账户、通知总开关和测试邮件入口，支持 TLS / STARTTLS；发送邮件需连接支持邮件发送的 MCP Server。</li>
+            <li><b>邮件节点</b>：新增「邮件通知」节点，支持收件人、抄送、密送、变量模板、纯文本或 HTML 正文，以及文本和 Base64 附件，邮件节点不自动重试。</li>
+            <li><b>流程通知</b>：支持按整个流程的成功或失败结果发送邮件，可自定义主题与正文模板，多轮运行汇总为一封通知；异步投递并记录结果，通知失败不影响流程结果，主动停止和单节点调试不发送。</li>
+            <li><b>本地文件与命令</b>：对话可通过已连接且支持该能力的 MCP Server 读取、写入、删除和查找文件，以及执行 Bash 命令；支持独立开关和统一工作目录。</li>
+            <li><b>定时运行</b>：支持每天多个时刻、指定日期和 JSON 输入参数，可按工作日、节假日或休息日批量选日，支持中国大陆调休与国外全国公众假日，并可将保存的日历信息传入运行参数。</li>
+            <li><b>知识与 Skill</b>：新增 Skill 目录树、搜索分页和知识与 Skill 批量删除，导入与删除支持进度、失败详情和停止后续处理；优化大量 Skill 的存储，支持按需预览资源文件。</li>
+            <li><b>助手配置</b>：Skill 支持按目录批量勾选、搜索、分页和仅看已选，跨页保留选择，并取消最多选择 50 个 Skill 的限制。</li>
+            <li><b>对话执行</b>：取消对话生成和流程内助手调用的默认总时长限制。</li>
+            <li><b>页面管理</b>：支持流程成功完成后自动关闭本次新打开的标签页。</li>
+            <li><b>后台运行</b>：统一管理流程运行期间的 CDP 连接，结束后自动释放，普通页面操作减少标签页切换；移除旧的防节流保活和节点聚焦开关。</li>
+            <li><b>运行报告</b>：支持一键复制报告中保存的完整输入与输出，覆盖单流程和流程组结果。</li>
+            <li><b>系统配置</b>：新增扩展非模型请求的 User-Agent 配置，模型请求独立使用模型配置。</li>
+          </ul>
+
           <h3>v1.0.2</h3>
           <ul>
             <li><b>对话体验</b>：修复消息列表空白和滚动跳动问题。</li>
@@ -510,6 +615,11 @@ return result                                          // 返回值写入节点�
         </header>
         <div class="system-settings">
           <div class="setting-item">
+            <label for="system-user-agent">User-Agent（可选）</label>
+            <input type="text" id="system-user-agent" maxlength="512" placeholder="例如 Mozilla/5.0 或自定义客户端标识">
+            <small>仅用于扩展自身发起的非模型请求，保存后对后续请求生效；留空时使用浏览器默认值。模型请求仅使用模型配置。</small>
+          </div>
+          <div class="setting-item">
             <label class="switch-label">
               <input type="checkbox" id="system-floating-entry-disabled">
               <span class="switch-slider"></span>
@@ -524,6 +634,32 @@ return result                                          // 返回值写入节点�
 
   <div id="toast" class="hidden"></div>
 
+  <template id="mail-test-template">
+    <form id="mail-test-form" class="mail-test-form">
+      <p class="form-help">使用当前填写的 SMTP 配置发送真实邮件，测试不会自动保存配置。多个邮箱用逗号、分号或空格分隔，收件人、抄送、密送至少填一项。</p>
+      <p id="mail-test-connection-status" class="form-help" role="status" aria-live="polite"></p>
+      <fieldset id="mail-test-fields">
+        <div class="form-row">
+          <label for="mail-test-to">测试收件人</label>
+          <input id="mail-test-to" type="text" placeholder="recipient@example.com">
+        </div>
+        <div class="form-row">
+          <label for="mail-test-cc">抄送（可选）</label>
+          <input id="mail-test-cc" type="text">
+        </div>
+        <div class="form-row">
+          <label for="mail-test-bcc">密送 / 隐私抄送（可选）</label>
+          <input id="mail-test-bcc" type="text">
+        </div>
+        <div class="form-row">
+          <label for="mail-test-attachments">测试附件（可选，最多 20 个，总计 20MB）</label>
+          <input id="mail-test-attachments" type="file" multiple>
+        </div>
+      </fieldset>
+      <p id="mail-test-status" role="status" aria-live="polite"></p>
+    </form>
+  </template>
+
   <!-- 抽屉 -->
   <div class="drawer-overlay" id="drawer-overlay" data-action="cancel-drawer"></div>
   <div class="drawer" id="drawer">
@@ -535,6 +671,7 @@ return result                                          // 返回值写入节点�
     <div class="drawer-footer" id="drawer-actions"></div>
   </div>
 
+  <script src="../shared/config-migration.js"></script>
   <script src="../shared/page-action-contract.js"></script>
   <script src="../shared/page-verification-contract.js"></script>
   <script src="../flows/node-types.js"></script>
@@ -564,6 +701,7 @@ return result                                          // 返回值写入节点�
   <script src="../agent/providers/openai-responses-provider.js"></script>
   <script src="../agent/providers/anthropic-messages-provider.js"></script>
   <script src="../settings/system-settings.js"></script>
+  <script src="../settings/mail-settings.js"></script>
   <script src="../ui/runtime-client.js"></script>
   <script src="../ui/resource-client.js"></script>
   <script src="../ui/lifecycle.js"></script>
@@ -610,10 +748,12 @@ return result                                          // 返回值写入节点�
   <script src="options-flow-group-controller.js"></script>
   <script src="options-page-controller.js"></script>
   <script src="options-script-controller.js"></script>
+  <script src="../shared/schedule-utils.js"></script>
   <script src="options-schedule-controller.js"></script>
   <script src="options-url-trigger-controller.js"></script>
   <script src="options-backup-controller.js"></script>
   <script src="options-run-report-controller.js"></script>
+  <script src="options-mail-controller.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

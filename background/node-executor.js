@@ -103,9 +103,6 @@
         nodeId: nodeOwnDataValue(node, 'nodeId', '') || '',
         nodeType: nodeOwnDataValue(node, 'type', '') || '',
         nodeTitle: nodeOwnDataValue(node, 'title', '') || '',
-        foreground: nodeOwnDataValue(node, 'foreground', false) === true,
-        requiresForeground: nodeOwnDataValue(node, 'requiresForeground', false) === true,
-        reveal: nodeOwnDataValue(node, 'reveal', false) === true,
         commandOptions: commandOptions,
       });
     }
@@ -258,8 +255,6 @@
     function runtimeTabIdFromParams(params) { return pageLifecycleOps.runtimeTabIdFromParams(params); }
     function requireRuntimeTabId(params, actionLabel) { return pageLifecycleOps.requireRuntimeTabId(params, actionLabel); }
     function getRememberedPageTabId(pageId) { return pageLifecycleOps.getRememberedPageTabId(pageId); }
-    function foregroundRequested(options) { return pageLifecycleOps.foregroundRequested(options); }
-    function mergeNodeForegroundOptions(node, params) { return pageLifecycleOps.mergeNodeForegroundOptions(node, params); }
     function raceWithStop(promise) { return pageLifecycleOps.raceWithStop(promise); }
     function openPage(pageId, options, execution) { return pageLifecycleOps.openPage(pageId, options, execution); }
     function refreshPage(pageId, options, execution) { return pageLifecycleOps.refreshPage(pageId, options, execution); }
@@ -276,10 +271,9 @@
         params.tabId = resolvedTabId;
         var internalPageLoadWait = command === 'waitForPageLoad' && params.internalLifecycleWait === true;
         var pageLoadWaitLabel = internalPageLoadWait ? '内部导航加载检查' : '等待页面加载';
-        // Tab activation must be the first recovery step. Preparing the page
-        // command first can attempt session-level CDP on a historical or
-        // discarded tab before Chrome has made that tab active.
-        var prepared = command === 'activateTab'
+        // Browser tab operations need no CDP connection or document recovery.
+        // Reading or closing a discarded tab must not wake or reload it.
+        var prepared = /^(?:activateTab|getCurrentTab|closeTab)$/.test(command)
           ? Promise.resolve(resolvedTabId)
           : (typeof tabRuntime.preparePageCommandTab === 'function'
             ? tabRuntime.preparePageCommandTab(resolvedTabId, params)
@@ -432,6 +426,13 @@
     });
     var parseHeaderLines = httpNodes.parseHeaderLines;
     var httpFetch = httpNodes.httpFetch;
+    var mailClient = deps.mailClient;
+
+    function execSendEmail(params, execution) {
+      throwIfStopped();
+      if (!mailClient) throw new Error('邮件发送服务尚未初始化');
+      return mailClient.send(params, { signal: execution && execution.signal });
+    }
 
     // --- 通用数据/集成节点 ---
 
@@ -1811,6 +1812,7 @@
       assistant: { execRunAssistant: execRunAssistant },
       callbacks: {
         logForExecution: logForExecution,
+        execSendEmail: execSendEmail,
         execForEachParallel: execForEachParallel,
         execExportTestReport: execExportTestReport,
         execAttachArtifact: execAttachArtifact,
@@ -1869,10 +1871,10 @@
         if (debugEnabled) inputSnapshot = captureContextSnapshot();
 
         // Interpolate before normalization so numeric ranges and schema default templates both resolve.
-        params = mergeNodeForegroundOptions(node, executionContract.restoreLateTemplateParams(
+        params = executionContract.restoreLateTemplateParams(
           node,
           executionContract.resolveNodeParams(node, runCtx)
-        ));
+        );
 
         return nodeDispatcher.dispatch(node, params, state, execution);
       }).then(function (result) {

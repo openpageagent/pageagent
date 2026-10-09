@@ -21,6 +21,8 @@
     enabled: { type: 'boolean' }, url: { type: 'string', minLength: 1, maxLength: 4000, pattern: '^wss?://' },
     clientName: { type: 'string', maxLength: 300 },
     runTabMode: { type: 'string', enum: ['reuseOpenTab', 'fixedCurrentTab', 'fixedNewTab'] },
+    localToolsEnabled: { type: 'boolean', description: '仅连接配置界面可修改；是否向对话开放本地文件与命令操作' },
+    localWorkingDirectory: { type: 'string', minLength: 1, maxLength: 4096, description: '本地操作的绝对工作目录，仅扩展界面可修改' },
   });
   var PATCH_SCHEMA = Object.freeze({
     type: 'object', properties: PATCH_PROPERTIES, minProperties: 1, additionalProperties: false,
@@ -30,6 +32,8 @@
     properties: {
       id: { type: 'string' }, kind: { const: 'mcp-websocket' }, enabled: { type: 'boolean' }, url: { type: 'string' },
       clientId: { type: 'string' }, clientName: { type: 'string' }, runTabMode: { type: 'string' },
+      localToolsEnabled: { type: 'boolean' }, localToolsSupported: { type: 'boolean' },
+      localWorkingDirectory: { type: 'string' },
       state: { type: 'string', enum: ['disabled', 'disconnected', 'connecting', 'connected'] },
       connected: { type: 'boolean' }, connecting: { type: 'boolean' }, retryCount: { type: 'integer', minimum: 0 },
       incognito: { type: 'boolean' }, owner: { type: 'object' },
@@ -160,7 +164,7 @@
         };
       });
     };
-    handlers.PATCH['/connections/{connectionId}'] = function (request) { return service.patchConnection(request.params.connectionId, request.patch).then(function (data) { return result(request.uri, 'Connection', data, service); }); };
+    handlers.PATCH['/connections/{connectionId}'] = function (request, context) { return service.patchConnection(request.params.connectionId, request.patch, context).then(function (data) { return result(request.uri, 'Connection', data, service); }); };
     handlers.DELETE['/connections/{connectionId}/logs'] = function (request) { return service.clearConnectionLogs(request.params.connectionId).then(function (data) { return result(request.uri, 'DeletedConnectionLogs', data, service); }); };
     return Object.freeze({
       service: service, routeContracts: ROUTES, handlers: handlers,

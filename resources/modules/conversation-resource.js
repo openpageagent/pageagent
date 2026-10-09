@@ -49,13 +49,12 @@
       profileVersion: { type: 'integer', minimum: 0 }, id: { type: 'string', maxLength: 240 },
       name: { type: 'string', maxLength: 300 }, description: { type: 'string', maxLength: 10000 },
       settings: SNAPSHOT_SETTINGS_SCHEMA, prompt: { type: 'string', maxLength: 100000 },
-      skillIds: { type: 'array', maxItems: 50, items: { type: 'string', maxLength: 240 } },
+      skillIds: { type: 'array', items: { type: 'string', maxLength: 240 } },
       mcpServerIds: { type: 'array', maxItems: 50, items: { type: 'string', maxLength: 240 } },
       modelServiceId: { type: 'string', maxLength: 240 }, resourcePolicy: RESOURCE_POLICY_SCHEMA,
       sourceUpdatedAt: { type: 'integer', minimum: 0 }, snapshotAt: { type: 'integer', minimum: 0 },
-      // This is stable JSON, not a fixed-size digest. JSON escaping can expand
-      // the bounded 100k prompt by 6x; the remainder covers IDs and policy.
-      signature: { type: 'string', maxLength: 700000 },
+      // Stable JSON includes every selected Skill ID, so its size follows the selection.
+      signature: { type: 'string' },
     },
     additionalProperties: false,
   });
@@ -63,7 +62,8 @@
     type: 'object',
     properties: {
       maxModelRequests: { type: 'integer', minimum: 0 }, maxIterations: { type: 'integer', minimum: 1 },
-      maxToolCalls: { type: 'integer', minimum: 0 }, maxWallTimeMs: { type: 'integer', minimum: 0 },
+      maxToolCalls: { type: 'integer', minimum: 0 },
+      maxWallTimeMs: { type: 'integer', minimum: 0, description: '生成总时长上限（毫秒），0 表示不限时；默认 0。' },
       maxContextTokens: { type: 'integer', minimum: 0 }, listContextCatalog: { type: 'integer', minimum: 0 },
       searchContext: { type: 'integer', minimum: 0 }, getContextDetail: { type: 'integer', minimum: 0 },
       screenshot: { type: 'integer', minimum: 0 },

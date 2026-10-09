@@ -414,10 +414,10 @@
       if (destroyed) return Promise.resolve({ ok: false, destroyed: true });
       if (testInFlight) return testInFlight;
       if (saveInFlight) return validationFailure('脚本正在保存，请稍后运行');
-      if (!draft) return validationFailure('没有可测试的脚本');
+      if (!draft) return validationFailure('没有可运行的脚本');
       if (!syncDraftFromEditor()) return validationFailure('脚本编辑器不可用');
       var resultElement = $('#script-test-result');
-      if (!resultElement) return validationFailure('脚本测试结果区域不可用');
+      if (!resultElement) return validationFailure('脚本运行结果区域不可用');
       var item;
       try {
         item = Object.assign({}, cloneData(draft), {

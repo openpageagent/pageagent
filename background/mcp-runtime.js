@@ -36,8 +36,8 @@
 
     function mcpStorageKeys(incognito) {
       return incognito
-        ? { enabled: 'mcpEnabledIncognito', url: 'mcpUrlIncognito', id: 'mcpClientIdIncognito', name: 'mcpClientNameIncognito' }
-        : { enabled: 'mcpEnabled', url: 'mcpUrl', id: 'mcpClientId', name: 'mcpClientName' };
+        ? { enabled: 'mcpEnabledIncognito', url: 'mcpUrlIncognito', id: 'mcpClientIdIncognito', name: 'mcpClientNameIncognito', local: 'mcpLocalToolsEnabledIncognito', directory: 'mcpLocalWorkingDirectoryIncognito' }
+        : { enabled: 'mcpEnabled', url: 'mcpUrl', id: 'mcpClientId', name: 'mcpClientName', local: 'mcpLocalToolsEnabled', directory: 'mcpLocalWorkingDirectory' };
     }
 
     function detectMcpBrowserName() {
@@ -103,7 +103,7 @@
     function initClient() {
       var incognito = isMcpIncognitoContext();
       var clientKeys = mcpStorageKeys(incognito);
-      var keys = [clientKeys.enabled, clientKeys.url, clientKeys.id, clientKeys.name];
+      var keys = [clientKeys.enabled, clientKeys.url, clientKeys.id, clientKeys.name, clientKeys.local, clientKeys.directory];
       return storageGet(keys).then(function (stored) {
         var mcpUrl = String(stored[clientKeys.url] || 'ws://127.0.0.1:9999');
         var clientId = String(stored[clientKeys.id] || generateMcpClientId());
@@ -138,8 +138,11 @@
               createTrustedContext: createTrustedContext,
               wsUrl: mcpUrl,
               clientInfo: clientInfo,
+              localToolsEnabled: stored[clientKeys.local] !== false,
+              localWorkingDirectory: stored[clientKeys.directory],
             });
           }
+          wsClient.configureLocalTools(stored[clientKeys.local] !== false, stored[clientKeys.directory]);
           wsClient.connect();
           addLog('MCP ARP/1 WebSocket 客户端已启动: ' + mcpUrl, { scope: 'mcp' });
           return wsClient;

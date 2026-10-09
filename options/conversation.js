@@ -54,6 +54,8 @@
   var assistantMcpServerResources = [];
   var assistantResourceOptionsLoaded = false;
   var assistantResourceOptionsPromise = null;
+  var assistantResourceSearchTimer = 0;
+  var composingAssistantResourceSearch = null;
   var agentSettingsResource = null;
   var newTopicModelServiceId = '';
   var lastRenderKey = '';
@@ -1121,7 +1123,7 @@
         maxModelRequests: Math.max(1, Number(assistant.settings && assistant.settings.maxIterations) || 30),
         maxIterations: Math.max(1, Number(assistant.settings && assistant.settings.maxIterations) || 30),
         maxToolCalls: Math.max(0, Number(assistant.settings && assistant.settings.maxToolCalls) || 100),
-        maxWallTimeMs: 15 * 60 * 1000,
+        maxWallTimeMs: 0,
         maxContextTokens: Math.max(1024, Number(service.maxContextTokens) || 1000000),
         maxOutputTokens: Math.max(1, Number(assistant.settings && assistant.settings.maxTokens) || 4096),
       },
@@ -4652,10 +4654,10 @@
           var coreRequired = coreMethods.indexOf(method.name) !== -1;
           var methodDescription = root.methodDescriptions && root.methodDescriptions[method.name]
             || method.description || '';
-          return '<label class="conversation-permission-item">'
+          return '<label class="conversation-permission-item switch-label">'
             + '<input type="checkbox" data-resource-permission-prefix="' + esc(prefix) + '" data-resource-root="' + esc(root.uri) + '" data-resource-method="' + esc(method.name) + '"'
             + (resourceMethodEnabled(policy, root.uri, method.name) ? ' checked' : '') + (alwaysAvailable || coreRequired ? ' disabled' : '') + '>'
-            + '<span><b>' + esc(method.name) + ' · ' + esc(method.label || '') + '</b><small>' + esc(methodDescription) + '</small></span>'
+            + '<span class="switch-slider"></span><span class="switch-text"><b>' + esc(method.name) + ' · ' + esc(method.label || '') + '</b><small>' + esc(methodDescription) + '</small></span>'
             + '</label>';
         }).join('')
         + '</div>'
@@ -4879,11 +4881,9 @@
   }
 
   function renderAssistantResourceChecks(items, selectedIds, kindLabel, inputName) {
-    var selected = Object.create(null);
-    (Array.isArray(selectedIds) ? selectedIds : []).forEach(function (id) {
-      id = String(id || '').trim();
-      if (id) selected[id] = true;
-    });
+    var selected = selectedIds instanceof Set ? selectedIds : new Set((Array.isArray(selectedIds) ? selectedIds : []).map(function (id) {
+      return String(id || '').trim();
+    }).filter(Boolean));
     var seen = Object.create(null);
     var rows = [];
     (Array.isArray(items) ? items : []).forEach(function (item) {
@@ -4892,28 +4892,158 @@
       seen[id] = true;
       var name = String(item.name || item.title || id);
       var detail = String(item.description || '').trim();
+      if (kindLabel === 'Skill' && item.source && item.source.packageRoot) {
+        detail = item.source.packageRoot + (detail ? ' · ' + detail : '');
+      }
       if (kindLabel === 'MCP' && Number(item.toolCount) >= 0) {
         detail = Number(item.toolCount) + ' 个工具' + (detail ? ' · ' + detail : '');
       }
-      rows.push('<label class="conversation-resource-option">'
-        + '<input type="checkbox" name="' + esc(inputName) + '" value="' + esc(id) + '"' + (selected[id] ? ' checked' : '') + '>'
+      rows.push('<label class="conversation-resource-option' + (item.unavailable ? ' conversation-resource-option-unavailable' : '') + '">'
+        + '<input type="checkbox" name="' + esc(inputName) + '" value="' + esc(id) + '"' + (selected.has(id) ? ' checked' : '') + '>'
         + '<span><b>' + esc(name) + '</b>' + (detail ? '<small>' + esc(detail) + '</small>' : '') + '</span>'
-        + '</label>');
-    });
-    Object.keys(selected).forEach(function (id) {
-      if (seen[id]) return;
-      rows.unshift('<label class="conversation-resource-option conversation-resource-option-unavailable">'
-        + '<input type="checkbox" name="' + esc(inputName) + '" value="' + esc(id) + '" checked>'
-        + '<span><b>不可用的 ' + esc(kindLabel) + '</b><small>' + esc(id) + ' · 可取消选择</small></span>'
         + '</label>');
     });
     return rows.length ? rows.join('') : '<div class="conversation-resource-empty">暂无可用的 ' + esc(kindLabel) + '</div>';
   }
 
-  function checkedResourceValues(inputName) {
-    return Array.from(document.querySelectorAll('input[name="' + inputName + '"]:checked')).map(function (input) {
-      return String(input.value || '').trim();
-    }).filter(Boolean);
+  function checkedResourceValues(inputName, previous) {
+    var selected = new Set(previous || []);
+    document.querySelectorAll('input[name="' + inputName + '"]').forEach(function (input) {
+      if (input.checked) selected.add(input.value); else selected.delete(input.value);
+    });
+    return Array.from(selected);
+  }
+
+  function assistantPickerState(kind) {
+    var states = assistantEditorDraft.resourcePickers || (assistantEditorDraft.resourcePickers = {});
+    return states[kind] || (states[kind] = { q: '', page: 0, selectedOnly: false });
+  }
+
+  function assistantPickerItems(kind) {
+    var state = assistantPickerState(kind);
+    var selected = new Set(assistantEditorDraft[kind === 'skill' ? 'skillIds' : 'mcpServerIds']);
+    var items = (kind === 'skill' ? assistantSkillResources : assistantMcpServerResources).slice();
+    var available = new Set(items.map(function (item) { return item.id; }));
+    selected.forEach(function (id) {
+      if (!available.has(id)) items.push({ id: id, name: '不可用的 ' + (kind === 'skill' ? 'Skill' : 'MCP'), description: id + ' · 可取消选择', unavailable: true });
+    });
+    var query = state.q.trim().toLowerCase();
+    return items.filter(function (item) {
+      return (!state.selectedOnly || selected.has(item.id))
+        && (!query || [item.name, item.id, item.description, item.source && item.source.packageRoot, (item.tags || []).join(' ')].join(' ').toLowerCase().indexOf(query) !== -1);
+    });
+  }
+
+  function assistantSkillTreeRows(items, state, selected) {
+    var tree = { children: new Map(), items: [], depth: -1 };
+    var directories = new Map();
+    var expansion = state.expansion || (state.expansion = new Map());
+    items.forEach(function (item) {
+      var parts = String(item.source && item.source.packageRoot || '').replace(/\\/g, '/').split('/').filter(Boolean);
+      var parent = tree;
+      var path = '';
+      parts.forEach(function (part, depth) {
+        path += (path ? '/' : '') + part;
+        if (!parent.children.has(part)) {
+          var node = { path: path, name: part, depth: depth, children: new Map(), items: [], total: 0, selected: 0 };
+          parent.children.set(part, node);
+          directories.set(path, node);
+        }
+        parent = parent.children.get(part);
+        parent.total += 1;
+        if (selected.has(item.id)) parent.selected += 1;
+      });
+      parent.items.push(item);
+    });
+    state.directories = directories;
+    var rows = [];
+    function visit(node) {
+      node.children.forEach(function (child) {
+        var expanded = expansion.has(child.path) ? expansion.get(child.path) : (child.depth === 0 || !!state.q);
+        rows.push({ node: child, expanded: expanded, depth: child.depth });
+        if (expanded) visit(child);
+      });
+      node.items.forEach(function (item) { rows.push({ item: item, depth: node.depth + 1 }); });
+    }
+    visit(tree);
+    return rows;
+  }
+
+  function renderAssistantSkillTreeRow(row, selected) {
+    var indent = ' style="--tree-depth:' + Math.min(12, row.depth) + '"';
+    if (row.item) return '<div class="skill-tree-entry"' + indent + '>'
+      + renderAssistantResourceChecks([row.item], selected, 'Skill', 'conversation-editor-skill') + '</div>';
+    var node = row.node;
+    var action = ' data-conversation-action="toggle-assistant-skill-directory" data-tree-path="' + esc(node.path) + '"';
+    return '<div class="skill-tree-folder"' + indent + '>'
+      + '<button type="button" class="btn-small"' + action + ' aria-expanded="' + row.expanded + '" aria-label="' + (row.expanded ? '收起 ' : '展开 ') + esc(node.path) + '"></button>'
+      + '<input type="checkbox" data-assistant-skill-directory="' + esc(node.path) + '" aria-label="选择目录 ' + esc(node.path) + ' 下的全部匹配 Skill"'
+      + (node.selected === node.total ? ' checked' : '')
+      + (node.selected > 0 && node.selected < node.total ? ' data-assistant-skill-partial="true"' : '') + '>'
+      + '<button type="button" class="skill-tree-folder-name"' + action + ' aria-expanded="' + row.expanded + '" title="' + esc(node.path) + '">' + esc(node.name) + '</button>'
+      + '<span>' + node.total + ' 个 Skill · 已选 ' + node.selected + '</span></div>';
+  }
+
+  function applyAssistantSkillTreeChecks() {
+    document.querySelectorAll('#conversation-resource-skill [data-assistant-skill-partial]').forEach(function (input) {
+      input.indeterminate = true;
+    });
+  }
+
+  function renderAssistantResourcePicker(kind) {
+    var state = assistantPickerState(kind);
+    var ids = assistantEditorDraft[kind === 'skill' ? 'skillIds' : 'mcpServerIds'];
+    var items = assistantPickerItems(kind);
+    var selected = new Set(ids);
+    var treeRows = kind === 'skill' ? assistantSkillTreeRows(items, state, selected) : null;
+    var pages = Math.max(1, Math.ceil((treeRows ? treeRows.length : items.length) / 50));
+    state.page = Math.min(state.page, pages - 1);
+    var start = state.page * 50;
+    var content = treeRows && items.length
+      ? treeRows.slice(start, start + 50).map(function (row) { return renderAssistantSkillTreeRow(row, selected); }).join('')
+      : renderAssistantResourceChecks(items.slice(start, start + 50), selected, kind === 'skill' ? 'Skill' : 'MCP', kind === 'skill' ? 'conversation-editor-skill' : 'conversation-editor-mcp-server');
+    return '<input type="search" data-assistant-resource-search="' + kind + '" aria-label="搜索' + (kind === 'skill' ? ' Skill' : ' MCP') + '" placeholder="' + (kind === 'skill' ? '搜索名称、说明、标签或目录' : '搜索名称、说明或 ID') + '" value="' + esc(state.q) + '">'
+      + '<div class="conversation-resource-toolbar"><span data-assistant-resource-count>已选 ' + ids.length + ' 项</span>'
+      + '<button type="button" class="btn-small" data-conversation-action="select-assistant-resources" data-resource-kind="' + kind + '" title="全选搜索结果">全选</button>'
+      + '<button type="button" class="btn-small" data-conversation-action="clear-assistant-resource-selection" data-resource-kind="' + kind + '" title="清空选择">清空</button>'
+      + '<label class="switch-label"><input type="checkbox" data-assistant-resource-selected="' + kind + '"' + (state.selectedOnly ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">仅看已选</span></label></div>'
+      + '<div class="conversation-resource-picker' + (kind === 'skill' ? ' skill-directory-tree' : '') + '">'
+      + content
+      + '</div><div class="conversation-resource-toolbar"><span>第 ' + (state.page + 1) + ' / ' + pages + ' 页 · 匹配 ' + items.length + ' 项</span>'
+      + '<button type="button" class="btn-small" data-conversation-action="page-assistant-resources" data-resource-kind="' + kind + '" data-page="' + (state.page - 1) + '"' + (state.page ? '' : ' disabled') + '>上一页</button>'
+      + '<button type="button" class="btn-small" data-conversation-action="page-assistant-resources" data-resource-kind="' + kind + '" data-page="' + (state.page + 1) + '"' + (state.page + 1 < pages ? '' : ' disabled') + '>下一页</button></div>';
+  }
+
+  function refreshAssistantResourcePicker(kind, preserveScroll) {
+    var container = $('#conversation-resource-' + kind);
+    if (!container || !assistantEditorDraft) return;
+    var active = document.activeElement;
+    var restore = active && active.dataset.assistantResourceSearch === kind;
+    var caret = restore ? active.selectionStart : 0;
+    var picker = container.querySelector('.conversation-resource-picker');
+    var scrollTop = preserveScroll && picker ? picker.scrollTop : 0;
+    var controlSelector = '';
+    if (preserveScroll && active && container.contains(active)) {
+      if (active.name === 'conversation-editor-skill') {
+        controlSelector = 'input[name="conversation-editor-skill"][value="' + CSS.escape(active.value) + '"]';
+      } else if (active.hasAttribute('data-assistant-skill-directory')) {
+        controlSelector = '[data-assistant-skill-directory="' + CSS.escape(active.dataset.assistantSkillDirectory) + '"]';
+      } else if (active.dataset.conversationAction === 'toggle-assistant-skill-directory') {
+        controlSelector = 'button.' + (active.classList.contains('skill-tree-folder-name') ? 'skill-tree-folder-name' : 'btn-small')
+          + '[data-tree-path="' + CSS.escape(active.dataset.treePath) + '"]';
+      }
+    }
+    container.innerHTML = renderAssistantResourcePicker(kind);
+    applyAssistantSkillTreeChecks();
+    container.querySelector('.conversation-resource-picker').scrollTop = scrollTop;
+    if (restore) {
+      var search = container.querySelector('[data-assistant-resource-search]');
+      search.focus();
+      search.setSelectionRange(caret, caret);
+    } else if (controlSelector) {
+      var control = container.querySelector(controlSelector);
+      if (control) control.focus({ preventScroll: true });
+    }
   }
 
   function renderAssistantEditorDrawer() {
@@ -4952,20 +5082,18 @@
       + '<option value="off"' + (assistantEditorDraft.settings && assistantEditorDraft.settings.contextCompression === 'off' ? ' selected' : '') + '>关闭历史预压缩</option>'
       + '</select></div>'
       + '</div>'
-      + '<div class="form-row checkbox-row"><label class="switch-label"><input type="checkbox" id="conversation-editor-stream-output"' + (assistantEditorDraft.settings && assistantEditorDraft.settings.streamOutput !== false ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">流式输出</span></label></div>'
+      + '<div class="form-row"><label class="switch-label"><input type="checkbox" id="conversation-editor-stream-output"' + (assistantEditorDraft.settings && assistantEditorDraft.settings.streamOutput !== false ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">流式输出</span></label></div>'
       + '<div class="form-row"><label>提示词</label><textarea id="conversation-editor-prompt" rows="12">' + esc(assistantEditorDraft.prompt || '') + '</textarea><div class="form-help">这个助手的身份、领域方法与交付偏好。作为用户选择的助手指令注入，权限与完成规则仍由 Runtime 决定。</div></div>'
       + '</section>'
       + '<section class="conversation-tab-panel' + (activeTab === 'resources' ? ' active' : '') + '" data-conversation-tab-panel-group="assistant-editor" data-conversation-tab-panel="resources">'
       + '<div class="conversation-selected-resources">'
       + '<div class="form-row conversation-resource-section">'
-      + '<div class="conversation-resource-heading"><label>Skill</label><button type="button" class="btn-small" data-conversation-action="clear-assistant-resource-selection" data-resource-kind="skill">清空选择</button></div>'
-      + '<div class="conversation-resource-picker">'
-      + renderAssistantResourceChecks(assistantSkillResources, assistantEditorDraft.skillIds, 'Skill', 'conversation-editor-skill')
-      + '</div><div class="form-help">支持多选和直接取消。只把明确勾选的 Skill 正文注入普通对话。</div></div>'
+      + '<div class="conversation-resource-heading"><label>Skill</label></div>'
+      + '<div id="conversation-resource-skill">' + renderAssistantResourcePicker('skill')
+      + '</div><div class="form-help">按原目录展示，每页最多 50 个目录或 Skill 节点。勾选目录包含折叠及其他页的子项；筛选时仅勾选匹配项，选择跨页保留。所选 Skill 正文将注入普通对话，数量越多，占用的上下文越大。</div></div>'
       + '<div class="form-row conversation-resource-section">'
-      + '<div class="conversation-resource-heading"><label>HTTP MCP</label><button type="button" class="btn-small" data-conversation-action="clear-assistant-resource-selection" data-resource-kind="mcp">清空选择</button></div>'
-      + '<div class="conversation-resource-picker">'
-      + renderAssistantResourceChecks(assistantMcpServerResources, assistantEditorDraft.mcpServerIds, 'MCP', 'conversation-editor-mcp-server')
+      + '<div class="conversation-resource-heading"><label>HTTP MCP</label></div>'
+      + '<div id="conversation-resource-mcp">' + renderAssistantResourcePicker('mcp')
       + '</div><div class="form-help">支持多选和直接取消。每次新 generation 读取所选服务器的当前工具 schema，并只允许调用所选服务器。</div></div>'
       + (!assistantResourceOptionsLoaded ? '<div class="form-help">正在读取可选资源…</div>' : '')
       + '</div>'
@@ -4977,6 +5105,7 @@
     openConversationDrawer(assistantEditorDraft.mode === 'edit' ? '编辑助手' : '新建助手', body,
       '<button class="btn-secondary" data-conversation-action="cancel-assistant-editor">取消</button>'
       + '<button class="btn-primary" data-conversation-action="save-assistant-editor">保存</button>');
+    applyAssistantSkillTreeChecks();
   }
 
   function openTopicConfigDrawer() {
@@ -5067,8 +5196,8 @@
       name: String($('#conversation-editor-name').value || '').trim(),
       description: String($('#conversation-editor-description').value || '').trim(),
       prompt: String($('#conversation-editor-prompt').value || ''),
-      skillIds: checkedResourceValues('conversation-editor-skill'),
-      mcpServerIds: checkedResourceValues('conversation-editor-mcp-server'),
+      skillIds: checkedResourceValues('conversation-editor-skill', assistantEditorDraft.skillIds),
+      mcpServerIds: checkedResourceValues('conversation-editor-mcp-server', assistantEditorDraft.mcpServerIds),
       modelServiceId: String($('#conversation-editor-model-service').value || '').trim(),
       settings: settings,
       resourcePolicy: resourcePolicy,
@@ -6206,14 +6335,37 @@
       setResourceRootMethods(target.dataset.permissionPrefix || '', target.dataset.resourceRoot || '', target.dataset.permissionEnabled === 'true');
       return;
     }
-    if (action === 'clear-assistant-resource-selection') {
+    if (action === 'toggle-assistant-skill-directory') {
       event.preventDefault();
       event.stopPropagation();
-      var resourceInputName = target.dataset.resourceKind === 'mcp'
-        ? 'conversation-editor-mcp-server' : 'conversation-editor-skill';
-      document.querySelectorAll('input[name="' + resourceInputName + '"]:checked').forEach(function (input) {
-        input.checked = false;
-      });
+      if (!assistantEditorDraft) return;
+      var treeState = assistantPickerState('skill');
+      var treePath = target.dataset.treePath;
+      var directory = treeState.directories && treeState.directories.get(treePath);
+      if (!directory) return;
+      var expanded = treeState.expansion.has(treePath) ? treeState.expansion.get(treePath) : (directory.depth === 0 || !!treeState.q);
+      treeState.expansion.set(treePath, !expanded);
+      refreshAssistantResourcePicker('skill', true);
+      return;
+    }
+    if (action === 'clear-assistant-resource-selection' || action === 'select-assistant-resources' || action === 'page-assistant-resources') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!assistantEditorDraft) return;
+      var resourceKind = target.dataset.resourceKind === 'mcp' ? 'mcp' : 'skill';
+      var idsKey = resourceKind === 'skill' ? 'skillIds' : 'mcpServerIds';
+      var pickerState = assistantPickerState(resourceKind);
+      if (action === 'page-assistant-resources') pickerState.page = Math.max(0, Number(target.dataset.page) || 0);
+      else if (action === 'clear-assistant-resource-selection') assistantEditorDraft[idsKey] = [];
+      else {
+        var selected = new Set(assistantEditorDraft[idsKey]);
+        assistantPickerItems(resourceKind).forEach(function (item) {
+          if (!item.unavailable && (resourceKind !== 'mcp' || selected.size < 50)) selected.add(item.id);
+        });
+        if (resourceKind === 'mcp' && selected.size >= 50) toast('HTTP MCP 最多选择 50 个服务器');
+        assistantEditorDraft[idsKey] = Array.from(selected);
+      }
+      refreshAssistantResourcePicker(resourceKind);
       return;
     }
     if (action === 'toggle-sidebar-collapse') {
@@ -6308,6 +6460,46 @@
   }
 
   function handleChange(event) {
+    if (assistantEditorDraft && event.target && event.target.hasAttribute('data-assistant-skill-directory')) {
+      var treeState = assistantPickerState('skill');
+      var directory = treeState.directories && treeState.directories.get(event.target.dataset.assistantSkillDirectory);
+      if (!directory) return;
+      var selected = new Set(assistantEditorDraft.skillIds);
+      var checked = event.target.checked;
+      function selectDirectory(node) {
+        node.items.forEach(function (item) {
+          if (checked && !item.unavailable) selected.add(item.id);
+          else if (!checked) selected.delete(item.id);
+        });
+        node.children.forEach(selectDirectory);
+      }
+      selectDirectory(directory);
+      assistantEditorDraft.skillIds = Array.from(selected);
+      refreshAssistantResourcePicker('skill', true);
+      return;
+    }
+    if (assistantEditorDraft && event.target && (event.target.name === 'conversation-editor-skill' || event.target.name === 'conversation-editor-mcp-server')) {
+      var kind = event.target.name === 'conversation-editor-skill' ? 'skill' : 'mcp';
+      var idsKey = kind === 'skill' ? 'skillIds' : 'mcpServerIds';
+      if (kind === 'mcp' && event.target.checked && assistantEditorDraft[idsKey].length >= 50) {
+        event.target.checked = false;
+        toast('HTTP MCP 最多选择 50 个服务器', true);
+        return;
+      }
+      assistantEditorDraft[idsKey] = checkedResourceValues(event.target.name, assistantEditorDraft[idsKey]);
+      var count = $('#conversation-resource-' + kind + ' [data-assistant-resource-count]');
+      if (count) count.textContent = '已选 ' + assistantEditorDraft[idsKey].length + ' 项';
+      if (kind === 'skill' || assistantPickerState(kind).selectedOnly) refreshAssistantResourcePicker(kind, true);
+      return;
+    }
+    if (assistantEditorDraft && event.target && event.target.hasAttribute('data-assistant-resource-selected')) {
+      var selectedKind = event.target.dataset.assistantResourceSelected;
+      var state = assistantPickerState(selectedKind);
+      state.selectedOnly = event.target.checked;
+      state.page = 0;
+      refreshAssistantResourcePicker(selectedKind);
+      return;
+    }
     if (event.target && event.target.id === 'conversation-editor-base-assistant') {
       applyAssistantTemplate(event.target.value);
       return;
@@ -6321,8 +6513,31 @@
     }
   }
 
+  function handleAssistantResourceCompositionStart(event) {
+    if (!assistantEditorDraft || !event.target || !event.target.hasAttribute('data-assistant-resource-search')) return;
+    composingAssistantResourceSearch = event.target;
+    clearTimeout(assistantResourceSearchTimer);
+  }
+
+  function handleAssistantResourceCompositionEnd(event) {
+    if (!event.target || !event.target.hasAttribute('data-assistant-resource-search')) return;
+    composingAssistantResourceSearch = null;
+    handleInput(event);
+  }
+
   function handleInput(event) {
     if (!event.target) return;
+    if (assistantEditorDraft && event.target.hasAttribute('data-assistant-resource-search')) {
+      if (event.isComposing || composingAssistantResourceSearch === event.target) return;
+      var kind = event.target.dataset.assistantResourceSearch;
+      var state = assistantPickerState(kind);
+      state.q = event.target.value;
+      state.page = 0;
+      if (state.expansion) state.expansion.clear();
+      clearTimeout(assistantResourceSearchTimer);
+      assistantResourceSearchTimer = setTimeout(function () { refreshAssistantResourcePicker(kind); }, 180);
+      return;
+    }
     if (event.target.dataset && event.target.dataset.conversationAction === 'trace-search') {
       traceViewerSearch = event.target.value || '';
       refreshOpenTraceViewer(true);
@@ -6624,6 +6839,8 @@
     document.addEventListener('pointerup', handleTrajectoryInspectorPointerUp, true);
     document.addEventListener('pointercancel', handleTrajectoryInspectorPointerUp, true);
     document.addEventListener('change', handleChange);
+    document.addEventListener('compositionstart', handleAssistantResourceCompositionStart);
+    document.addEventListener('compositionend', handleAssistantResourceCompositionEnd);
     document.addEventListener('input', handleInput);
     document.addEventListener('scroll', handleEventStreamScroll, true);
     document.addEventListener('wheel', handleEventStreamWheel, { capture: true, passive: true });

@@ -48,7 +48,8 @@
     function upsertBuiltinItem(runtimeConfig, section, id, item, entry, role) {
       if (!runtimeConfig[section]) runtimeConfig[section] = {};
       if (!canReplaceWithBuiltin(runtimeConfig[section][id])) return false;
-      runtimeConfig[section][id] = markBuiltin(section === 'flows' ? migrateLegacyPageNodes(clone(item)) : clone(item), section, entry, role);
+      var cleaned = globalThis.PageAutomationConfigMigration.cleanItem(section, clone(item));
+      runtimeConfig[section][id] = markBuiltin(section === 'flows' ? migrateLegacyPageNodes(cleaned) : cleaned, section, entry, role);
       return true;
     }
 

@@ -33,6 +33,7 @@
     Object.freeze({ root: 'model-services', api: 'AgentConfigurationResource', factories: ['createModelServicesAdapter'] }),
     Object.freeze({ root: 'agent-settings', api: 'AgentConfigurationResource', factories: ['createAgentSettingsAdapter'] }),
     Object.freeze({ root: 'connections', api: 'ConnectionResource', factories: ['createAdapter'] }),
+    Object.freeze({ root: 'local', api: 'LocalResource', factories: ['createAdapter'] }),
     Object.freeze({ root: 'mcp-servers', api: 'McpResource', factories: ['createMcpServersAdapter', 'createAdapter'] }),
     Object.freeze({ root: 'mcp-calls', api: 'McpResource', factories: ['createMcpCallsAdapter'] }),
   ]);

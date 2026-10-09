@@ -185,26 +185,17 @@
           hostnames: editorElement('page-hostnames').value.trim(),
           urlIncludes: editorElement('page-urlincludes').value.trim(),
         },
-        autoRefreshMinutes: Number(editorElement('page-refresh').value) || 0,
+        autoCloseOnComplete: editorElement('page-auto-close').checked,
         captureNetwork: editorElement('page-capture').checked,
-        stealthMode: editorElement('page-stealth-mode').checked,
         keepAlive: {
-          enabled: editorElement('page-keepalive-enabled').checked,
-          intervalMinutes: Math.max(1, Number(editorElement('page-keepalive-interval').value) || 5),
-          requestUrl: editorElement('page-keepalive-request-url').value.trim(),
-          method: editorElement('page-keepalive-method').value || 'GET',
-          expectedStatus: editorElement('page-keepalive-expected-status').value.trim() || '200-399',
-          requestTimeoutMs: Math.max(1000, Number(editorElement('page-keepalive-timeout').value) || 15000),
-          headers: editorElement('page-keepalive-headers').value.trim(),
-          body: editorElement('page-keepalive-body').value,
-          lockedSelector: editorElement('page-keepalive-locked-selector').value.trim(),
-          healthySelector: editorElement('page-keepalive-healthy-selector').value.trim(),
-          versionUrl: editorElement('page-keepalive-version-url').value.trim(),
-          activityMode: editorElement('page-keepalive-activity').value || 'none',
-          reloadOnSessionExpired: editorElement('page-keepalive-reload-expired').checked,
-          reloadOnLocked: editorElement('page-keepalive-reload-locked').checked,
-          reloadOnVersionChange: editorElement('page-keepalive-reload-version').checked,
-          reloadDiscarded: editorElement('page-keepalive-reload-discarded').checked,
+          enabled: editorElement('page-heartbeat-enabled').checked,
+          intervalMinutes: Number(editorElement('page-heartbeat-interval').value) || 5,
+          requestUrl: editorElement('page-heartbeat-url').value.trim(),
+          method: editorElement('page-heartbeat-method').value,
+          headers: editorElement('page-heartbeat-headers').value.trim(),
+          body: editorElement('page-heartbeat-body').value,
+          expectedStatus: editorElement('page-heartbeat-status').value.trim() || '200-399',
+          requestTimeoutMs: Number(editorElement('page-heartbeat-timeout').value) || 15000,
         },
       };
     }
@@ -215,14 +206,12 @@
 
     function applyEditorData(data) {
       var existingMatchers = ownDataValue(draft, 'matchers');
-      var existingKeepAlive = ownDataValue(draft, 'keepAlive');
       draft.label = data.label;
       draft.url = data.url;
       draft.matchers = Object.assign({}, existingMatchers && typeof existingMatchers === 'object' ? existingMatchers : {}, data.matchers);
-      draft.autoRefreshMinutes = data.autoRefreshMinutes;
+      draft.autoCloseOnComplete = data.autoCloseOnComplete;
       draft.captureNetwork = data.captureNetwork;
-      draft.stealthMode = data.stealthMode;
-      draft.keepAlive = Object.assign({}, existingKeepAlive && typeof existingKeepAlive === 'object' ? existingKeepAlive : {}, data.keepAlive);
+      draft.keepAlive = data.keepAlive;
     }
 
     function syncDraftFromEditor() {
@@ -252,10 +241,8 @@
       list.innerHTML = renderConfigListItems('pages', pages, '<div class="placeholder">还没有页面配置，点击「新建页面」开始</div>', function (page) {
         var badges = '';
         var builtin = isBuiltinItem(page);
-        if (Number(page.autoRefreshMinutes) > 0) badges += '<span class="badge on">每 ' + esc(page.autoRefreshMinutes) + ' 分钟</span>';
-        if (page.keepAlive && page.keepAlive.enabled) badges += '<span class="badge on">保活 ' + esc(page.keepAlive.intervalMinutes || 5) + ' 分钟</span>';
         if (page.captureNetwork) badges += '<span class="badge on">捕获网络</span>';
-        if (page.stealthMode) badges += '<span class="badge on">环境补丁</span>';
+        if (page.keepAlive && page.keepAlive.enabled) badges += '<span class="badge on">会话保活</span>';
         if (builtin) badges += '<span class="badge builtin">内置</span>';
         return '<div class="item-card' + (draft && draft.id === page.id ? ' selected' : '') + (builtin ? ' builtin' : '') + '" data-action="edit-page" data-id="' + esc(page.id) + '">'
           + '<span class="item-title">' + esc(page.label || '(未命名)') + '</span>'
@@ -284,7 +271,7 @@
       }
       var page = draft;
       var readonly = isBuiltinItem(page);
-      var keepAlive = page.keepAlive || {};
+      var heartbeat = page.keepAlive || {};
       editor.classList.remove('hidden');
       editor.innerHTML =
         '<h3>' + (readonly ? '查看内置页面' : (page.id ? '编辑页面' : '新建页面')) + (readonly ? ' <span class="badge builtin">内置</span>' : '') + '</h3>'
@@ -297,52 +284,24 @@
         + '<div class="form-row"><label>额外匹配域名（每行一个，可选；页面 URL 的域名自动包含）</label><textarea id="page-hostnames" rows="2" placeholder="erp2.internal.company.com"' + (readonly ? ' disabled' : '') + '>' + esc((page.matchers && page.matchers.hostnames) || '') + '</textarea></div>'
         + '<div class="form-row"><label>URL 包含（可选，用于区分同域名下的不同页面）</label><input type="text" id="page-urlincludes" value="' + esc((page.matchers && page.matchers.urlIncludes) || '') + '" placeholder="/report/"' + (readonly ? ' disabled' : '') + '></div>'
         + '</div>'
+        + '<div class="form-row form-row-spaced"><label class="switch-label"><input type="checkbox" id="page-capture"' + (page.captureNetwork ? ' checked' : '') + (readonly ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">捕获网络请求（供「获取请求返回数据」节点使用，修改后需刷新目标页面生效）</span></label></div>'
+        + '<div class="form-row form-row-spaced"><label class="switch-label"><input type="checkbox" id="page-auto-close"' + (page.autoCloseOnComplete !== false ? ' checked' : '') + (readonly ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">流程成功完成后自动关闭本次新打开的标签页（复用的标签页保留）</span></label></div>'
+        + '<div class="form-row form-row-spaced"><label class="switch-label"><input type="checkbox" id="page-heartbeat-enabled"' + (heartbeat.enabled ? ' checked' : '') + (readonly ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">启用页面会话保活</span></label></div>'
+        + '<div class="form-help">定时在已打开且未被浏览器丢弃的匹配页面内发送请求，自动携带符合浏览器规则的 Cookie。可填写无业务副作用的普通查询接口，无需专门的登录接口；是否延长会话有效期取决于服务端，不会切换标签或刷新页面。</div>'
         + '<div class="form-grid">'
-        + '<div class="form-row"><label>页面自动刷新间隔（分钟，0=不刷新；仅刷新已打开的标签页）</label><input type="number" id="page-refresh" min="0" value="' + esc(page.autoRefreshMinutes || 0) + '"' + (readonly ? ' disabled' : '') + '></div>'
-        + '<div class="form-row checkbox-row form-row-offset"><input type="checkbox" id="page-capture"' + (page.captureNetwork ? ' checked' : '') + (readonly ? ' disabled' : '') + '><label for="page-capture">捕获网络请求（供「获取请求返回数据」节点使用，修改后需刷新目标页面生效）</label></div>'
+        + '<div class="form-row"><label>保活请求 URL（支持相对路径）</label><input type="text" id="page-heartbeat-url" value="' + esc(heartbeat.requestUrl || '') + '" placeholder="/api/user/info"' + (readonly ? ' disabled' : '') + '></div>'
+        + '<div class="form-row"><label>间隔（分钟）</label><input type="number" id="page-heartbeat-interval" min="1" step="any" value="' + esc(heartbeat.intervalMinutes || 5) + '"' + (readonly ? ' disabled' : '') + '></div>'
         + '</div>'
-        + '<div class="form-row checkbox-row form-row-spaced"><input type="checkbox" id="page-stealth-mode"' + (page.stealthMode ? ' checked' : '') + (readonly ? ' disabled' : '') + '><label for="page-stealth-mode">启用页面环境补丁（document_start 覆盖 navigator.webdriver 等，修改后需刷新目标页面生效）</label></div>'
-        + '<h4>页面保活</h4>'
-        + '<div class="form-grid">'
-        + '<div class="form-row checkbox-row"><input type="checkbox" id="page-keepalive-enabled"' + (keepAlive.enabled ? ' checked' : '') + (readonly ? ' disabled' : '') + '><label for="page-keepalive-enabled">启用页面保活（仅作用于已打开的匹配标签页）</label></div>'
-        + '<div class="form-row"><label>保活间隔（分钟）</label><input type="number" id="page-keepalive-interval" min="1" value="' + esc(keepAlive.intervalMinutes || 5) + '"' + (readonly ? ' disabled' : '') + '></div>'
-        + '</div>'
-        + '<div class="form-grid">'
-        + '<div class="form-row"><label>心跳请求 URL（可相对当前页面）</label><input type="text" id="page-keepalive-request-url" value="' + esc(keepAlive.requestUrl || '') + '" placeholder="/api/session/ping"' + (readonly ? ' disabled' : '') + '></div>'
-        + '<div class="form-row"><label>期望状态码</label><input type="text" id="page-keepalive-expected-status" value="' + esc(keepAlive.expectedStatus || '200-399') + '" placeholder="200-399 / 204 / 200,204"' + (readonly ? ' disabled' : '') + '></div>'
-        + '</div>'
-        + '<div class="form-grid">'
-        + '<div class="form-row"><label>心跳方法</label><select id="page-keepalive-method"' + (readonly ? ' disabled' : '') + '>'
-        + ['GET', 'HEAD', 'POST'].map(function (method) { return '<option value="' + method + '"' + ((keepAlive.method || 'GET') === method ? ' selected' : '') + '>' + method + '</option>'; }).join('')
+        + '<details><summary>心跳请求选项</summary><div class="form-grid">'
+        + '<div class="form-row"><label>请求方法</label><select id="page-heartbeat-method"' + (readonly ? ' disabled' : '') + '>'
+        + ['GET', 'HEAD', 'POST'].map(function (method) { return '<option value="' + method + '"' + ((heartbeat.method || 'GET') === method ? ' selected' : '') + '>' + method + '</option>'; }).join('')
         + '</select></div>'
-        + '<div class="form-row"><label>请求超时(ms)</label><input type="number" id="page-keepalive-timeout" min="1000" value="' + esc(keepAlive.requestTimeoutMs || 15000) + '"' + (readonly ? ' disabled' : '') + '></div>'
+        + '<div class="form-row"><label>请求超时（毫秒）</label><input type="number" id="page-heartbeat-timeout" min="1000" max="60000" value="' + esc(heartbeat.requestTimeoutMs || 15000) + '"' + (readonly ? ' disabled' : '') + '></div>'
         + '</div>'
-        + '<div class="form-grid">'
-        + '<div class="form-row"><label>请求头 JSON 或 Key: Value</label><textarea id="page-keepalive-headers" rows="2" placeholder="{&quot;x-keepalive&quot;:&quot;1&quot;}"' + (readonly ? ' disabled' : '') + '>' + esc(keepAlive.headers || '') + '</textarea></div>'
-        + '<div class="form-row"><label>请求体（POST 时可选）</label><textarea id="page-keepalive-body" rows="2" placeholder="{&quot;ping&quot;:true}"' + (readonly ? ' disabled' : '') + '>' + esc(keepAlive.body || '') + '</textarea></div>'
-        + '</div>'
-        + '<div class="form-grid">'
-        + '<div class="form-row"><label>锁屏/过期选择器（出现则认为不可用）</label><input type="text" id="page-keepalive-locked-selector" value="' + esc(keepAlive.lockedSelector || '') + '" placeholder=".lock-screen / .login-modal"' + (readonly ? ' disabled' : '') + '></div>'
-        + '<div class="form-row"><label>健康选择器（可选，出现则认为页面正常）</label><input type="text" id="page-keepalive-healthy-selector" value="' + esc(keepAlive.healthySelector || '') + '" placeholder="main .dashboard"' + (readonly ? ' disabled' : '') + '></div>'
-        + '</div>'
-        + '<div class="form-grid">'
-        + '<div class="form-row"><label>版本检测 URL（可选）</label><input type="text" id="page-keepalive-version-url" value="' + esc(keepAlive.versionUrl || '') + '" placeholder="/version.json / /asset-manifest.json"' + (readonly ? ' disabled' : '') + '></div>'
-        + '<div class="form-row"><label>活动模拟</label><select id="page-keepalive-activity" ' + (readonly ? ' disabled' : '') + '>'
-        + [
-          ['none', '不模拟活动'],
-          ['domEvent', 'DOM mousemove（低风险）'],
-          ['cdpMouseMove', 'CDP 鼠标移动（更接近真实）'],
-        ].map(function (option) { return '<option value="' + option[0] + '"' + ((keepAlive.activityMode || 'none') === option[0] ? ' selected' : '') + '>' + option[1] + '</option>'; }).join('')
-        + '</select></div>'
-        + '</div>'
-        + '<div class="form-grid">'
-        + '<div class="form-row checkbox-row"><input type="checkbox" id="page-keepalive-reload-expired"' + (keepAlive.reloadOnSessionExpired ? ' checked' : '') + (readonly ? ' disabled' : '') + '><label for="page-keepalive-reload-expired">心跳失败/401/403 时刷新页面</label></div>'
-        + '<div class="form-row checkbox-row"><input type="checkbox" id="page-keepalive-reload-locked"' + (keepAlive.reloadOnLocked ? ' checked' : '') + (readonly ? ' disabled' : '') + '><label for="page-keepalive-reload-locked">检测到锁屏/过期界面时刷新页面</label></div>'
-        + '</div>'
-        + '<div class="form-grid">'
-        + '<div class="form-row checkbox-row"><input type="checkbox" id="page-keepalive-reload-version"' + (keepAlive.reloadOnVersionChange ? ' checked' : '') + (readonly ? ' disabled' : '') + '><label for="page-keepalive-reload-version">版本检测内容变化时刷新页面</label></div>'
-        + '<div class="form-row checkbox-row"><input type="checkbox" id="page-keepalive-reload-discarded"' + (keepAlive.reloadDiscarded !== false ? ' checked' : '') + (readonly ? ' disabled' : '') + '><label for="page-keepalive-reload-discarded">标签页被浏览器丢弃时自动刷新</label></div>'
-        + '</div>'
+        + '<div class="form-row"><label>请求头（JSON 或每行 Key: Value）</label><textarea id="page-heartbeat-headers" rows="2"' + (readonly ? ' disabled' : '') + '>' + esc(heartbeat.headers || '') + '</textarea></div>'
+        + '<div class="form-row"><label>请求体（仅 POST）</label><textarea id="page-heartbeat-body" rows="2"' + (readonly ? ' disabled' : '') + '>' + esc(heartbeat.body || '') + '</textarea></div>'
+        + '<div class="form-row"><label>期望 HTTP 状态码（例如 200-299,304）</label><input type="text" id="page-heartbeat-status" value="' + esc(heartbeat.expectedStatus || '200-399') + '"' + (readonly ? ' disabled' : '') + '></div>'
+        + '</details>'
         + '<div class="editor-actions">'
         + (readonly
           ? '<button class="btn-primary" data-action="copy-page" data-id="' + esc(page.id) + '">复制为用户页面</button>'
@@ -365,16 +324,9 @@
         label: '',
         url: '',
         matchers: { hostnames: '', urlIncludes: '' },
-        autoRefreshMinutes: 0,
+        autoCloseOnComplete: true,
         captureNetwork: false,
-        stealthMode: false,
-        keepAlive: {
-          enabled: false,
-          intervalMinutes: 5,
-          expectedStatus: '200-399',
-          activityMode: 'none',
-          reloadDiscarded: true,
-        },
+        keepAlive: { enabled: false, intervalMinutes: 5, requestUrl: '', method: 'GET' },
       };
       draftPendingId = '';
       draftRevision++;
@@ -480,20 +432,31 @@
       try {
         var clonedDraft = cloneData(draft);
         var clonedMatchers = ownDataValue(clonedDraft, 'matchers');
-        var clonedKeepAlive = ownDataValue(clonedDraft, 'keepAlive');
         item = Object.assign({}, clonedDraft, {
           label: editorData.label.trim(),
           url: editorData.url.trim(),
           matchers: Object.assign({}, clonedMatchers && typeof clonedMatchers === 'object' ? clonedMatchers : {}, editorData.matchers),
-          autoRefreshMinutes: editorData.autoRefreshMinutes,
+          autoCloseOnComplete: editorData.autoCloseOnComplete,
           captureNetwork: editorData.captureNetwork,
-          stealthMode: editorData.stealthMode,
-          keepAlive: Object.assign({}, clonedKeepAlive && typeof clonedKeepAlive === 'object' ? clonedKeepAlive : {}, editorData.keepAlive),
+          keepAlive: editorData.keepAlive,
         });
       } catch (error) {
         return validationFailure('无法保存页面: ' + errorText(error, '页面数据无效'));
       }
       if (!item.url) return validationFailure('页面 URL 不能为空');
+      if (item.keepAlive.enabled) {
+        if (!item.keepAlive.requestUrl) return validationFailure('启用页面会话保活时必须填写请求 URL');
+        try {
+          var heartbeatUrl = new URL(item.keepAlive.requestUrl, item.url);
+          if (!/^https?:$/.test(heartbeatUrl.protocol)) throw new Error('invalid protocol');
+        } catch (_) { return validationFailure('心跳 URL 必须是 HTTP/HTTPS 地址或有效的相对路径'); }
+      }
+      if (!Number.isFinite(item.keepAlive.intervalMinutes) || item.keepAlive.intervalMinutes < 1) {
+        return validationFailure('心跳间隔至少为 1 分钟');
+      }
+      if (!Number.isInteger(item.keepAlive.requestTimeoutMs) || item.keepAlive.requestTimeoutMs < 1000 || item.keepAlive.requestTimeoutMs > 60000) {
+        return validationFailure('心跳请求超时必须为 1000–60000 毫秒');
+      }
       if (!draftId) {
         try {
           if (!draftPendingId) draftPendingId = nextPageId();

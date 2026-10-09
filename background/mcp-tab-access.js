@@ -172,9 +172,7 @@
         return chrome.tabs.get(tabId);
       }).then(function (tab) {
         var navigate = shouldNavigateTab(tab, url, navOptions);
-        var foreground = navOptions.focusWindow === true
-          || navOptions.foreground === true
-          || navOptions.requiresForeground === true;
+        var foreground = navOptions.focusWindow === true;
         var activationResult = null;
         var update = activateTab(tabId, false).then(function (activation) {
           activationResult = activation && activation.actionResult || null;
@@ -245,7 +243,7 @@
         preserveIfHostMatches: true,
         matchPage: matchPage,
         source: source,
-        foreground: options.foreground === true,
+        focusWindow: options.focusWindow === true,
         returnDetails: options.returnDetails === true,
       };
       function shouldReopenRegisteredTab(tabId) {
@@ -255,9 +253,9 @@
           && tabRuntime.shouldReopenTab(source, tabId, maxReuseMs);
       }
       function createFreshTab(label) {
-        return createTab({ url: targetUrl, active: options.foreground === true }, options).then(function (tab) {
+        return createTab({ url: targetUrl, active: options.focusWindow === true }, options).then(function (tab) {
           if (!tab || !tab.id) throw new Error('MCP 创建标签页失败');
-          return focusAndRegisterTab(source, tab.id, targetUrl, mode, label || '标签页超龄重开', { navigate: false, foreground: options.foreground === true, returnDetails: options.returnDetails === true, createdActionResult: tab.actionResult });
+          return focusAndRegisterTab(source, tab.id, targetUrl, mode, label || '标签页超龄重开', { navigate: false, focusWindow: options.focusWindow === true, returnDetails: options.returnDetails === true, createdActionResult: tab.actionResult });
         });
       }
 
@@ -275,10 +273,10 @@
 
         if (mode === RUN_TAB_MODE_FIXED_NEW) {
           function createFixedTab() {
-            return createTab({ url: targetUrl, active: options.foreground === true }, options).then(function (tab) {
+            return createTab({ url: targetUrl, active: options.focusWindow === true }, options).then(function (tab) {
               if (!tab || !tab.id) throw new Error('MCP 创建固定标签页失败');
               fixedTabId = tab.id;
-              return focusAndRegisterTab(source, tab.id, targetUrl, mode, '固定打开标签', { navigate: false, foreground: options.foreground === true, returnDetails: options.returnDetails === true, createdActionResult: tab.actionResult });
+              return focusAndRegisterTab(source, tab.id, targetUrl, mode, '固定打开标签', { navigate: false, focusWindow: options.focusWindow === true, returnDetails: options.returnDetails === true, createdActionResult: tab.actionResult });
             });
           }
           if (fixedTabId) {
@@ -309,9 +307,9 @@
             if (match && match.tab) {
               return focusAndRegisterTab(source, match.tab.id, targetUrl, mode, '复用已打开标签', reuseNavOptions);
             }
-            return createTab({ url: targetUrl, active: options.foreground === true }, options).then(function (tab) {
+            return createTab({ url: targetUrl, active: options.focusWindow === true }, options).then(function (tab) {
               if (!tab || !tab.id) throw new Error('MCP 创建标签页失败');
-              return focusAndRegisterTab(source, tab.id, targetUrl, mode, '新建标签页', { navigate: false, foreground: options.foreground === true, returnDetails: options.returnDetails === true, createdActionResult: tab.actionResult });
+              return focusAndRegisterTab(source, tab.id, targetUrl, mode, '新建标签页', { navigate: false, focusWindow: options.focusWindow === true, returnDetails: options.returnDetails === true, createdActionResult: tab.actionResult });
             });
           });
         });
@@ -330,7 +328,7 @@
         options = options || {};
         var pageId = pageIdFromPageSource(source);
         if (!pageId) return Promise.resolve(null);
-        return ensurePageTab(pageId, { runTabMode: localMode, urlOverride: url || '', foreground: options.foreground === true });
+        return ensurePageTab(pageId, { runTabMode: localMode, urlOverride: url || '', focusWindow: options.focusWindow === true });
       }
 
       return Object.assign({}, tabRuntime, {
@@ -344,7 +342,7 @@
           options = options || {};
           var pageId = pageIdFromPageSource(source);
           var tabPromise = pageId
-            ? ensurePageTab(pageId, { runTabMode: localMode, urlOverride: url || '', forceNew: options.forceNew === true, forceNavigate: options.forceNavigate === true, forceReopen: options.forceReopen, maxReuseMs: options.maxReuseMs, maxReuseMinutes: options.maxReuseMinutes, foreground: options.foreground === true, returnDetails: options.returnDetails === true })
+            ? ensurePageTab(pageId, { runTabMode: localMode, urlOverride: url || '', forceNew: options.forceNew === true, forceNavigate: options.forceNavigate === true, forceReopen: options.forceReopen, maxReuseMs: options.maxReuseMs, maxReuseMinutes: options.maxReuseMinutes, focusWindow: options.focusWindow === true, returnDetails: options.returnDetails === true })
             : tabRuntime.reuseOrCreateTab(source, url, options);
           return tabPromise;
         },

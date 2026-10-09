@@ -105,8 +105,6 @@
         primaryRunTabId: snapshot.primaryRunTabId || 0,
         fixedRunTab: !!snapshot.fixedRunTab,
         trigger: snapshot.trigger,
-        forceCdpKeepAlive: snapshot.forceCdpKeepAlive === true,
-        sessionCdpKeepAlive: snapshot.sessionCdpKeepAlive === true,
         incognito: !!snapshot.incognito,
       });
       try {

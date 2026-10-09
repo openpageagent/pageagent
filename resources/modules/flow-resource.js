@@ -41,35 +41,42 @@
       onFailure: { type: 'string', enum: ['abort', 'continue'], description: '失败策略；省略时按 abort 处理。只有业务允许忽略本节点失败时才使用 continue' },
       retries: { type: 'integer', minimum: 0, description: '节点级重试次数；有外部副作用或具体节点合同禁止重试时必须为 0' },
       retryDelayMs: { type: 'number', minimum: 0, description: '节点级重试间隔毫秒，仅在 retries > 0 时有意义' },
-      requiresForeground: { type: 'boolean' }, foreground: { type: 'boolean' }, reveal: { type: 'boolean' },
     },
     required: ['type'], additionalProperties: false,
   });
   var FLOW_SCHEMA = Object.freeze({
     type: 'object',
     properties: {
-      id: { type: 'string', maxLength: 240 }, name: { type: 'string', maxLength: 300 },
+      id: { type: 'string', maxLength: 240 },
       label: { type: 'string', maxLength: 300 }, description: { type: 'string', maxLength: 10000 },
       inputDescription: { type: 'string', maxLength: 10000 }, outputDescription: { type: 'string', maxLength: 10000 },
       inputExample: { type: 'string', maxLength: 100000, description: '运行入参示例，内容必须是 JSON 对象字符串，例如 {"module":"ersoft-kratos"}' },
       nodes: { type: 'array', maxItems: 2000, items: NODE_SCHEMA },
-      enabled: { type: 'boolean', description: '保留字段：当前不影响 Flow 注册与运行' },
       runTabMode: { type: 'string', maxLength: 100, description: '本 Flow 运行时的默认标签页策略；运行请求未指定 runTabMode 时生效' },
       dataset: { type: 'string', maxLength: 200000, description: '数据驱动运行的数据集，内容必须是 JSON 数组文本；每轮运行以其中一项作为 ctx.data' },
-      allowCdpKeepAlive: { type: 'boolean', description: '允许本 Flow 的运行会话保持 CDP 连接' },
-      disableKeepAlive: { type: 'boolean', description: 'allowCdpKeepAlive 的反向开关，二者由界面同一选项维护' },
+      mailNotification: {
+        type: 'object', description: '整个 Flow 结束后的邮件通知，默认关闭；复用全局 SMTP 账户，停止和单节点调试不通知，投递失败不改变运行结果',
+        properties: {
+          onSuccess: { type: 'boolean', description: '最终成功时发送一次' },
+          onFailure: { type: 'boolean', description: '最终失败时发送一次' },
+          to: { type: 'string', maxLength: 26000, description: '固定收件邮箱，用逗号、分号或空白分隔；启用通知时至少一个，最多 100 个，不支持模板' },
+          subject: { type: 'string', maxLength: 998, description: '邮件主题模板，省略时使用默认主题。支持 {{input.字段}}、{{变量名}} 和 {{notification.flowLabel}}、{{notification.statusLabel}}；启用通知时不能为空' },
+          body: { type: 'string', maxLength: 1048576, description: '纯文本正文模板，省略时使用默认正文。支持流程结束时的 {{input.字段}}、{{变量名}}、{{json 变量名}}；notification 提供 flowLabel、flowId、runId、trigger、status（success/failed）、statusLabel（成功/失败）、startedAt、endedAt（UTC）、error（失败原因）。notification 是通知专用变量，未生成的普通变量显示为空；渲染后正文最多 1MB' },
+        },
+        additionalProperties: false,
+      },
     },
     additionalProperties: false,
   });
   var FLOW_PATCH_SCHEMA = Object.freeze({
     type: 'object',
     properties: {
-      name: FLOW_SCHEMA.properties.name, label: FLOW_SCHEMA.properties.label,
+      label: FLOW_SCHEMA.properties.label,
       description: FLOW_SCHEMA.properties.description, inputDescription: FLOW_SCHEMA.properties.inputDescription,
       outputDescription: FLOW_SCHEMA.properties.outputDescription, inputExample: FLOW_SCHEMA.properties.inputExample,
-      nodes: FLOW_SCHEMA.properties.nodes, enabled: FLOW_SCHEMA.properties.enabled,
+      nodes: FLOW_SCHEMA.properties.nodes,
       runTabMode: FLOW_SCHEMA.properties.runTabMode, dataset: FLOW_SCHEMA.properties.dataset,
-      allowCdpKeepAlive: FLOW_SCHEMA.properties.allowCdpKeepAlive, disableKeepAlive: FLOW_SCHEMA.properties.disableKeepAlive,
+      mailNotification: FLOW_SCHEMA.properties.mailNotification,
     },
     minProperties: 1, additionalProperties: false,
   });
@@ -80,8 +87,6 @@
       params: NODE_SCHEMA.properties.params, displayOrder: NODE_SCHEMA.properties.displayOrder,
       outputVar: NODE_SCHEMA.properties.outputVar, onFailure: NODE_SCHEMA.properties.onFailure,
       retries: NODE_SCHEMA.properties.retries, retryDelayMs: NODE_SCHEMA.properties.retryDelayMs,
-      requiresForeground: NODE_SCHEMA.properties.requiresForeground, foreground: NODE_SCHEMA.properties.foreground,
-      reveal: NODE_SCHEMA.properties.reveal,
     },
     minProperties: 1, additionalProperties: false,
   });

@@ -30,6 +30,7 @@
     'scripts.read', 'scripts.write',
     'schedules.read', 'schedules.write',
     'knowledge.read', 'knowledge.write', 'skills.read', 'assistants.read',
+    'local.execute',
   ]);
   var CORE_ROOT_METHODS = Object.freeze({
     '/page': Object.freeze(['GET', 'POST', 'OPTIONS']),
@@ -46,6 +47,7 @@
     '/url-triggers': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
     '/scripts': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
     '/schedules': Object.freeze(['GET', 'POST', 'PATCH', 'OPTIONS']),
+    '/local': Object.freeze(['POST', 'OPTIONS']),
     // /current is an internal, permission-free ground-truth clock resource;
     // it is intentionally not an editable Assistant resource root.
     '/current': Object.freeze(['GET', 'OPTIONS']),
@@ -467,19 +469,20 @@
         return items;
       }
 
-      function selectedResourceContext() {
-        if (selectedResourceContextPromise) return selectedResourceContextPromise;
-        var skillIds = selectedResourceIds(assistant.skillIds);
-        var mcpServerIds = selectedResourceIds(assistant.mcpServerIds);
-        if (!skillIds.length && !mcpServerIds.length) return Promise.resolve(null);
-        selectedResourceContextPromise = Promise.all([
-          Promise.all(skillIds.map(async function (skillId) {
+      async function readSelectedSkills(skillIds) {
+        var results = new Array(skillIds.length);
+        var cursor = 0;
+        async function worker() {
+          while (cursor < skillIds.length) {
+            if (lease && lease.signal && lease.signal.aborted) throw lease.signal.reason || new Error('已停止读取 Skill');
+            var index = cursor++;
+            var skillId = skillIds[index];
             try {
               var skill = await readSelectedResource('/skills/' + uriSegment(skillId));
               if (!skill || skill.enabled === false || skill.archived === true || !text(skill.instructions)) {
                 throw new Error('Skill 已停用、归档或没有正文');
               }
-              return {
+              results[index] = {
                 value: {
                   id: skillId,
                   name: text(skill.name || skillId),
@@ -488,9 +491,21 @@
                 },
               };
             } catch (error) {
-              return { warning: { kind: 'skill', id: skillId, message: error && error.message || String(error) } };
+              results[index] = { warning: { kind: 'skill', id: skillId, message: error && error.message || String(error) } };
             }
-          })),
+          }
+        }
+        await Promise.all(Array.from({ length: Math.min(4, skillIds.length) }, worker));
+        return results;
+      }
+
+      function selectedResourceContext() {
+        if (selectedResourceContextPromise) return selectedResourceContextPromise;
+        var skillIds = selectedResourceIds(assistant.skillIds);
+        var mcpServerIds = selectedResourceIds(assistant.mcpServerIds);
+        if (!skillIds.length && !mcpServerIds.length) return Promise.resolve(null);
+        selectedResourceContextPromise = Promise.all([
+          readSelectedSkills(skillIds),
           Promise.all(mcpServerIds.map(async function (serverId) {
             try {
               var serverUri = '/mcp-servers/' + uriSegment(serverId);

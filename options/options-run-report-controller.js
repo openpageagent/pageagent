@@ -27,6 +27,9 @@
     manual: '手动', sidepanel: '侧边栏', schedule: '定时运行', urlTrigger: 'URL 触发',
     webhook: 'Webhook', mcp: 'MCP', flowGroup: '流程组合',
   };
+  var REPORT_DISCLOSURE_STYLE = 'details>summary{display:flex;align-items:center;gap:10px;min-height:30px;list-style:none;cursor:pointer;color:#004849;}details>summary::-webkit-details-marker{display:none;}'
+    + 'details>summary::before{content:"";box-sizing:border-box;flex:0 0 8px;width:8px;height:8px;border:solid currentColor;border-width:0 2px 2px 0;color:#728e9b;transform:translateX(-2px) rotate(-45deg);}details[open]>summary::before{transform:translateY(-2px) rotate(45deg);}'
+    + 'details>summary:hover{background:rgba(0,72,73,.08);}details>summary:hover::before{color:#004849;}details>summary:focus-visible{outline:2px solid #004849;outline-offset:2px;}';
 
   function formatStatus(status) {
     var key = String(status === undefined || status === null ? '' : status);
@@ -95,6 +98,7 @@
     var renderConfigListPagination = options.renderPagination || function () { return ''; };
     var NodeTypes = options.nodeTypes || { getTypeLabel: function (type) { return type || 'unknown'; } };
     var toast = options.toast || function () {};
+    var copyText = options.copyText;
     var confirmAction = options.confirm || function () { return true; };
     var openDrawer = options.openDrawer || function () {};
     var closeDrawer = options.closeDrawer || function () {};
@@ -941,21 +945,54 @@
     return !!(value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, key));
   }
 
+  function renderReportIO(label, value, run, field, options, resultIndex) {
+    var copyButton = options.copy !== false && typeof copyText === 'function'
+      ? '<button type="button" class="btn-small" data-action="copy-run-io" data-id="' + esc(run.id || run.runId)
+        + '" data-io-field="' + field + '"'
+        + (resultIndex === undefined ? '' : ' data-result-index="' + resultIndex + '"')
+        + ' aria-label="复制' + label + '" title="复制报告中保存的完整' + label + '">复制' + label + '</button>'
+      : '';
+    return '<details class="output-details"' + (options.openDetails ? ' open' : '') + '><summary>' + label + '</summary>'
+      + '<pre class="output-preview">' + esc(safeJsonPreview(value, options.fullOutput ? 0 : 8000)) + '</pre>'
+      + (copyButton ? '<div class="report-io-actions">' + copyButton + '</div>' : '') + '</details>';
+  }
+
+  function copyRunIO(target) {
+    var run = findRun(target.dataset.id);
+    var field = target.dataset.ioField;
+    var source = run;
+    if (run && target.hasAttribute('data-result-index')) {
+      source = run.flowGroupResults[Number(target.dataset.resultIndex)];
+    }
+    if (!source || (field !== 'input' && field !== 'output') || typeof copyText !== 'function') {
+      toast('复制失败，请刷新报告后重试', true);
+      return;
+    }
+    var value = field === 'output' && source === run && !hasReportField(run, 'output') ? run.result : source[field];
+    try {
+      Promise.resolve(copyText(safeJsonPreview(value))).then(function () {
+        toast('已复制' + (field === 'input' ? '输入' : '输出'));
+      }).catch(function () {
+        toast('复制失败，请手动选中复制', true);
+      });
+    } catch (_) {
+      toast('复制失败，请手动选中复制', true);
+    }
+  }
+
   function renderRunIO(run, options) {
     options = options || {};
     var hasInput = hasReportField(run, 'input');
     var hasOutput = hasReportField(run, 'output') || hasReportField(run, 'result');
     if (!hasInput && !hasOutput) return '';
-    var maxLen = options.fullOutput ? 0 : 8000;
-    var openAttr = options.openDetails ? ' open' : '';
     var output = hasReportField(run, 'output') ? run.output : run.result;
     return '<h3 class="run-section-title">流程输入 / 输出</h3>'
       + '<div class="report-io-grid">'
       + (hasInput
-        ? '<details class="output-details"' + openAttr + '><summary>输入</summary><pre class="output-preview">' + esc(safeJsonPreview(run.input, maxLen)) + '</pre></details>'
+        ? renderReportIO('输入', run.input, run, 'input', options)
         : '')
       + (hasOutput
-        ? '<details class="output-details"' + openAttr + '><summary>输出</summary><pre class="output-preview">' + esc(safeJsonPreview(output, maxLen)) + '</pre></details>'
+        ? renderReportIO('输出', output, run, 'output', options)
         : '')
       + '</div>';
   }
@@ -987,20 +1024,16 @@
   function renderFlowGroupResults(run, options) {
     options = options || {};
     if (!Array.isArray(run.flowGroupResults) || !run.flowGroupResults.length) return '';
-    var maxLen = options.fullOutput ? 0 : 8000;
-    var openAttr = options.openDetails ? ' open' : '';
     return '<h3 class="run-section-title">流程组结果</h3>'
       + '<div class="report-table-scroll"><table class="steps-table flow-group-table"><thead><tr><th>#</th><th>流程</th><th>运行 ID</th><th>结果</th><th>输入 / 输出</th></tr></thead><tbody>'
       + run.flowGroupResults.map(function (r, i) {
         var ok = r.status === 'success';
-        var output = safeJsonPreview(r.output === undefined ? null : r.output, maxLen);
-        var input = r.input === undefined ? '' : safeJsonPreview(r.input, maxLen);
         return '<tr><td>' + (i + 1) + '</td><td>' + esc(r.flowLabel || r.flowId) + '</td>'
           + '<td>' + esc(r.runId || '') + '</td>'
           + '<td><span class="badge ' + (ok ? 'step-passed' : 'step-failed') + '">' + (ok ? '通过' : esc(r.status)) + '</span></td>'
           + '<td>'
-          + (input ? '<details class="output-details"' + openAttr + '><summary>输入</summary><pre class="output-preview">' + esc(input) + '</pre></details>' : '')
-          + '<details class="output-details"' + openAttr + '><summary>输出</summary><pre class="output-preview">' + esc(output) + '</pre></details>'
+          + (r.input === undefined ? '' : renderReportIO('输入', r.input, run, 'input', options, i))
+          + renderReportIO('输出', r.output, run, 'output', options, i)
           + '</td></tr>';
       }).join('')
       + '</tbody></table></div>';
@@ -1240,7 +1273,7 @@
       + '.report-table-scroll{overflow-x:auto;} table{border-collapse:collapse;width:100%;background:#fff;font-size:13px;}'
       + 'th,td{border:1px solid #d0dbe0;padding:6px 10px;text-align:left;vertical-align:top;}'
       + 'th{background:#aabbc3;color:#004849;} tr:nth-child(even) td{background:#f9fafb;} .muted,.meta{color:#728e9b;font-size:12px;} .stat-failed{color:#ba554a;font-weight:600}.error-preview,.step-error{white-space:pre-wrap;word-break:break-word;max-width:360px;color:#ba554a}.step-shot{max-width:480px;border:1px solid #d0dbe0;margin-top:6px}.report-io-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:12px}.output-preview{white-space:pre-wrap;word-break:break-word;max-height:520px;overflow:auto;background:#f3f6f7;border:1px solid #d0dbe0;padding:8px}.run-log{background:#f3f6f7;border:1px solid #d0dbe0;padding:8px;font-family:monospace;font-size:12px}.log-entry{padding:2px 0}.log-time,.log-node{color:#728e9b;margin-right:8px}.log-error{color:#ba554a}.log-warn{color:#9a6a18}.badge{display:inline-block;border:1px solid #d0dbe0;border-radius:3px;padding:1px 6px}.step-passed{background:#1a9964;color:#fff}.step-failed{background:#ba554a;color:#fff}.status-failed{background:#ba554a;color:#fff}.on{background:#1a9964;color:#fff}'
-      + '</style></head><body>'
+      + REPORT_DISCLOSURE_STYLE + '</style></head><body>'
       + '<h1>流程报告 — ' + esc(run.flowLabel || run.flowId) + '</h1>'
       + '<p class="meta">开始: ' + fmtTime(run.startedAt) + ' · 耗时: ' + duration + ' · 触发: ' + esc(run.trigger) + ' · 结果: <b>' + statusText(run.status) + '</b></p>'
       + renderRunParentInfo(run)
@@ -1252,10 +1285,10 @@
       + '</div>'
       + '<div class="report-charts">' + renderRunStatusDistributionChart(statusCount, 1) + renderRunTrendChart(lastRuns.length ? lastRuns : [run]) + renderHistoricalTrendChart(lastRuns.length ? lastRuns : [run]) + renderTopNodeChart(steps) + renderStepDistributionChart(stats) + '</div>'
       + renderReportInsights([run], buildFailureReasonGroups([run]), buildFlakyAnalysis(lastRuns.length ? lastRuns : [run]))
-      + renderRunIO(run, { fullOutput: true, openDetails: true })
+      + renderRunIO(run, { fullOutput: true, openDetails: true, copy: false })
       + renderRunTabUsage(run)
       + renderDataRows(run)
-      + renderFlowGroupResults(run, { fullOutput: true, openDetails: true })
+      + renderFlowGroupResults(run, { fullOutput: true, openDetails: true, copy: false })
       + renderNodeStatsTable(steps)
       + renderFailureSamples(steps)
       + renderWarnErrorEvents(run)
@@ -1284,9 +1317,9 @@
         + '<div class="card c-fail"><b>' + stats.failed + '</b>失败</div>'
         + '<div class="card c-skip"><b>' + stats.skipped + '</b>跳过</div>'
         + '</div>'
-        + renderRunIO(run, { fullOutput: true, openDetails: false })
+        + renderRunIO(run, { fullOutput: true, openDetails: false, copy: false })
         + renderDataRows(run)
-        + renderFlowGroupResults(run, { fullOutput: true, openDetails: false })
+        + renderFlowGroupResults(run, { fullOutput: true, openDetails: false, copy: false })
         + renderNodeStatsTable(steps)
         + renderFailureSamples(steps)
         + renderWarnErrorEvents(run)
@@ -1299,7 +1332,7 @@
       + 'h1{font-size:22px;color:#004849;} h2{font-size:17px;color:#004849;margin:0 0 8px;} h3{font-size:14px;color:#004849;margin:18px 0 8px;} .batch-run{margin:18px 0 24px;padding-top:18px;border-top:2px solid #d0dbe0}.cards{display:flex;gap:12px;margin:16px 0;flex-wrap:wrap;}'
       + '.card,.report-metric,.report-chart,.report-insight{background:#fff;border:1px solid #d0dbe0;border-radius:3px;padding:10px 12px}.card{text-align:center;min-width:90px}.card b,.report-metric b{display:block;font-size:22px}.c-pass b{color:#1a9964}.c-fail b{color:#ba554a}.c-skip b{color:#728e9b}.report-dashboard{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:12px 0}.report-metric span,.report-metric em{display:block;color:#728e9b;font-size:12px;font-style:normal}.report-metric b{color:#004849;margin:4px 0}.metric-success b{color:#1a9964}.report-charts,.report-insights{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin:14px 0}.report-chart-wide{grid-column:1/-1}.report-chart h3,.report-insight h3{margin:0 0 8px;font-size:13px}.status-chart{width:100%;height:22px;background:#eef3f5;border-radius:3px}.trend-chart{width:100%;height:80px}.trend-chart line{stroke:#d0dbe0;stroke-dasharray:3 3}.trend-chart polyline{fill:none;stroke:#004849;stroke-width:2}.chart-legend{display:flex;gap:8px;flex-wrap:wrap;color:#728e9b;font-size:12px}.chart-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}.chart-caption,.chart-empty{color:#728e9b;font-size:12px}.chart-bar-row{display:grid;grid-template-columns:minmax(80px,1fr) 1.2fr auto;gap:8px;align-items:center;font-size:12px;margin:6px 0}.chart-bar-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chart-bar-track,.history-trend-track{height:8px;background:#eef3f5;border-radius:3px;overflow:hidden}.chart-bar-track i{display:block;height:100%;background:#ba554a}.chart-bar-row em,.history-trend-row em{font-style:normal;color:#728e9b}.history-trend-row{display:grid;grid-template-columns:48px minmax(80px,1fr) auto;gap:8px;align-items:center;font-size:12px;margin:6px 0}.history-trend-track{display:flex;height:10px}.history-trend-track i{display:block;height:100%}.trend-success{background:#1a9964}.trend-failed{background:#ba554a}.trend-stopped{background:#9b6a6c}'
       + '.report-table-scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;background:#fff;font-size:13px}th,td{border:1px solid #d0dbe0;padding:6px 10px;text-align:left;vertical-align:top}th{background:#aabbc3;color:#004849}tr:nth-child(even) td{background:#f9fafb}.muted,.meta{color:#728e9b;font-size:12px}.stat-failed{color:#ba554a;font-weight:600}.error-preview,.step-error{white-space:pre-wrap;word-break:break-word;max-width:420px;color:#ba554a}.report-io-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:12px}.output-preview{white-space:pre-wrap;word-break:break-word;max-height:520px;overflow:auto;background:#f3f6f7;border:1px solid #d0dbe0;padding:8px}.run-log{background:#f3f6f7;border:1px solid #d0dbe0;padding:8px;font-family:monospace;font-size:12px}.log-entry{padding:2px 0}.log-time,.log-node{color:#728e9b;margin-right:8px}.log-error{color:#ba554a}.log-warn{color:#9a6a18}.badge{display:inline-block;border:1px solid #d0dbe0;border-radius:3px;padding:1px 6px}.step-passed,.on{background:#1a9964;color:#fff}.step-failed,.status-failed{background:#ba554a;color:#fff}'
-      + '</style></head><body>'
+      + REPORT_DISCLOSURE_STYLE + '</style></head><body>'
       + '<h1>批量流程报告</h1>'
       + '<p class="meta">运行记录: ' + runs.length + ' · 生成时间: ' + new Date().toLocaleString() + '</p>'
       + renderReportDashboard(runs)
@@ -1447,6 +1480,12 @@
       if (!target) return;
       var action = target.dataset && target.dataset.action || '';
       var id = target.dataset && target.dataset.id || '';
+      if (action === 'copy-run-io') {
+        event.preventDefault();
+        event.stopPropagation();
+        copyRunIO(target);
+        return;
+      }
       if (action === 'toggle-run') {
         toggleRun(id);
         return;

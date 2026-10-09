@@ -86,6 +86,11 @@
       }),
     }),
 
+    Object.freeze({ uri: '/local', section: 'mcp', label: '本地文件与命令',
+      description: '在连接配置开启后，通过已连接的服务端读取、写入、删除、查找文件及执行 Bash。',
+      supportedMethods: Object.freeze(['POST', 'OPTIONS']),
+      methodPermissions: Object.freeze({ POST: Object.freeze(['local.execute']) }),
+    }),
     Object.freeze({ uri: '/flow-groups', section: 'flow-groups', label: '流程组', description: '管理 FlowGroup 并启动流程组运行。' }),
 
     Object.freeze({ uri: '/flows', section: 'flows', label: '流程', description: '读取、创建和修改 Flow、节点及校验。' }),
@@ -134,6 +139,7 @@
     'model-services.read', 'model-services.write', 'model-services.delete', 'model-services.execute',
     'agent-settings.read', 'agent-settings.write',
     'connections.read', 'connections.write', 'connections.execute',
+    'local.execute',
     'mcp-servers.read', 'mcp-servers.write', 'mcp-servers.delete', 'mcp-servers.call',
     'mcp-calls.read',
     'conversations.read', 'conversations.write', 'conversations.delete', 'conversations.execute',
@@ -153,6 +159,7 @@
     'scripts.read', 'scripts.write',
     'schedules.read', 'schedules.write',
     'knowledge.read', 'knowledge.write', 'skills.read', 'assistants.read',
+    'local.execute',
   ]);
   var PAGE_AGENT_CORE_ROOT_METHODS = Object.freeze({
     '/page': Object.freeze(['GET', 'POST', 'OPTIONS']),
@@ -169,6 +176,7 @@
     '/url-triggers': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
     '/scripts': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
     '/schedules': Object.freeze(['GET', 'POST', 'PATCH', 'OPTIONS']),
+    '/local': Object.freeze(['POST', 'OPTIONS']),
   });
   var BLOCKED_KEYS = Object.create(null);
   BLOCKED_KEYS.__proto__ = true;
@@ -412,7 +420,7 @@
       if (!item || item.length > 240 || /[/\\\u0000-\u001F\u007F]/.test(item) || seen[item]) return false;
       seen[item] = true;
       return true;
-    }).slice(0, 50);
+    });
   }
 
   function finiteNumber(value, fallback) {
@@ -567,7 +575,7 @@
         ? source.prompt
         : (fallback.prompt !== undefined ? fallback.prompt : ''), '');
       out.skillIds = normalizeResourceIds(source.skillIds, fallback.skillIds);
-      out.mcpServerIds = normalizeResourceIds(source.mcpServerIds, fallback.mcpServerIds);
+      out.mcpServerIds = normalizeResourceIds(source.mcpServerIds, fallback.mcpServerIds).slice(0, 50);
       out.modelServiceId = stringValue(source.modelServiceId !== undefined
         ? source.modelServiceId
         : (source.settings && source.settings.modelServiceId !== undefined

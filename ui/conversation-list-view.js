@@ -208,6 +208,7 @@
     schedules: '定时任务', knowledge: '知识', 'knowledge-settings': '知识设置',
     assistants: '助手', 'model-services': '模型服务', 'agent-settings': 'Agent 设置',
     connections: '连接', 'mcp-servers': 'MCP 服务', 'mcp-calls': 'MCP 工具',
+    local: '本地文件与命令',
     'image-artifacts': '图像产物',
   });
   var METHOD_VERBS = Object.freeze({ GET: '读取', POST: '提交', PUT: '替换', PATCH: '更新', DELETE: '删除', OPTIONS: '查询' });
@@ -290,6 +291,12 @@
     operationRoute(/^\/knowledge$/, '知识列表', { GET: '读取知识列表', POST: '新建知识' }),
     operationRoute(/^\/knowledge\/[^/]+$/, '知识', { GET: '读取知识', PUT: '替换知识', PATCH: '更新知识', DELETE: '删除知识' }),
     operationRoute(/^\/knowledge-settings$/, '知识设置', { GET: '读取知识设置', PATCH: '更新知识设置' }),
+
+    operationRoute(/^\/local\/read$/, '文件读取', { POST: '读取文件' }),
+    operationRoute(/^\/local\/write$/, '文件写入', { POST: '写入文件' }),
+    operationRoute(/^\/local\/delete$/, '文件删除', { POST: '删除文件' }),
+    operationRoute(/^\/local\/grep$/, '文件内容查找', { POST: '查找文件内容' }),
+    operationRoute(/^\/local\/bash$/, 'Bash 命令', { POST: '执行 Bash' }),
 
     operationRoute(/^\/mcp-calls$/, 'MCP 调用列表', { GET: '读取 MCP 调用列表' }),
     operationRoute(/^\/mcp-calls\/[^/]+$/, 'MCP 调用结果', { GET: '读取 MCP 调用结果' }),
@@ -383,6 +390,7 @@
     if (!seg.length) return method === 'OPTIONS' ? '查询可用能力' : '';
     var matched = matchedOperationRoute(uri);
     if (method === 'OPTIONS') {
+      if (seg[0] === 'local') return '查询本地能力';
       if (uri === '/capabilities') return '查询可用能力';
       var scopeLabel = matched && matched.route.capabilityLabel
         || (seg[0] === 'page' ? '页面' : seg[0] === 'browser' ? '浏览器' : RESOURCE_LABELS[seg[0]])
@@ -427,6 +435,14 @@
     // requestTarget 保留 query（view/mode 等功能细分）；canonicalUri 是
     // 解析后的纯 path，只作兜底，避免执行结果卡片丢失操作细分。
     return describeOperation(data.method || data.name, data.requestTarget || args.uri || data.canonicalUri);
+  }
+
+  function isReadOnlyToolOperation(data) {
+    var method = trimmed(data.method || data.name).toUpperCase();
+    if (method === 'GET' || method === 'OPTIONS') return true;
+    var args = isRecord(data.arguments) ? data.arguments : {};
+    var uri = trimmed(data.requestTarget || args.uri || data.canonicalUri).split(/[?#]/)[0].replace(/\/+$/, '');
+    return method === 'POST' && /^\/local\/(?:read|grep)$/.test(uri);
   }
 
   function updateToolCardValue(projected) {
@@ -589,6 +605,10 @@
         projected.kind = 'warn';
         projected.status = 'unconfirmed';
       } else if (verificationStatus === 'confirmed') projected.status = 'confirmed';
+      // A successful read has no side effects, but the tool did run. This also
+      // corrects existing journal entries without changing their receipts.
+      else if (performed === 'no' && isReadOnlyToolOperation(data)
+          && resultValue.ok !== false && !resultValue.error) projected.status = 'completed';
       else projected.status = performed === 'unknown' ? 'unknown' : (performed === 'no' ? 'not_performed' : 'completed');
     } else if (type === 'tool_execution_failed') {
       projected.kind = 'error';
@@ -1002,6 +1022,51 @@
       applyDisclosureState(node, key);
       return node;
     }
+    function syncAttributes(node, next) {
+      Array.prototype.slice.call(node.attributes).forEach(function (attribute) {
+        if (attribute.name === 'open' && node.localName === 'details') return;
+        if (!next.hasAttribute(attribute.name)) node.removeAttribute(attribute.name);
+      });
+      Array.prototype.slice.call(next.attributes).forEach(function (attribute) {
+        if (attribute.name === 'open' && node.localName === 'details') return;
+        if (node.getAttribute(attribute.name) !== attribute.value) node.setAttribute(attribute.name, attribute.value);
+      });
+    }
+    function patchSummaryNode(node, next) {
+      if (node.nodeType !== next.nodeType || node.nodeName !== next.nodeName) {
+        node.parentNode.replaceChild(next, node);
+        return;
+      }
+      if (node.nodeType !== 1) {
+        if (node.nodeValue !== next.nodeValue) node.nodeValue = next.nodeValue;
+        return;
+      }
+      syncAttributes(node, next);
+      var children = Array.prototype.slice.call(node.childNodes);
+      var nextChildren = Array.prototype.slice.call(next.childNodes);
+      nextChildren.forEach(function (child, index) {
+        if (children[index]) patchSummaryNode(children[index], child);
+        else node.appendChild(child);
+      });
+      children.slice(nextChildren.length).forEach(function (child) { node.removeChild(child); });
+    }
+    function patchDisclosureRow(node, next) {
+      if (!node || node.localName !== 'details' || next.localName !== 'details') return false;
+      var summary = node.firstElementChild;
+      var nextSummary = next.firstElementChild;
+      if (!summary || summary.localName !== 'summary' || !nextSummary || nextSummary.localName !== 'summary') return false;
+      // Streaming updates must not detach the click target between pointerdown
+      // and click. Keep the details, summary and its unchanged controls mounted.
+      syncAttributes(node, next);
+      patchSummaryNode(summary, nextSummary);
+      Array.prototype.slice.call(node.childNodes).forEach(function (child) {
+        if (child !== summary) node.removeChild(child);
+      });
+      Array.prototype.slice.call(next.childNodes).forEach(function (child) {
+        if (child !== nextSummary) node.appendChild(child);
+      });
+      return true;
+    }
     function reconcileRows(nextRows) {
       if (!canReconcileRows) {
         rows.innerHTML = nextRows.map(function (entry) { return entry.html; }).join('');
@@ -1020,8 +1085,10 @@
         var node = existingByKey[entry.key];
         if (!node || renderedHtmlByKey[entry.key] !== entry.html) {
           var replacement = createRowNode(entry.html, entry.key);
-          if (node && node.parentNode === rows) rows.replaceChild(replacement, node);
-          node = replacement;
+          if (!patchDisclosureRow(node, replacement)) {
+            if (node && node.parentNode === rows) rows.replaceChild(replacement, node);
+            node = replacement;
+          }
         }
         desired[entry.key] = node;
         nextHtmlByKey[entry.key] = entry.html;

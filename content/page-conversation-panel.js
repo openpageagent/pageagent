@@ -1877,7 +1877,7 @@
           maxModelRequests: Math.max(1, Number(settings.maxModelRequests || settings.maxIterations) || 100),
           maxIterations: Math.max(1, Number(settings.maxIterations) || 100),
           maxToolCalls: Math.max(0, Number(settings.maxToolCalls) || 200),
-          maxWallTimeMs: Math.max(1000, Number(settings.maxWallTimeMs) || 900000),
+          maxWallTimeMs: Math.max(0, Number(settings.maxWallTimeMs) || 0),
           maxContextTokens: Math.max(1024, Number(settings.maxContextTokens) || 1000000),
           maxOutputTokens: Math.max(1, Number(settings.maxTokens) || 4096),
         },
@@ -2399,6 +2399,9 @@
         '@media(max-width:390px){.panel-header{padding:0 8px;}.topic-label{max-width:112px;}.assistant-select{max-width:150px;}.composer{padding-left:7px;padding-right:7px;}}',
         '@media(prefers-reduced-motion:reduce){.panel,.panel *{scroll-behavior:auto!important;transition:none!important;animation:none!important;}.status-dot.running{animation:none;}}',
       ].join('') + eventView.STYLE_TEXT + [
+        '.recording-action-details>summary{display:flex;align-items:center;gap:10px;min-height:24px;list-style:none;cursor:pointer;}.recording-action-details>summary::-webkit-details-marker{display:none;}',
+        '.recording-action-details>summary::before,.recording-row-actions [aria-expanded]::before{content:"";flex:0 0 8px;width:8px;height:8px;border:solid currentColor;border-width:0 2px 2px 0;transform:translateX(-2px) rotate(-45deg);}.recording-action-details[open]>summary::before,.recording-row-actions [aria-expanded="true"]::before{transform:translateY(-2px) rotate(45deg);}',
+        '.recording-row-actions [aria-expanded]{gap:8px;}.recording-action-details>summary:hover{background:var(--accent-soft);color:var(--accent);}.recording-action-details>summary:hover::before{color:var(--accent);}.recording-action-details>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}',
         '.messages.conversation-event-stream{padding:10px 10px 8px;background:rgba(255,255,255,.74);}',
       ].join('');
 

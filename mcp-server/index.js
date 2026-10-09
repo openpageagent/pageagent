@@ -16,6 +16,8 @@ const { AsyncLocalStorage } = require('async_hooks');
 const WebSocket = require('ws');
 const arp = require('../resources/protocol/index.js');
 const { createHttpApi } = require('./http-api');
+const { createMailQueue } = require('./mail-queue');
+const { createLocalConnection } = require('./local-operations');
 const {
   ExtensionRequestBroker,
   isArpEnvelope,
@@ -197,6 +199,9 @@ class PageAgentMCPServer {
     this.clientCallContext = new AsyncLocalStorage();
     this.requestBroker = new ExtensionRequestBroker();
     this.pendingRequests = this.requestBroker.pendingRequests;
+    this.mailConnections = new Map();
+    this.mailQueue = createMailQueue();
+    this.localConnections = new Map();
 
     this.setupWebSocket();
     this.setupToolHandlers();
@@ -248,6 +253,17 @@ class PageAgentMCPServer {
 
   setupWebSocket() {
     this.wsServer.on('connection', (ws, request) => {
+      this.localConnections.set(ws, createLocalConnection(message => {
+        if (ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify(message), () => {}); } catch (_) {}
+        }
+      }));
+      this.mailConnections.set(ws, {
+        origin: String(request && request.headers && request.headers.origin || '').replace(/\/$/, ''),
+        ready: false,
+        active: new Map(),
+        seen: new Set(),
+      });
       const socketId = this.generateId('socket');
       const record = this.registerExtensionClient(ws, {
         clientId: socketId,
@@ -305,6 +321,8 @@ class PageAgentMCPServer {
     const existing = this.extensionClients.get(client.clientId);
     if (existing && existing.ws !== ws) {
       this.requestBroker.rejectForSocket(existing.ws, `Extension client replaced: ${client.clientId}`);
+      this.cancelMailForSocket(existing.ws);
+      this.closeLocalConnection(existing.ws);
       try { existing.ws.close(1000, 'Replaced by a newer ARP connection'); } catch (_) {}
     }
     const record = Object.assign({}, existing || {}, client, {
@@ -319,6 +337,8 @@ class PageAgentMCPServer {
   }
 
   unregisterExtensionClient(ws) {
+    this.cancelMailForSocket(ws);
+    this.closeLocalConnection(ws);
     let removed = null;
     for (const [clientId, record] of this.extensionClients.entries()) {
       if (record.ws !== ws) continue;
@@ -339,6 +359,15 @@ class PageAgentMCPServer {
   }
 
   handleExtensionMessage(message, ws) {
+    if (message && (message.type === 'local.call' || message.type === 'local.cancel')) {
+      const connection = this.localConnections.get(ws);
+      if (connection && !this._closing) connection.handle(message);
+      return;
+    }
+    if (message && (message.type === 'mail.send' || message.type === 'mail.cancel')) {
+      this.handleMailMessage(message, ws);
+      return;
+    }
     if (message && message.type === 'heartbeat') {
       const clientId = ws && ws.__pageAgentClientId;
       const record = clientId ? this.extensionClients.get(clientId) : null;
@@ -353,12 +382,23 @@ class PageAgentMCPServer {
         { protocol: message.protocol || message.clientInfo && message.clientInfo.protocol || 'arp/1', remoteAddress: current && current.remoteAddress }
       ));
       console.error(`[WebSocket] Extension registered: ${record.clientId} (${record.clientName}) protocol=${record.protocol}`);
+      const mailConnection = this.mailConnections.get(ws);
+      if (mailConnection) {
+        mailConnection.ready = /^[a-p]{32}$/.test(record.extensionId)
+          && mailConnection.origin === 'chrome-extension://' + record.extensionId;
+      }
+      const localConnection = this.localConnections.get(ws);
+      if (localConnection) localConnection.configure(
+        !!(mailConnection && mailConnection.ready && message.localToolsEnabled === true), message.localWorkingDirectory);
       try {
         ws.send(JSON.stringify({
           type: 'hello',
           server: 'page-agent-arp',
           version: SERVER_VERSION,
           protocol: 'arp/1',
+          mail: mailConnection && mailConnection.ready ? 'smtp/1' : null,
+          localOperations: mailConnection && mailConnection.ready ? 'local/1' : null,
+          workingDirectory: mailConnection && mailConnection.ready ? process.cwd() : null,
           clientId: record.clientId,
           connectedClients: this.listExtensionClients().length,
         }));
@@ -375,6 +415,55 @@ class PageAgentMCPServer {
 
   getCurrentCallContext() {
     return this.clientCallContext.getStore() || {};
+  }
+
+  closeLocalConnection(ws) {
+    const connection = this.localConnections.get(ws);
+    if (connection) connection.close();
+    this.localConnections.delete(ws);
+  }
+
+  cancelMailForSocket(ws) {
+    const connection = this.mailConnections.get(ws);
+    if (!connection) return;
+    this.mailConnections.delete(ws);
+    for (const controller of connection.active.values()) controller.abort();
+    connection.active.clear();
+    connection.seen.clear();
+  }
+
+  handleMailMessage(message, ws) {
+    const connection = this.mailConnections.get(ws);
+    const requestId = message.requestId;
+    if (typeof requestId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(requestId)) return;
+    const reply = body => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      try { ws.send(JSON.stringify(Object.assign({ type: 'mail.result', requestId }, body)), () => {}); } catch (_) {}
+    };
+    if (this._closing || !connection || !connection.ready) {
+      reply({ ok: false, error: '邮件发送只允许已完成握手的浏览器插件连接' });
+      return;
+    }
+    if (message.type === 'mail.cancel') {
+      const controller = connection.active.get(requestId);
+      if (controller) controller.abort();
+      return;
+    }
+    // Never submit the same request twice on one connection, including after
+    // completion. Bound the set instead of evicting IDs that could be replayed.
+    if (connection.seen.has(requestId)) return;
+    if (connection.seen.size >= 10000) {
+      reply({ ok: false, error: '当前连接已达到邮件请求总量上限，请重新连接，邮件尚未发送' });
+      return;
+    }
+    connection.seen.add(requestId);
+    const controller = new AbortController();
+    connection.active.set(requestId, controller);
+    this.mailQueue.enqueue(message.payload, { signal: controller.signal }).then(result => {
+      reply({ ok: true, result });
+    }, error => {
+      reply({ ok: false, error: error.message || '邮件发送失败' });
+    }).finally(() => { connection.active.delete(requestId); });
   }
 
   async callArp(method, request, timeoutMs = 30000, options = {}) {
@@ -765,6 +854,9 @@ class PageAgentMCPServer {
   close(options = {}) {
     if (this._closePromise) return this._closePromise;
     this._closing = true;
+    this.mailQueue.close();
+    for (const socket of this.localConnections.keys()) this.closeLocalConnection(socket);
+    for (const socket of this.mailConnections.keys()) this.cancelMailForSocket(socket);
     this.requestBroker.close(options.reason || 'MCP server closed');
     if (this._stdioInput && this._stdioEndHandler) {
       this._stdioInput.removeListener('end', this._stdioEndHandler);

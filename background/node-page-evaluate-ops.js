@@ -96,12 +96,6 @@
     }
     return path;
   }
-  function foregroundRequested(options) {
-    return ownValue(options, 'focusWindow', false) === true
-      || ownValue(options, 'foreground', false) === true
-      || ownValue(options, 'requiresForeground', false) === true;
-  }
-
   function createPageEvaluateOps(deps) {
     deps = deps || {};
     var requireRuntimeTabId = requireFunction(deps.requireRuntimeTabId, 'requireRuntimeTabId');
@@ -131,9 +125,7 @@
           timeoutMs: timeoutMs,
           world: world,
           mode: ownValue(options, 'mode', 'write') || 'write',
-          foreground: foregroundRequested(options),
-          requiresForeground: ownValue(options, 'requiresForeground', false) === true,
-          reveal: ownValue(options, 'reveal', false) === true,
+          focusWindow: ownValue(options, 'focusWindow', false) === true,
         }, execution).then(function (commandResult) {
           var page = pageDataContract.paginateValue(ownValue(commandResult, 'result', null), options, 'page.evaluate', { dataKey: 'result' });
           if (ownValue(options, 'returnEnvelope', false) !== true) return page;
@@ -203,8 +195,7 @@
         returnEnvelope: true,
         riskLabel: 'callPageFunction',
         sourceType: 'expression',
-        foreground: foregroundRequested(params),
-        reveal: ownValue(params, 'reveal', false) === true,
+        focusWindow: ownValue(params, 'focusWindow', false) === true,
       }, execution);
     }
 
@@ -217,8 +208,7 @@
         returnEnvelope: true,
         riskLabel: 'runtimeModuleAction',
         sourceType: 'expression',
-        foreground: foregroundRequested(params),
-        reveal: ownValue(params, 'reveal', false) === true,
+        focusWindow: ownValue(params, 'focusWindow', false) === true,
       }, execution);
     }
 

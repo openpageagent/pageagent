@@ -1,4 +1,4 @@
-// Shared system settings contract for options and content-script contexts.
+// Shared system settings contract for options, background, and content-script contexts.
 (function attachSystemSettings(root, factory) {
   'use strict';
   var api = factory();
@@ -10,13 +10,24 @@
   var SETTINGS_KEY = 'system_settings';
   var DEFAULTS = Object.freeze({
     floatingEntryDisabled: false,
+    userAgent: '',
   });
 
   function normalize(raw) {
     raw = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
     return {
       floatingEntryDisabled: raw.floatingEntryDisabled === true,
+      userAgent: String(raw.userAgent || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 512),
     };
+  }
+
+  // Only non-model HTTP callers opt in; explicit request headers take precedence.
+  function withUserAgent(headers, settings) {
+    var userAgent = normalize(settings).userAgent;
+    if (!userAgent) return headers || {};
+    var merged = new Headers(headers || {});
+    if (!merged.has('User-Agent')) merged.set('User-Agent', userAgent);
+    return Object.fromEntries(merged.entries());
   }
 
   function lastError(runtime) {
@@ -80,6 +91,7 @@
     SETTINGS_KEY: SETTINGS_KEY,
     DEFAULTS: DEFAULTS,
     normalize: normalize,
+    withUserAgent: withUserAgent,
     load: load,
     save: save,
   };

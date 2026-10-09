@@ -570,7 +570,7 @@
         credentials: server.useBrowserCookies === true ? 'include' : 'omit',
         signal: controller.signal,
       });
-      return fetch(server.url, init).then(function (resp) {
+      return root.PageAutomationUserAgent.fetchSystem(server.url, init).then(function (resp) {
         return consumeResponse(resp);
       }).catch(function (err) {
         if (controller.signal.aborted) {

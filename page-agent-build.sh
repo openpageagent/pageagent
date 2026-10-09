@@ -219,6 +219,7 @@ stage_done
 stage_start "将 MCP 服务器包从 mcp-server/dist 复制到扩展发布目录"
 mkdir -p "$STAGING_DIR/$(dirname "$MCP_BUNDLE_DEST_REL")"
 cp "$MCP_BUNDLE_SRC" "$STAGING_DIR/$MCP_BUNDLE_DEST_REL"
+cp "$ROOT_DIR/mcp-server/NODEMAILER_LICENSE" "$STAGING_DIR/mcp-server/NODEMAILER_LICENSE"
 chmod 755 "$STAGING_DIR/$MCP_BUNDLE_DEST_REL"
 stage_done
 

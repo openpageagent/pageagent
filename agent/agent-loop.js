@@ -69,7 +69,7 @@
       maxModelRequests: integer('maxModelRequests', 1, 30),
       maxIterations: integer('maxIterations', 1, 30),
       maxToolCalls: integer('maxToolCalls', 0, 100),
-      maxWallTimeMs: integer('maxWallTimeMs', 1, 10 * 60 * 1000),
+      maxWallTimeMs: integer('maxWallTimeMs', 0, 0),
       maxContextTokens: integer('maxContextTokens', 1024, 1000000),
       maxOutputTokens: integer('maxOutputTokens', 1, 4096),
     };
@@ -130,14 +130,17 @@
         parentSignal.addEventListener('abort', parentListener, { once: true });
       }
     }
-    var timeout = Math.max(1, Math.floor(Number(timeoutMs) || 1));
-    timer = setTimeout(function () {
-      var error = loopError('WALL_TIME_EXCEEDED', 'Generation wall-time budget expired during model request', {
-        timeoutMs: timeout,
-      });
-      error.name = 'TimeoutError';
-      abort(error);
-    }, timeout);
+    // Unlimited generations still propagate cancellation, but have no deadline timer.
+    if (timeoutMs > 0) {
+      var timeout = Math.max(1, Math.floor(timeoutMs));
+      timer = setTimeout(function () {
+        var error = loopError('WALL_TIME_EXCEEDED', 'Generation wall-time budget expired during model request', {
+          timeoutMs: timeout,
+        });
+        error.name = 'TimeoutError';
+        abort(error);
+      }, timeout);
+    }
     return {
       signal: controller ? controller.signal : parentSignal || null,
       expiration: expiration,
@@ -194,7 +197,7 @@
       var active = await lease.assertActive();
       if (lease.signal && lease.signal.aborted) throw loopError('CANCELLED', 'Generation was cancelled', { stage: stage });
       var elapsed = Number(clock()) - Number(active.startedAt || active.counters && active.counters.startedAt || 0);
-      if (elapsed > budgets.maxWallTimeMs) {
+      if (budgets.maxWallTimeMs > 0 && elapsed > budgets.maxWallTimeMs) {
         throw loopError('WALL_TIME_EXCEEDED', 'Generation exceeded maxWallTimeMs', { stage: stage, elapsedMs: elapsed });
       }
       return active;
@@ -508,7 +511,7 @@
           var activeBeforeRequest = await activeAndTime(lease, budgets, 'before_model_request');
           var requestElapsed = Math.max(0, Number(clock()) - Number(activeBeforeRequest.startedAt
             || activeBeforeRequest.counters && activeBeforeRequest.counters.startedAt || clock()));
-          var requestTimeoutMs = Math.max(1, budgets.maxWallTimeMs - requestElapsed);
+          var requestTimeoutMs = budgets.maxWallTimeMs > 0 ? Math.max(1, budgets.maxWallTimeMs - requestElapsed) : 0;
           requestStartedAt = Number(clock());
           var requestPayload = {
             logicalRequestId: built.request.logicalRequestId,

@@ -4,7 +4,7 @@
 
 ## 直接安装
 
-环境要求：Chromium 114 或更高版本（Chrome、Edge 等）以及 Manifest V3 支持。
+环境要求：Chromium 116 或更高版本（Chrome、Edge 等）以及 Manifest V3 支持。
 
 1. 打开 [GitHub Releases](https://github.com/openpageagent/pageagent/releases)，在对应版本的 Assets 中下载 `page-agent-extension-<version>.zip` 并解压。
 2. 打开 `chrome://extensions` 或 `edge://extensions`。

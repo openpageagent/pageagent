@@ -172,7 +172,7 @@
           maxModelRequests: Math.max(1, Number(settings.maxModelRequests || settings.maxIterations) || 100),
           maxIterations: Math.max(1, Number(settings.maxIterations) || 100),
           maxToolCalls: Math.max(0, Number(settings.maxToolCalls) || 200),
-          maxWallTimeMs: Math.max(1000, Number(settings.maxWallTimeMs) || 900000),
+          maxWallTimeMs: Math.max(0, Number(settings.maxWallTimeMs) || 0),
           maxContextTokens: Math.max(1024, Number(settings.maxContextTokens) || 1000000),
           maxOutputTokens: Math.max(1, Number(settings.maxTokens) || 4096),
         },

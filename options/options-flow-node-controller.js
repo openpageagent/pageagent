@@ -602,8 +602,8 @@
         var defaultValue = ownDataValue(param, 'default');
         html += numericControlHtml(key, formatted, 'param', defaultValue !== undefined ? String(defaultValue) : '');
       } else if (kind === 'boolean') {
-        html = '<div class="form-row checkbox-row"><input type="checkbox"' + attrs
-          + (booleanEditorValue(formatted, ownDataValue(param, 'default') === true) ? ' checked' : '') + '><label>' + esc(label) + '</label>';
+        html = '<div class="form-row"><label class="switch-label"><input type="checkbox"' + attrs
+          + (booleanEditorValue(formatted, ownDataValue(param, 'default') === true) ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">' + esc(label) + '</span></label>';
       } else if (kind === 'select') {
         html += '<select' + attrs + '>';
         var choices = ownDataValue(param, 'options');
@@ -670,7 +670,6 @@
       if (ownDataValue(node, 'onFailure') === 'continue') flags += '<span class="badge">失败继续</span>';
       var retries = Number(ownDataValue(node, 'retries'));
       if (retries > 0) flags += '<span class="badge">重试' + retries + '</span>';
-      if (ownDataValue(node, 'requiresForeground') === true) flags += '<span class="badge">聚焦窗口</span>';
 
       return '<div class="node-card' + (readonly ? ' readonly' : '') + '" draggable="' + (readonly ? 'false' : 'true')
         + '" data-node-id="' + esc(id) + '" data-node-index="' + index + '" style="margin-left:' + indent + 'px">'
@@ -806,8 +805,6 @@
           + numericControlHtml('retryDelayMs', ownDataValue(node, 'retryDelayMs') !== undefined
             && ownDataValue(node, 'retryDelayMs') !== '' ? ownDataValue(node, 'retryDelayMs') : 1000, 'common', '1000')
           + '</div>')
-        + '<div class="form-row"><label>聚焦浏览器窗口</label><input type="checkbox" id="node-requiresForeground"'
-        + (ownDataValue(node, 'requiresForeground') === true ? ' checked' : '') + '></div>'
         + '</div>';
 
       $('#drawer-content').innerHTML = body;
@@ -1076,11 +1073,6 @@
       var failureElement = $('#node-onFailure');
       if (failureElement) node.onFailure = failureElement.value === 'continue' ? 'continue' : 'abort';
       var retriesElement = $('#node-retries');
-      var foregroundElement = $('#node-requiresForeground');
-      if (foregroundElement) {
-        if (foregroundElement.checked) node.requiresForeground = true;
-        else delete node.requiresForeground;
-      }
       var commonKeys = Object.create(null);
       commonKeys.retryDelayMs = true;
       collectNumericControls('common', commonKeys, function (key, value) { node[key] = value; });
@@ -1523,7 +1515,6 @@
         newFlow = stripRuntimeMetadata(draft);
         newFlow.id = newFlowId;
         newFlow.label = newLabel;
-        newFlow.name = newLabel;
         newFlow.description = '从流程 "' + draftLabel + '" 的第 ' + (match.index + 1) + ' 个节点拆分而来。';
         newFlow.nodes = tailNodes;
         delete newFlow.createdAt;

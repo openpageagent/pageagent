@@ -37,6 +37,7 @@
     screenshot: 'screenshot',
     httpRequest: 'http-response',
     webhook: 'http-response',
+    sendEmail: 'mail-delivery',
     httpLoadTest: 'performance-load-test',
     saveFile: 'file-download',
     waitDownload: 'file-download',
@@ -325,16 +326,29 @@
     function resolveNodeParams(node, ctx) {
       assertNode(node);
       requireParamApis();
+      if (node.type === 'sendEmail') {
+        var mailParams = copyOwnDataParams(node);
+        var attachments = mailParams.attachments || [];
+        // Parse JSON before inserting content: quotes/newlines in report variables
+        // must remain attachment data. A whole-array template is evaluated once.
+        var arrayTemplate = typeof attachments === 'string' && /^\s*\{\{[^{}]+\}\}\s*$/.test(attachments);
+        if (typeof attachments === 'string') {
+          try {
+            var attachmentJson = arrayTemplate ? Template.interpolate(attachments, ctx) : attachments;
+            attachments = attachmentJson.trim() ? JSON.parse(attachmentJson) : [];
+          } catch (_) { throw contractError('MAIL_ATTACHMENTS_INVALID', '邮件附件必须为 JSON 数组或数组模板变量'); }
+        }
+        if (!Array.isArray(attachments)) throw contractError('MAIL_ATTACHMENTS_INVALID', '邮件附件必须为数组');
+        delete mailParams.attachments;
+        mailParams = normalizePreservingExtraParams(node.type, interpolateDeepParam(mailParams, ctx));
+        mailParams.attachments = arrayTemplate ? attachments : interpolateDeepParam(attachments, ctx);
+        return mailParams;
+      }
       var explicitParams = Template.interpolateParams(copyOwnDataParams(node), ctx);
       var params = normalizePreservingExtraParams(node.type, explicitParams);
       params = Template.interpolateParams(params, ctx);
       params = normalizePreservingExtraParams(node.type, params);
 
-      if (node.type === 'elementInfo') {
-        ['reveal', 'highlightMs'].forEach(function (key) {
-          if (explicitParams[key] !== undefined) params[key] = explicitParams[key];
-        });
-      }
       if (node.type === 'fillFormFields') {
         params.fields = interpolateDeepParam(params.fields, ctx);
         params.values = interpolateDeepParam(params.values, ctx);
