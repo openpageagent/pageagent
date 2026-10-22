@@ -45,6 +45,10 @@
     }
 
     function createSessionTabAccess(session, sessionTabRuntime) {
+      function authorizePage(tabId, kind, input) {
+        if (!session.appAuthorization) return Promise.resolve();
+        return globalThis.PageAgentApps.authorize(session.appAuthorization, { kind: 'page', command: kind, tabId: tabId, url: input && input.url });
+      }
       function lifecycleFactResult(tabId, kind, performed, evidence, reason, startedAt) {
         var completedAt = new Date().toISOString();
         var receipt = pageAutomation.verification.createFactReceipt({
@@ -58,14 +62,14 @@
 
       function executeLifecycleAction(tabId, kind, input, options) {
         options = options || {};
-        return pageAutomation.action.act({
+        return authorizePage(tabId, kind, input).then(function () { return pageAutomation.action.act({
           source: 'flow',
           owner: String(session.runId || session.flowId || ''),
           tabId: tabId,
           kind: kind,
           input: input || {},
           timeoutMs: Number(options.timeoutMs) || 30000,
-        }).then(function (result) {
+        }); }).then(function (result) {
           var receipt = result && result.receipt;
           if (!receipt || receipt.status === 'failed') {
             var error = new Error(receipt && receipt.verification && receipt.verification.reason || kind + ' 失败');
@@ -234,7 +238,9 @@
             });
           }
           var windowStartedAt = new Date().toISOString();
-          return chrome.windows.create({ url: url, focused: foreground, width: 1280, height: 900, incognito: !!session.incognito }).then(function (win) {
+          return authorizePage(0, 'createTab', { url: url }).then(function () {
+            return chrome.windows.create({ url: url, focused: foreground, width: 1280, height: 900, incognito: !!session.incognito });
+          }).then(function (win) {
             session.windowId = win.id;
             session.addLog('已为会话创建独立窗口 (windowId=' + win.id + (session.incognito ? '，隐私模式' : '') + ')' + (foreground ? '，按显式“聚焦浏览器窗口”请求聚焦' : '，后台创建不主动聚焦'));
             var tab = win.tabs && win.tabs[0];
@@ -282,6 +288,7 @@
       function setRunTabMode(mode, options) {
         options = options || {};
         var next = normalizeRunTabMode(mode);
+        if (session.appAuthorization && next !== RUN_TAB_MODE_FIXED_NEW) throw globalThis.AppContract.error('PERMISSION_DENIED', '应用任务只能使用 fixedNewTab 标签页策略');
         var changed = next !== session.runTabMode;
         session.runTabMode = next;
         if (changed && options.keepTabs !== true) session.tabs = {};
@@ -500,17 +507,17 @@
           if (!tab || !tab.id || !tab.discarded) return tab;
           session.addLog('CDP 后台稳定模式：目标 Tab 已被浏览器丢弃，先恢复再执行 (tabId=' + tabId + ')', { level: 'warn', scope: 'run', tabId: tabId });
           var deadline = Date.now() + 30000;
-          return chrome.tabs.reload(tabId).then(function waitRestored() {
+          return authorizePage(tabId, 'reload').then(function () { return chrome.tabs.reload(tabId); }).then(function waitRestored() {
             return chrome.tabs.get(tabId).then(function (currentTab) {
               if (currentTab && currentTab.id && !currentTab.discarded) return currentTab;
               if (Date.now() >= deadline) throw new Error('恢复被丢弃的目标 Tab 超时: tabId=' + tabId);
               return new Promise(function (resolve) { setTimeout(resolve, 100); }).then(waitRestored);
             });
           }).then(function (currentTab) {
-            return pageAutomation.verification.waitForPageLoad({
+            return authorizePage(tabId, 'waitForPageLoad').then(function () { return pageAutomation.verification.waitForPageLoad({
               source: 'flow', tabId: tabId,
               params: { tabId: tabId, timeoutMs: 300000, stableMs: 800, readyState: 'complete' },
-            }).then(function () { return currentTab; });
+            }); }).then(function () { return currentTab; });
           });
         });
       }
@@ -590,7 +597,7 @@
       function closeCreatedTabs() {
         var createdTabs = session.createdTabs || {};
         session.createdTabs = {};
-        var pages = getConfig().pages || {};
+        var pages = (session.appConfig || getConfig()).pages || {};
         return Promise.all(Object.keys(createdTabs).map(function (id) {
           var tabId = Number(id);
           var page = pages[createdTabs[id]];
@@ -614,6 +621,8 @@
           return Promise.resolve(session.keepAlivePromises[tid]).catch(function () { return null; });
         });
         var cleanup = Promise.all(pending).then(function () {
+          return Promise.all(Object.values(session.keepAliveLeases || {}).map(function (lease) { return lease.release(); }));
+        }).then(function () {
           return pageAutomation.action.cleanupOwner(
             String(session.runId || session.flowId || ''),
             { detachImmediately: true }

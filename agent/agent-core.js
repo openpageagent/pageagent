@@ -5,9 +5,11 @@
   var api = factory(commonJs ? {
     arp: require('../resources/protocol/index.js'),
     projection: require('./tool-result-projection.js'),
+    runtimePermissions: require('../shared/system-runtime-permissions.js'),
   } : {
     arp: root.AgentResourceProtocol,
     projection: root.AgentToolResultProjection,
+    runtimePermissions: root.SystemRuntimePermissions,
   });
   if (commonJs) module.exports = api;
   else root.AgentCore = api;
@@ -17,41 +19,12 @@
   var API_VERSION = 1;
   var arp = deps.arp;
   var projection = deps.projection;
-  // Keep this defensive runtime floor aligned with
-  // ConversationProfileSchema.PAGE_AGENT_CORE_PERMISSION_SCOPE.
-  var CORE_PERMISSION_SCOPE = Object.freeze([
-    'page.read', 'page.interact',
-    'browser.read', 'browser.tabs.write', 'browser.navigate',
-    'flows.read', 'flows.write', 'flows.nodes.read', 'flows.nodes.write',
-    'flow-groups.read', 'flow-groups.write', 'node-types.read', 'recordings.read',
-    'runs.read', 'runs.report.read', 'runs.debug.read', 'runs.execute',
-    'pages.read', 'pages.write',
-    'url-triggers.read', 'url-triggers.write',
-    'scripts.read', 'scripts.write',
-    'schedules.read', 'schedules.write',
-    'knowledge.read', 'knowledge.write', 'skills.read', 'assistants.read',
-    'local.execute',
-  ]);
-  var CORE_ROOT_METHODS = Object.freeze({
-    '/page': Object.freeze(['GET', 'POST', 'OPTIONS']),
-    '/browser': Object.freeze(['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS']),
-    '/flows': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
-    '/node-types': Object.freeze(['GET', 'OPTIONS']),
-    '/flow-groups': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
-    '/recordings': Object.freeze(['GET', 'OPTIONS']),
-    '/runs': Object.freeze(['GET', 'OPTIONS']),
-    '/knowledge': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
-    '/skills': Object.freeze(['GET', 'OPTIONS']),
-    '/assistants': Object.freeze(['GET', 'OPTIONS']),
-    '/pages': Object.freeze(['GET', 'POST', 'PATCH', 'OPTIONS']),
-    '/url-triggers': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
-    '/scripts': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
-    '/schedules': Object.freeze(['GET', 'POST', 'PATCH', 'OPTIONS']),
-    '/local': Object.freeze(['POST', 'OPTIONS']),
+  var CORE_PERMISSION_SCOPE = deps.runtimePermissions.permissions;
+  var CORE_ROOT_METHODS = Object.freeze(Object.assign({}, deps.runtimePermissions.rootMethods, {
     // /current is an internal, permission-free ground-truth clock resource;
     // it is intentionally not an editable Assistant resource root.
     '/current': Object.freeze(['GET', 'OPTIONS']),
-  });
+  }));
   var RESOURCE_METHODS = Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
 
   function clone(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }

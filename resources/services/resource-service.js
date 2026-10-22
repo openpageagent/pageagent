@@ -966,8 +966,10 @@
       return !!value && (String(value.runId || '').trim() === runId || String(value.id || '').trim() === runId);
     }
 
+    var applicationRunControllers = new Map();
     function rememberTransientRun(kind, targetId, executor, body) {
       var runId = randomId('run');
+      var controller = body && body.appAuthorization ? new AbortController() : null;
       var record = {
         id: runId,
         runId: runId,
@@ -977,20 +979,27 @@
         startedAt: Date.now(),
         input: clone(body || {}),
       };
+      if (controller) applicationRunControllers.set(runId, controller);
       return operationRunStore.save(record).then(function (stored) {
         record = stored;
-        Promise.resolve().then(executor).then(function (result) {
-          record.status = 'success';
+        Promise.resolve().then(function () { return executor(runId, controller && controller.signal); }).then(function (result) {
+          record.status = controller && controller.signal.aborted ? 'stopped' : 'success';
           record.result = clone(result);
           record.endedAt = Date.now();
           return operationRunStore.update(runId, record);
         }, function (error) {
-          record.status = 'failed';
+          record.status = controller && controller.signal.aborted ? 'stopped' : 'failed';
           record.error = String(error && error.message || error);
           record.endedAt = Date.now();
           return operationRunStore.update(runId, record);
-        }).catch(function () {});
+        }).catch(function () {}).finally(function () {
+          applicationRunControllers.delete(runId);
+          if (body && body.appAuthorization && options.onApplicationRunChanged) options.onApplicationRunChanged(runId);
+        });
         return clone(record);
+      }, function (error) {
+        applicationRunControllers.delete(runId);
+        throw error;
       });
     }
 
@@ -1001,6 +1010,9 @@
         if (key !== 'options') runOptions[key] = clone(body[key]);
       });
       runOptions.assistantInvocationKind = isRunAssistantInvocation(context) ? 'runAssistant' : '';
+      // Application authorization is stamped by the app service, never inferred from run input.
+      if (context && context.appAuthorization) runOptions.appAuthorization = clone(context.appAuthorization);
+      else { delete runOptions.appAuthorization; delete runOptions.appConfig; delete runOptions.appNodeSets; }
       if (body.context !== undefined) {
         if (runOptions.initialContext === undefined) runOptions.initialContext = clone(body.context);
       }
@@ -1023,6 +1035,7 @@
     function createFlowRun(flowId, body, context) {
       flowId = cleanId(flowId, 'flowId');
       body = cloneObject(body);
+      if (!context || !context.appAuthorization) { delete body.appAuthorization; delete body.appConfig; delete body.appNodeSets; }
       if (body.nodeId) {
         var executeNode = options.executeNodeInstance || options.executeNode;
         return getFlowNode(flowId, cleanId(body.nodeId, 'nodeId')).then(function (node) {
@@ -1046,7 +1059,10 @@
           }, body);
         });
       }
-      return validateFlow(flowId).then(function (validation) {
+      var capturedFlow = context && context.appAuthorization && body.appConfig && body.appConfig.flows && body.appConfig.flows[flowId];
+      if (context && context.appAuthorization && !capturedFlow) fail('DEPENDENCY_UNRESOLVED', '应用 Flow 缺少执行快照，请重新保存或导入应用');
+      var validation = capturedFlow ? Promise.resolve(inspectFlowRepresentation(flowId, capturedFlow, body.appConfig)) : validateFlow(flowId);
+      return validation.then(function (validation) {
         if (!validation.valid) {
           fail('SCHEMA_VALIDATION_FAILED', 'Flow is not runnable: ' + validation.errors.join('; '), {
             flowId: flowId,
@@ -1071,7 +1087,9 @@
     function createFlowGroupRun(groupId, body, context) {
       groupId = cleanId(groupId, 'groupId');
       body = cloneObject(body);
-      return itemInConfig('flowGroups', groupId).then(function () {
+      var capturedGroup = context && context.appAuthorization && body.appConfig && body.appConfig.flowGroups && body.appConfig.flowGroups[groupId];
+      if (context && context.appAuthorization && !capturedGroup) fail('DEPENDENCY_UNRESOLVED', '应用 FlowGroup 缺少执行快照，请重新保存或导入应用');
+      return (capturedGroup ? Promise.resolve(capturedGroup) : itemInConfig('flowGroups', groupId)).then(function () {
         var run = options.runFlowGroup || (groupRunner && groupRunner.runFlowGroup);
         requireFunction(run, 'FlowGroupController.runFlowGroup');
         return Promise.resolve(run.call(groupRunner || null, groupId, runOptionsFromBody(body, context))).then(function (result) {
@@ -1127,7 +1145,12 @@
     function getRun(runId, optionsInput) {
       runId = cleanId(runId, 'runId');
       return operationRunStore.get(runId).then(function (operation) {
-        if (operation) return operation;
+        if (operation) {
+          if (operation.input && operation.input.appAuthorization && operation.status === 'running' && !applicationRunControllers.has(runId)) {
+            return operationRunStore.update(runId, Object.assign({}, operation, { status: 'interrupted', endedAt: Date.now(), recoverable: false, error: '后台已恢复，原应用脚本实例不再存在；请核对已发生的副作用后决定是否重新执行' }));
+          }
+          return operation;
+        }
         if (options.getRun) return Promise.resolve(options.getRun(runId, optionsInput || {}));
         if (runQueries && typeof runQueries.getSessionResult === 'function') {
           return Promise.resolve(runQueries.getSessionResult(runId, optionsInput || {})).catch(function () {
@@ -1137,6 +1160,34 @@
         return findPersistedOrActiveRun(runId);
       });
     }
+
+    function controlRun(runId, commandName) {
+      runId = cleanId(runId, 'runId');
+      var command = requireFunction(runCommands && runCommands[commandName], 'RunCommandService.' + commandName);
+      return getRun(runId).then(function (run) {
+        if (run.kind === 'script' || run.kind === 'flowNode') {
+          if (commandName === 'stopSession' && run.input && run.input.appAuthorization) {
+            var controller = applicationRunControllers.get(runId);
+            if (controller) controller.abort(new Error('应用任务已取消'));
+            if (['success', 'failed', 'stopped'].includes(run.status)) return { runId: runId, alreadyRequested: true };
+            return operationRunStore.update(runId, Object.assign({}, run, { status: 'stopped', endedAt: Date.now(), error: '应用任务已取消' })).then(function () { return { runId: runId, alreadyRequested: !controller }; });
+          }
+          fail('RESOURCE_CONFLICT', 'Standalone Script and node Runs do not support stop or continue');
+        }
+        return Promise.resolve().then(function () { return command.call(runCommands, runId); }).catch(function (error) {
+          if (error && error.code) throw error;
+          fail('RESOURCE_CONFLICT', String(error && error.message || error));
+        });
+      });
+    }
+
+    function stopRun(runId) {
+      return controlRun(runId, 'stopSession').then(function (result) {
+        return { runId: result.runId, stopRequested: true, alreadyRequested: result.alreadyRequested === true };
+      });
+    }
+
+    function continueRun(runId) { return controlRun(runId, 'continueSession'); }
 
     function isActiveRun(run) {
       var status = String(run && run.status || '').trim().toLowerCase();
@@ -1267,13 +1318,17 @@
         fail('SCHEMA_VALIDATION_FAILED', 'Schedule does not address a runnable Flow');
     }
 
-    function runScript(scriptId, body) {
+    function runScript(scriptId, body, context) {
       scriptId = cleanId(scriptId, 'scriptId');
-      return itemInConfig('scripts', scriptId).then(function (script) {
+      body = cloneObject(body);
+      if (!context || !context.appAuthorization) { delete body.appAuthorization; delete body.appConfig; delete body.appNodeSets; }
+      var captured = body.appAuthorization && body.appConfig && body.appConfig.scripts && body.appConfig.scripts[scriptId];
+      if (context && context.appAuthorization && !captured) fail('DEPENDENCY_UNRESOLVED', '应用 Script 缺少执行快照，请重新保存或导入应用');
+      return (captured ? Promise.resolve(captured) : itemInConfig('scripts', scriptId)).then(function (script) {
         var executor = options.runScript || options.scriptRunner && options.scriptRunner.runScript;
         requireFunction(executor, 'scriptRunner.runScript');
-        return rememberTransientRun('script', scriptId, function () {
-          return executor.call(options.scriptRunner || null, script.code || script.source || '', Object.assign({}, body || {}, { scriptId: scriptId }));
+        return rememberTransientRun('script', scriptId, function (runId, signal) {
+          return executor.call(options.scriptRunner || null, script.code || script.source || '', Object.assign({}, body || {}, { scriptId: scriptId, runId: runId, signal: signal }));
         }, body);
       });
     }
@@ -2388,6 +2443,8 @@
       createFlowGroupRun: createFlowGroupRun,
       listRuns: listRuns,
       getRun: getRun,
+      stopRun: stopRun,
+      continueRun: continueRun,
       deleteRun: deleteRun,
       deleteRunsBefore: deleteRunsBefore,
       getRunReport: getRunReport,

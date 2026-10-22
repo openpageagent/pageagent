@@ -85,6 +85,11 @@
     this.status = 'idle';
     this.error = '';
     this.trigger = options.trigger || 'manual';
+    this.appAuthorization = options.appAuthorization || null;
+    var capturedNodes = options.appNodes || options.appNodeSets && options.appNodeSets[flowId];
+    if (this.appAuthorization && (!Array.isArray(capturedNodes) || !options.appConfig)) throw new Error('应用任务缺少执行快照，请重新提交动作');
+    this.appNodes = this.appAuthorization ? copyOwnData(capturedNodes) : null;
+    this.appConfig = this.appAuthorization ? copyOwnData(options.appConfig) : null;
     this.entry = deps.normalizeEntry(options.entry, this.trigger);
     this.assistantInvocationKind = options.assistantInvocationKind === 'runAssistant'
       ? 'runAssistant' : '';
@@ -228,9 +233,10 @@
     var executor = deps.nodeExecutor.createNodeExecutor({
       chrome: deps.chrome,
       mailClient: deps.mailClient,
+      executeLocalOperation: deps.executeLocalOperation,
       tabRuntime: tabAccess,
       addLog: session.addLog,
-      getConfig: deps.getConfig,
+      getConfig: function () { return session.appConfig || deps.getConfig(); },
       pageHostMatchesTab: deps.pageHostMatchesTab,
       modelClient: sessionModelClient,
       proxyManager: deps.proxyManager,
@@ -238,6 +244,7 @@
       getSandboxEngine: function () {
         return {
           turndownHtmlToMarkdown: deps.sandboxEngine.turndownHtmlToMarkdown,
+          utilities: deps.sandboxEngine.utilities,
           runScript: function (code, options) {
             return deps.sandboxEngine.runScript(code, Object.assign({}, options, {
               apiCall: executor.executeApiCall,
@@ -248,6 +255,9 @@
         };
       },
       getSession: function () { return session; },
+      authorizeApplication: session.appAuthorization ? function (operation) {
+        return globalThis.PageAgentApps.authorize(session.appAuthorization, operation);
+      } : null,
       getAbortSignal: function () {
         return session._runAbortController && session._runAbortController.signal || null;
       },
@@ -283,8 +293,8 @@
           payload: { runId: session.runId, nodeId: nodeId, status: status },
         });
       },
-      getOrderedNodes: function (id) { return deps.flowEngine.getOrderedNodes(id); },
-      getNodeIdsForFlow: function (id) { return deps.flowEngine.getNodeIdsForFlow(id); },
+      getOrderedNodes: function (id) { return session.appNodes || deps.flowEngine.getOrderedNodes(id); },
+      getNodeIdsForFlow: function (id) { return session.appNodes ? session.appNodes.map(function (node) { return node.nodeId; }) : deps.flowEngine.getNodeIdsForFlow(id); },
       isNodeDoneStatus: function (status) { return deps.flowEngine.isNodeDoneStatus(status); },
       getErrorMessage: function (error) { return deps.loggingStatus.getErrorMessage(error); },
       executeNode: function (nodeId) { return session._executeNode(nodeId); },
@@ -296,7 +306,12 @@
       getLoopStack: function () { return executor.getLoopStack(); },
       getCtx: function () { return executor.getCtx(); },
       captureFailureScreenshot: function (node) { return deps.captureSessionScreenshot(session, node); },
-      getFlowDataset: deps.getFlowDataset,
+      getFlowDataset: function (flowId) {
+        if (!session.appConfig) return deps.getFlowDataset(flowId);
+        var flow = session.appConfig.flows[String(flowId).replace(/^user:/, '')];
+        if (!flow || !flow.dataset) return [];
+        var data = JSON.parse(flow.dataset); return Array.isArray(data) ? data : [];
+      },
     });
     [
       'requestStop',
@@ -311,7 +326,7 @@
 
   RunSession.prototype._executeNode = function (nodeId) {
     var session = this;
-    var nodes = this._deps.flowEngine.getOrderedNodes(this.flowId);
+    var nodes = this.appNodes || this._deps.flowEngine.getOrderedNodes(this.flowId);
     var node = null;
     for (var i = 0; i < nodes.length; i++) {
       if (nodes[i].nodeId === nodeId) {
@@ -375,6 +390,7 @@
       startedAt: info.startedAt,
       input: deps.getReportInputFromContext(this.initialContext || {}),
     });
+    if (this.appAuthorization) runRecord.application = { appId: this.appAuthorization.appId, outputSchema: copyOwnData(this.appAuthorization.outputSchema) };
     deps.rememberRunInput(runRecord);
     var appendPromise = deps.configStore.appendRun(runRecord).then(function (result) {
       if (session._activeRunGeneration === generation) session.reportStatus = 'running';
@@ -389,6 +405,7 @@
   };
 
   RunSession.prototype._sendCompletionNotification = async function (status, summaries, reportEntry, context) {
+    if (this.appAuthorization) return null;
     if (status !== 'success' && status !== 'failed') return null;
     try {
       var notification = reportEntry ? reportEntry.mailNotification : configuredMailNotification(this.flowId, this._deps);
@@ -516,6 +533,8 @@
       deps.proxyManager.clearSession(this, 'run_complete').then(function (result) {
         if (result.activeRules > 0) {
           session.addLog('会话结束，已移除本会话代理规则；仍保留其他会话代理规则 ' + result.activeRules + ' 条');
+        } else if (result.systemProxyServer) {
+          session.addLog(result.controlledByThisExtension ? '会话结束，已恢复系统代理' : '会话结束，已移除本会话代理规则；系统代理未取得浏览器控制权');
         } else {
           session.addLog('会话结束，已移除本会话代理规则并释放浏览器代理控制');
         }
@@ -711,6 +730,8 @@
     }
     var result = {
       runId: session.runId,
+      application: session.appAuthorization ? { appId: session.appAuthorization.appId, outputSchema: copyOwnData(session.appAuthorization.outputSchema) } : undefined,
+      trigger: session.trigger,
       flowId: session.flowId,
       flowLabel: session.flowLabel,
       status: session.status,

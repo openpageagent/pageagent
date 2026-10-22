@@ -213,7 +213,7 @@
       }),
       new core.RouteContract({
         template: '/browser/downloads', resourceType: 'DownloadCollection', relation: 'browser-downloads',
-        summary: '列出下载任务或启动一个明确指定的下载', tags: ['browser', 'download'],
+        summary: '列出浏览器下载任务，或将指定 URL 保存到默认下载目录及其子目录', tags: ['browser', 'download'],
         methods: {
           GET: method({
             inputSchema: {
@@ -228,7 +228,10 @@
           POST: method({
             inputSchema: {
               type: 'object', properties: {
-                url: { type: 'string', minLength: 1, maxLength: 10000 }, filename: { type: 'string', maxLength: 1000 },
+                url: { type: 'string', minLength: 1, maxLength: 10000,
+                  description: '待下载资源的完整 URL；页面媒体的相对地址须先按原页面 URL 解析。' },
+                filename: { type: 'string', maxLength: 1000,
+                  description: '相对于浏览器默认下载目录的文件路径，可包含子目录（如 screenshots/image.png）；不能使用绝对路径或 ..，无需预先创建目录。' },
                 conflictAction: { type: 'string', enum: ['uniquify', 'overwrite', 'prompt'] }, saveAs: { type: 'boolean' },
               }, required: ['url'], additionalProperties: false,
             },

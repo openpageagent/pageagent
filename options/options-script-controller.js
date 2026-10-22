@@ -205,9 +205,9 @@
       editor.classList.remove('hidden');
       editor.innerHTML =
         '<h3>' + (draft.id ? '编辑脚本' : '新建脚本') + '</h3>'
-        + '<div class="form-row"><label>脚本名称</label><input type="text" id="script-label" value="' + esc(draft.label) + '" placeholder="如：表格数据清洗"></div>'
+        + '<div class="form-row"><label>脚本名称</label><input type="text" id="script-label" value="' + esc(draft.label) + '" placeholder="表格数据清洗"></div>'
         + '<div class="form-row"><label>脚本代码（顶层支持 await；return 的值作为节点输出）</label>'
-        + '<textarea id="script-code" class="code" spellcheck="false" placeholder="const t = await ctx.get(\'orders\');\nawait log(\'共 \' + t.rowCount + \' 行\');\nreturn t.rows.filter(r => r[\'状态\'] === \'待处理\');">' + esc(draft.code) + '</textarea></div>'
+        + '<page-code-editor id="script-code" language="javascript" rows="18" aria-label="脚本代码" placeholder="const t = await ctx.get(\'orders\');\nawait log(\'共 \' + t.rowCount + \' 行\');\nreturn t.rows.filter(r => r[\'状态\'] === \'待处理\');">' + esc(draft.code) + '</page-code-editor></div>'
         + '<div class="editor-actions">'
         + '<button class="btn-primary" data-action="save-script">保存</button>'
         + '<button class="btn-secondary" data-action="test-script">保存并运行</button>'
@@ -267,18 +267,6 @@
       if (destroyed || !draft || !event || !event.target) return;
       if (event.target.id === 'script-label') updateDraftField('label', event.target.value);
       else if (event.target.id === 'script-code') updateDraftField('code', event.target.value);
-    }
-
-    function handleEditorKeydown(event) {
-      if (destroyed || !draft || !event || !event.target
-          || event.target.id !== 'script-code' || event.key !== 'Tab') return;
-      event.preventDefault();
-      var codeElement = event.target;
-      var start = codeElement.selectionStart;
-      var end = codeElement.selectionEnd;
-      codeElement.value = codeElement.value.slice(0, start) + '  ' + codeElement.value.slice(end);
-      codeElement.selectionStart = codeElement.selectionEnd = start + 2;
-      updateDraftField('code', codeElement.value);
     }
 
     function openNew() {
@@ -445,7 +433,7 @@
           draft = cloneData(savedScript);
         }
         var result = run ? ownDataValue(run, 'result') : null;
-        resultElement.textContent = '✓ 已保存并执行成功\n返回值: ' + formatTestResult(result);
+        resultElement.innerHTML = '<p>✓ 已保存并执行成功 · 返回值</p>' + globalThis.PageAgentCodeEditor.html(formatTestResult(result), 'json');
         return { ok: true, script: savedScript, run: run, result: result };
       }).catch(function (error) {
         if (!isCurrentTest(sequence, revision, resultElement)) {
@@ -548,7 +536,6 @@
       initialized = true;
       lifecycle.listen($('#btn-new-script'), 'click', openNew);
       lifecycle.listen($('#script-editor'), 'input', handleEditorInput);
-      lifecycle.listen($('#script-editor'), 'keydown', handleEditorKeydown);
       return { ok: true, initialized: true };
     }
 

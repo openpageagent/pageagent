@@ -16,6 +16,8 @@
     item: '/runs/{runId}',
     report: '/runs/{runId}/report',
     debugSnapshot: '/runs/{runId}/debug-snapshot',
+    stop: '/runs/{runId}/stop',
+    continue: '/runs/{runId}/continue',
   });
   var OBJECT = Object.freeze({ type: 'object' });
   var EMPTY_QUERY = Object.freeze({ type: 'object', properties: {}, additionalProperties: false });
@@ -70,6 +72,12 @@
   var RUN_EVIDENCE_GUIDANCE = Object.freeze([
     'Run 的状态、结果、report 和 debug-snapshot 是 Flow 是否完成的证据链；资源请求成功不等于业务目标完成。失败时按 runId、nodeId、error 和上游输入定位原因。',
   ]);
+  var CONTROL_RESULT_SCHEMA = Object.freeze({
+    type: 'object', properties: {
+      runId: { type: 'string' }, stopRequested: { const: true }, alreadyRequested: { type: 'boolean' },
+      started: { const: true }, continued: { const: true },
+    }, required: ['runId'], additionalProperties: false,
+  });
 
   function method(inputSchema, policy) {
     policy = policy || {};
@@ -127,6 +135,20 @@
         preconditions: [], relation: 'run-debug-snapshot', summary: '读取 Run 调试状态', guidance: RUN_EVIDENCE_GUIDANCE,
       }),
     }, ['run debug'], ['run', 'debug']),
+    route(URI_TEMPLATES.stop, 'RunControl', 'run-stop', '请求停止活动的 Flow、FlowGroup 或应用 SDK 启动的 Script；其他独立 Script 和单节点 Run 不支持', {
+      POST: method(EMPTY_QUERY, {
+        safety: 'execute', idempotency: 'keyed', execution: 'sync', permissions: ['runs.cancel'],
+        preconditions: [], relation: 'run-stop', summary: '按 runId 请求停止；返回 stopRequested 后读取 Run 确认最终状态',
+        outputSchema: CONTROL_RESULT_SCHEMA,
+      }),
+    }, ['停止流程', 'stop run'], ['run', 'control']),
+    route(URI_TEMPLATES.continue, 'RunControl', 'run-continue', '从停止位置继续可恢复的 Flow，保留 runId 和上下文；FlowGroup 不支持继续', {
+      POST: method(EMPTY_QUERY, {
+        safety: 'execute', idempotency: 'keyed', execution: 'sync', permissions: ['runs.execute'],
+        preconditions: [], relation: 'run-continue', summary: '继续已停止且仍有会话或快照的 Flow；随后读取 Run 确认结果',
+        outputSchema: CONTROL_RESULT_SCHEMA,
+      }),
+    }, ['继续流程', 'continue run'], ['run', 'control']),
   ]);
 
   function segment(value) {
@@ -150,6 +172,13 @@
     if (type === 'Run') {
       output.links.push({ rel: 'report', href: uri + '/report', method: 'GET' });
       output.links.push({ rel: 'debug-snapshot', href: uri + '/debug-snapshot', method: 'GET' });
+      if (data && data.kind === 'script' && data.input && data.input.appAuthorization && data.status === 'running') output.links.push({ rel: 'stop', href: uri + '/stop', method: 'POST' });
+      if (data && data.kind !== 'script' && data.kind !== 'flowNode') {
+        if (data.status === 'running') output.links.push({ rel: 'stop', href: uri + '/stop', method: 'POST' });
+        if (data.status === 'stopped' && data.kind !== 'flowGroup' && data.canContinue !== false) {
+          output.links.push({ rel: 'continue', href: uri + '/continue', method: 'POST' });
+        }
+      }
     }
     if (data && service && typeof service.etag === 'function') output.etag = service.etag(data);
     return arp.normalizeRepresentation(output);
@@ -187,6 +216,16 @@
     handlers.GET[URI_TEMPLATES.debugSnapshot] = function (request) {
       return service.getRunDebugSnapshot(request.params.runId).then(function (data) { return result(request.uri, 'RunDebugSnapshot', data, service); });
     };
+    [URI_TEMPLATES.stop, URI_TEMPLATES.continue].forEach(function (template) {
+      handlers.POST[template] = function (request) {
+        var command = template === URI_TEMPLATES.stop ? service.stopRun : service.continueRun;
+        return command(request.params.runId).then(function (data) {
+          var output = result(request.uri, 'RunControl', data);
+          output.primary.links = [{ rel: 'run', href: canonicalRunUri(data.runId), method: 'GET' }];
+          return output;
+        });
+      };
+    });
     handlers.DELETE[URI_TEMPLATES.collection] = function (request) {
       return service.deleteRunsBefore(request.body).then(function (data) {
         return result(URI_TEMPLATES.collection, 'RunRetentionResult', data, service);
@@ -214,6 +253,7 @@
     METHOD_CONTRACTS: Object.freeze({
       collection: ROUTE_CONTRACTS[0].methods, item: ROUTE_CONTRACTS[1].methods,
       report: ROUTE_CONTRACTS[2].methods, debugSnapshot: ROUTE_CONTRACTS[3].methods,
+      stop: ROUTE_CONTRACTS[4].methods, continue: ROUTE_CONTRACTS[5].methods,
     }),
     ROUTE_CONTRACTS: ROUTE_CONTRACTS,
     canonicalUri: canonicalRunUri,

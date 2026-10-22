@@ -490,7 +490,7 @@
         '<h3>' + (readonly ? '查看内置流程组' : (persisted ? '编辑流程组' : '新建流程组')) + (readonly ? ' <span class="badge builtin">内置</span>' : '') + '</h3>'
         + (readonly ? '<div class="readonly-banner">内置流程组来自扩展包，只能运行或复制为用户流程组后编辑。</div>' : '')
         + '<div class="flow-editor-header">'
-        + '<div class="form-row"><label>流程组名称</label><input type="text" id="flowGroup-label" value="' + esc(group.label || '') + '" placeholder="如：登录后创建订单并校验"' + (readonly ? ' disabled' : '') + '></div>'
+        + '<div class="form-row"><label>流程组名称</label><input type="text" id="flowGroup-label" value="' + esc(group.label || '') + '" placeholder="登录后创建订单并校验"' + (readonly ? ' disabled' : '') + '></div>'
         + (readonly ? '' : '<button class="btn-primary" data-action="open-add-flowGroup-step-drawer">添加流程</button>')
         + '</div>'
         + '<div class="form-row"><label>使用说明</label><textarea id="flowGroup-description" rows="3" placeholder="流程组目标、输入约定或业务场景"' + (readonly ? ' disabled' : '') + '>' + esc(group.description || '') + '</textarea></div>'
@@ -501,7 +501,7 @@
         + '<textarea id="flowGroup-output-description" rows="4" placeholder="写给使用者看的流程组出参说明，不配置出参路径。"' + (readonly ? ' disabled' : '') + '>' + esc(group.outputDescription || '') + '</textarea></div>'
         + '</div>'
         + '<div class="form-row form-row-spaced"><label>运行入参示例（可选 JSON）</label>'
-        + '<textarea id="flowGroup-input-example" rows="4" placeholder=\'{"keyword":"订单"}\'' + (readonly ? ' disabled' : '') + '>' + esc(group.inputExample || '') + '</textarea>'
+        + '<page-code-editor id="flowGroup-input-example" language="json" rows="4" placeholder=\'{"keyword":"订单"}\'' + (readonly ? ' disabled' : '') + '>' + esc(group.inputExample || '') + '</page-code-editor>'
         + '<div class="form-help">仅作为运行界面的预填示例。运行入参仍是可选 JSON，不会生成字段表单或强制校验。</div></div>'
         + renderFlowUsageSummary(group, '填写后，运行界面会展示流程组说明和输入示例。')
         + '<div class="node-list flowGroup-step-list" id="flowGroup-step-list-container">' + stepRows + '</div>'

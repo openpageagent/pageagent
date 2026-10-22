@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "116",
   "name": "Page Agent",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Page Agent 从对话到可复用的产出",
   "permissions": [
     "sidePanel",
@@ -20,6 +20,8 @@
     "downloads",
     "debugger",
     "proxy",
+    "webRequest",
+    "webRequestAuthProvider",
     "contextMenus"
   ],
   "host_permissions": [
@@ -47,13 +49,13 @@
     },
     {
       "matches": ["<all_urls>"],
-      "js": ["settings/system-settings.js", "agent/conversation-protocol.js", "agent/tool-result-projection.js", "ui/runtime-client.js", "ui/image-artifact-client.js", "ui/page-conversation-message-contract.js", "ui/conversation-event-view.js", "ui/conversation-list-view.js", "ui/conversation-shared.js", "shared/sync-event-stream.js", "content/page-conversation-panel.js", "content/page-conversation-entry.js", "content/floating-status.js"],
+      "js": ["settings/system-settings.js", "agent/conversation-protocol.js", "agent/tool-result-projection.js", "ui/runtime-client.js", "ui/image-artifact-client.js", "ui/page-conversation-message-contract.js", "dependencies/marked/marked.min.js", "dependencies/dompurify/purify.min.js", "ui/code-editor.js", "ui/conversation-event-view.js", "ui/conversation-list-view.js", "ui/conversation-shared.js", "shared/sync-event-stream.js", "content/page-conversation-panel.js", "content/page-conversation-entry.js", "content/floating-status.js"],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["icons/icon48.png"],
+      "resources": ["icons/icon48.png", "apps/*", "ui/code-editor-frame.html"],
       "matches": ["<all_urls>"]
     }
   ],

@@ -32,77 +32,6 @@
     }
   }
 
-  function getValueType(value) {
-    if (value === null) return 'null';
-    if (value === undefined) return 'undefined';
-    if (Array.isArray(value)) return 'Array';
-    if (typeof value === 'object') return 'Object';
-    if (typeof value === 'string') return 'String';
-    if (typeof value === 'number') return 'Number';
-    if (typeof value === 'boolean') return 'Boolean';
-    return typeof value;
-  }
-
-  function isExpandableValue(value) {
-    return !!(value && typeof value === 'object' && Object.keys(value).length);
-  }
-
-  function summaryTreeValue(value, isFlowData) {
-    if (isFlowData) return ' {attributes, content}';
-    if (Array.isArray(value)) return ' [' + value.length + ']';
-    return ' {' + Object.keys(value || {}).length + '}';
-  }
-
-  function previewTreeValue(value) {
-    if (value === undefined) return 'undefined';
-    if (value === null) return 'null';
-    if (typeof value === 'string') return JSON.stringify(value.length > 120 ? value.slice(0, 120) + '...' : value);
-    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-    return stringifyDebugValue(value).slice(0, 160);
-  }
-
-  function variablePathKey(path) {
-    return JSON.stringify(path || []);
-  }
-
-  function renderVariableItem(key, value, depth, path, isPathExpanded) {
-    var type = getValueType(value);
-    var isFlowData = value && typeof value === 'object' && 'attributes' in value && 'content' in value;
-    var expandable = isExpandableValue(value);
-    var expanded = expandable && (typeof isPathExpanded === 'function'
-      ? isPathExpanded(path, depth)
-      : depth === 0);
-    var html = '<div class="tree-item' + (expandable && !expanded ? ' collapsed' : '') + '">';
-    html += '<div class="tree-row" style="padding-left: ' + (depth * 16) + 'px;" data-tree-row'
-      + (expandable ? ' data-tree-path="' + escapeHtml(variablePathKey(path)) + '"' : '') + '>';
-    if (expandable) {
-      html += '<button type="button" class="tree-toggle" data-tree-toggle aria-label="展开或收起 ' + escapeHtml(key) + '" aria-expanded="' + (expanded ? 'true' : 'false') + '"></button>';
-    } else {
-      html += '<span class="tree-toggle placeholder"></span>';
-    }
-    html += '<span class="tree-item-key">' + escapeHtml(key) + '</span>';
-    html += '<span class="tree-item-type">(' + (isFlowData ? 'FlowData' : type) + ')</span>';
-    html += expandable
-      ? '<span class="tree-item-value">' + escapeHtml(summaryTreeValue(value, isFlowData)) + '</span>'
-      : '<span class="tree-item-value">: ' + escapeHtml(previewTreeValue(value)) + '</span>';
-    html += '</div>';
-    if (expandable) html += '<div class="tree-children">' + renderTreeChildren(value, depth + 1, path, isPathExpanded) + '</div>';
-    return html + '</div>';
-  }
-
-  function renderTreeChildren(value, depth, path, isPathExpanded) {
-    if (depth > 8) return '<div class="tree-overflow">已达到最大展开深度</div>';
-    var keys = Array.isArray(value) ? value.map(function (_, index) { return String(index); }) : Object.keys(value || {});
-    var maxChildren = 100;
-    var html = '';
-    for (var i = 0; i < keys.length && i < maxChildren; i++) {
-      var key = keys[i];
-      html += renderVariableItem(key, value[key], depth, (path || []).concat([key]), isPathExpanded);
-    }
-    if (keys.length > maxChildren) html += '<div class="tree-overflow">还有 ' + (keys.length - maxChildren) + ' 项未展开显示</div>';
-    return html;
-  }
-
   function create(options) {
     options = options || {};
     var doc = options.document || (typeof document !== 'undefined' ? document : null);
@@ -123,8 +52,6 @@
     var refreshTimer = 0;
     var lastRefreshAt = 0;
     var requestRevision = 0;
-    var variableExpansionRunId = '';
-    var variableExpansionState = Object.create(null);
     var traceExpansionRunId = '';
     var traceExpansionState = Object.create(null);
     var initialized = false;
@@ -156,26 +83,12 @@
 
     function setEmpty(element, text, compact) {
       if (!element) return;
+      if (element.localName === 'page-code-editor') { element.value = text; return; }
       element.innerHTML = '<p class="debug-empty' + (compact ? ' compact' : '') + '">' + escapeHtml(text) + '</p>';
     }
 
-    function syncVariableExpansionRun(runId) {
-      runId = String(runId || '');
-      if (runId === variableExpansionRunId) return;
-      variableExpansionRunId = runId;
-      variableExpansionState = Object.create(null);
-    }
-
-    function isVariablePathExpanded(path, depth) {
-      var key = variablePathKey(path);
-      return Object.prototype.hasOwnProperty.call(variableExpansionState, key)
-        ? variableExpansionState[key]
-        : depth === 0;
-    }
-
-    function renderVariablesTree(ctx, runId) {
+    function renderVariablesTree(ctx) {
       if (!variablesTree) return;
-      syncVariableExpansionRun(runId);
       if (!ctx || typeof ctx !== 'object') {
         setEmpty(variablesTree, '无变量');
         return;
@@ -185,9 +98,7 @@
         setEmpty(variablesTree, '无变量');
         return;
       }
-      variablesTree.innerHTML = visibleKeys.map(function (key) {
-        return renderVariableItem(key, ctx[key], 0, [key], isVariablePathExpanded);
-      }).join('');
+      variablesTree.value = stringifyDebugValue(Object.fromEntries(visibleKeys.map(function (key) { return [key, ctx[key]]; })));
     }
 
     function renderCtx(ctx) {
@@ -227,11 +138,11 @@
         html += '<div class="trace-header"><span class="trace-node-info">[节点' + (i + 1) + ': '
           + escapeHtml(record.nodeTitle || record.nodeId) + '] ' + statusIcon + '</span>';
         html += '<span class="trace-time">' + escapeHtml(record.executionTime) + 'ms</span></div>';
-        html += '<div class="trace-body"><div class="trace-label">Input:</div><div class="trace-data">'
-          + escapeHtml(stringifyDebugValue(record.input)) + '</div>';
+        html += '<div class="trace-body"><div class="trace-label">Input:</div>'
+          + globalThis.PageAgentCodeEditor.html(stringifyDebugValue(record.input), 'json');
         if (record.status === 'completed' && record.output !== undefined) {
-          html += '<div class="trace-label">Output:</div><div class="trace-data">'
-            + escapeHtml(stringifyDebugValue(record.output)) + '</div>';
+          html += '<div class="trace-label">Output:</div>'
+            + globalThis.PageAgentCodeEditor.html(stringifyDebugValue(record.output), 'json');
         }
         if (record.error) {
           html += '<div class="trace-label">Error:</div><div class="trace-data trace-error">'
@@ -239,7 +150,9 @@
         }
         html += '</div></div>';
       }
-      traceTimeline.innerHTML = html;
+      var next = doc.createElement('div'); next.innerHTML = html;
+      globalThis.PageAgentCodeEditor.preserveViews(traceTimeline, next);
+      traceTimeline.replaceChildren(...Array.from(next.childNodes));
     }
 
     function loadVariables(request) {
@@ -370,22 +283,6 @@
       return refresh({ force: true });
     }
 
-    function onVariablesClick(event) {
-      var row = event.target && event.target.closest ? event.target.closest('[data-tree-row]') : null;
-      if (!row || !variablesTree.contains(row)) return;
-      var item = row.parentElement;
-      var toggle = row.querySelector('[data-tree-toggle]');
-      if (!item || !toggle) return;
-      syncVariableExpansionRun(getRunId());
-      item.classList.toggle('collapsed');
-      var expanded = !item.classList.contains('collapsed');
-      var path = row.getAttribute('data-tree-path');
-      if (path) variableExpansionState[path] = expanded;
-      toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-      event.preventDefault();
-      event.stopPropagation();
-    }
-
     function onTraceClick(event) {
       var header = event.target && event.target.closest ? event.target.closest('.trace-header') : null;
       if (!header || !traceTimeline.contains(header) || !header.parentElement) return;
@@ -407,7 +304,6 @@
         (function (button) { listen(button, 'click', function () { switchDebugTab(button.dataset.tab); }); })(debugTabs[j]);
       }
       listen(refreshButton, 'click', function () { refresh({ force: true }); });
-      listen(variablesTree, 'click', onVariablesClick);
       listen(traceTimeline, 'click', onTraceClick);
       switchOutputTab(currentOutputTab);
     }

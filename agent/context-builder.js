@@ -579,6 +579,7 @@
       var policy = contract.policy;
       var tools = contract.tools;
       var promptInput = {
+        applicationContext: root.PageAgentApps && input.conversationId ? await root.PageAgentApps.conversationContext(input.conversationId) : null,
         surface: input.surface,
         entry: Object.assign({}, input.entry || {}, { currentResource: dynamic.currentResource || input.entry && input.entry.currentResource || '/' }),
         currentResource: dynamic.currentResource || input.entry && input.entry.currentResource || '/',
@@ -604,7 +605,8 @@
           additionalResourceUris: (Array.isArray(dynamic.additionalResourceUris)
             ? dynamic.additionalResourceUris : []).concat(recordingContext.recordings.map(function (recording) {
             return recording && recording.recordingUri;
-          }).filter(Boolean)),
+          }).filter(Boolean), promptInput.applicationContext && !promptInput.applicationContext.unavailable
+            && promptInput.applicationContext.appId ? ['/apps/' + promptInput.applicationContext.appId] : []),
         })
         : { schemaVersion: 1, contracts: [], text: '' };
       var composedPrompt = prompt.buildPrompt(Object.assign({}, promptInput, {

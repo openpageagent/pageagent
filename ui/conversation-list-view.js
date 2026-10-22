@@ -206,7 +206,7 @@
     conversations: '对话', pages: '页面存档', 'url-triggers': 'URL 触发器',
     scripts: '脚本', config: '配置', skills: '技能', runs: '运行记录',
     schedules: '定时任务', knowledge: '知识', 'knowledge-settings': '知识设置',
-    assistants: '助手', 'model-services': '模型服务', 'agent-settings': 'Agent 设置',
+    assistants: '助手', apps: '应用', 'model-services': '模型服务', 'agent-settings': 'Agent 设置',
     connections: '连接', 'mcp-servers': 'MCP 服务', 'mcp-calls': 'MCP 工具',
     local: '本地文件与命令',
     'image-artifacts': '图像产物',
@@ -237,9 +237,20 @@
   }
 
   // 与当前注册的 ARP route contracts 一一对应。操作名按语义命名，不能仅由
-  // HTTP 动词猜测：例如 POST 也可能表示截图、运行、导航或连接测试。
+  // HTTP 动词猜测，应结合资源路径确定操作。
   var OPERATION_ROUTES = Object.freeze([
     operationRoute(/^\/agent-settings$/, 'Agent 设置', { GET: '读取 Agent 设置', PATCH: '更新 Agent 设置' }),
+    operationRoute(/^\/apps$/, '应用列表', { GET: '读取应用列表', POST: '生成应用' }),
+    operationRoute(/^\/apps\/capabilities$/, '应用能力', { GET: '读取应用能力' }),
+    operationRoute(/^\/apps\/dependency$/, '应用依赖', { GET: '读取应用依赖' }),
+    operationRoute(/^\/apps\/[^/]+$/, '应用', { GET: '读取应用', DELETE: '删除应用' }),
+    operationRoute(/^\/apps\/[^/]+\/draft$/, '应用草稿', { GET: '读取应用草稿', PUT: '保存应用' }),
+    operationRoute(/^\/apps\/[^/]+\/published$/, '应用发布版本', { GET: '读取应用发布版本' }),
+    operationRoute(/^\/apps\/[^/]+\/publish$/, '应用发布', { POST: '发布应用' }),
+    operationRoute(/^\/apps\/[^/]+\/assets\/[^/]+$/, '应用资源', { PUT: '保存应用资源' }),
+    operationRoute(/^\/apps\/[^/]+\/actions\/[^/]+\/runs$/, '应用动作', { POST: '运行应用动作' }),
+    operationRoute(/^\/apps\/[^/]+\/data\/[^/]+$/, '应用数据', { GET: '读取应用数据', PUT: '保存应用数据', DELETE: '删除应用数据' }),
+
     operationRoute(/^\/assistants$/, '助手列表', { GET: '读取助手列表', POST: '新建助手' }),
     operationRoute(/^\/assistants\/[^/]+$/, '助手', { GET: '读取助手', PATCH: '更新助手', DELETE: '删除助手' }),
 
@@ -972,6 +983,7 @@
     var items = [];
     var destroyed = false;
     var frame = 0;
+    var cancelFrame = null;
     var renderedHtmlByKey = Object.create(null);
     var disclosureState = options.disclosureState || Object.create(null);
     var disclosurePrefix = String(options.disclosurePrefix || '');
@@ -1059,6 +1071,7 @@
       // and click. Keep the details, summary and its unchanged controls mounted.
       syncAttributes(node, next);
       patchSummaryNode(summary, nextSummary);
+      globalThis.PageAgentCodeEditor.preserveViews(node, next);
       Array.prototype.slice.call(node.childNodes).forEach(function (child) {
         if (child !== summary) node.removeChild(child);
       });
@@ -1086,6 +1099,7 @@
         if (!node || renderedHtmlByKey[entry.key] !== entry.html) {
           var replacement = createRowNode(entry.html, entry.key);
           if (!patchDisclosureRow(node, replacement)) {
+            if (node) globalThis.PageAgentCodeEditor.preserveViews(node, replacement);
             if (node && node.parentNode === rows) rows.replaceChild(replacement, node);
             node = replacement;
           }
@@ -1105,6 +1119,7 @@
       renderedHtmlByKey = nextHtmlByKey;
     }
     function render(renderOptions) {
+      if (frame && cancelFrame) cancelFrame(frame);
       frame = 0;
       if (destroyed) return;
       var forceEnd = !!(renderOptions && renderOptions.end === true);
@@ -1140,6 +1155,7 @@
     function scheduleRender() {
       if (destroyed || frame) return;
       var raf = options.requestAnimationFrame || (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function (callback) { return setTimeout(callback, 0); });
+      cancelFrame = options.cancelAnimationFrame || (typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : clearTimeout);
       frame = raf(render);
     }
     function captureVisibleAnchor() {
@@ -1224,6 +1240,8 @@
       if (destroyed) return;
       rememberDisclosureState();
       destroyed = true;
+      if (frame && cancelFrame) cancelFrame(frame);
+      frame = 0;
       if (virtualize) container.removeEventListener('scroll', scheduleRender);
       container.textContent = '';
       items = [];

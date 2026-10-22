@@ -419,7 +419,7 @@
         '<h3>' + (draftSourceKey ? '编辑 URL 触发器' : '新建 URL 触发器') + '</h3>'
         + '<div class="form-grid">'
         + '<div class="form-row"><label>触发器名称</label><input type="text" id="urltrig-label" value="'
-        + esc(ownDataValue(draft, 'label')) + '" placeholder="如：ERP 报表页自动推送"></div>'
+        + esc(ownDataValue(draft, 'label')) + '" placeholder="ERP 报表页自动推送"></div>'
         + '<div class="form-row"><label>绑定流程或流程组</label><select id="urltrig-flow">'
         + targetOptions(selectedTarget) + '</select></div>'
         + '</div>'

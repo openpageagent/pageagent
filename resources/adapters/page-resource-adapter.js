@@ -485,6 +485,7 @@
             ),
             outputSchema: MEDIA_COLLECTION_SCHEMA,
             safety: 'read', permissions: ['page.read'], relation: 'enumerate-page-media',
+            modelProjection: { type: 'data', includeLinks: true },
             guidance: pageDataContract.windowGuidance('页面媒体').concat([
               '媒体列表来自当前实时页面。实时布局或媒体集合变化使请求 start 不再精确命中当前项边界时，服务会回退到不大于请求位置的最近边界继续读取，最多重复相邻媒体而不跳过数据；响应 start 是实际采用的位置。',
             ]),
@@ -507,6 +508,7 @@
             },
             outputSchema: MEDIA_DESCRIPTOR_SCHEMA,
             safety: 'read', permissions: ['page.read'],
+            modelProjection: { type: 'data', includeLinks: true },
           }),
         },
       }),
@@ -1141,7 +1143,11 @@
     });
     return {
       uri: '/page/media', type: 'PageMediaCollection', data: data,
-      links: [{ rel: 'self', href: '/page/media', method: 'GET' }, { rel: 'current-page-state', href: '/page/current', method: 'GET' }],
+      links: [
+        { rel: 'self', href: '/page/media', method: 'GET' },
+        { rel: 'current-page-state', href: '/page/current', method: 'GET' },
+        { rel: 'start-download', href: '/browser/downloads', method: 'POST' },
+      ],
     };
   }
 
@@ -1152,6 +1158,7 @@
       links: [
         { rel: 'page-media', href: '/page/media', method: 'GET' },
         { rel: 'capture-page-media', href: uri + '/artifacts', method: 'POST' },
+        { rel: 'start-download', href: '/browser/downloads', method: 'POST' },
       ],
     };
   }

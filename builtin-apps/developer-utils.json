@@ -1,0 +1,55 @@
+{
+  "kind": "pfa-full-backup",
+  "version": 7,
+  "modules": {
+    "apps": {
+      "items": {
+        "app_developer_utils": {
+          "appId": "app_developer_utils",
+          "slug": "developer-utils",
+          "name": "Developer Utils",
+          "icon": "fa-code",
+          "description": "专注于输入与结果的离线开发工作台：编码、格式化、转换、生成与预览。",
+          "generationScope": ["data.read", "data.write", "data.delete", "actions.run"],
+          "sourceFiles": {
+            "app.js": "builtin-apps/developer-utils/app.js",
+            "tool-input.js": "builtin-apps/shared/tool-input.js",
+            "feedback.js": "builtin-apps/shared/feedback.js",
+            "tools.js": "builtin-apps/developer-utils/tools.js",
+            "icons.js": "builtin-apps/developer-utils/icons.js",
+            "views.js": "builtin-apps/developer-utils/views.js",
+            "app.css": "builtin-apps/developer-utils/app.css",
+            "theme.css": "apps/default-theme.css"
+          },
+          "defaultPermissions": {
+            "enabled": true,
+            "resources": "system"
+          },
+          "slots": {
+            "published": {
+              "html": "<div class=\"developer-utils\">\n<aside class=\"sidebar\"><div class=\"brand\"><span class=\"brand-icon\" aria-hidden=\"true\">{ }</span><strong>Developer Utils</strong><span class=\"local-badge\">本地</span></div><div class=\"search-box\"><label class=\"sr-only\" for=\"search\">搜索工具</label><input id=\"search\" type=\"search\" placeholder=\"搜索工具…\" autocomplete=\"off\"><kbd id=\"search-key\">⌘ K</kbd></div><label class=\"sr-only\" for=\"category\">工具分类</label><select id=\"category\"><option value=\"\">全部工具</option></select><nav id=\"tools\" aria-label=\"开发者工具\"></nav><footer class=\"sidebar-footer\"><span id=\"tool-count\">离线开发工具</span><button id=\"about-button\" type=\"button\">关于</button></footer></aside>\n<main class=\"workspace\"><header class=\"workspace-header\"><div class=\"heading\"><h1 id=\"title\">Developer Utils</h1></div><span class=\"theme-label\">默认主题</span></header><div id=\"grant\" class=\"notice\" role=\"note\" hidden>工具权限已关闭，请在<a id=\"permissions\" href=\"/options/options.html?section=apps\" target=\"_blank\" rel=\"noopener\">应用权限</a>中恢复 SDK 和工具权限。<button id=\"retry\" type=\"button\">重新加载</button></div><div class=\"action-bar\"><label for=\"operation\">操作</label><select id=\"operation\" disabled></select><button id=\"run\" class=\"primary\" type=\"button\" disabled>处理 <kbd id=\"run-key\">⌘ ↵</kbd></button><span class=\"action-hint\">输入后自动更新</span></div><div id=\"options\" class=\"options\"></div>\n<div id=\"editors\" class=\"editors\"><section id=\"input-panel\" class=\"editor-panel\"><div class=\"panel-bar\"><h2 id=\"input-heading\">输入</h2><div class=\"panel-actions\"><button id=\"paste\" type=\"button\" disabled>粘贴</button><button id=\"sample\" type=\"button\" disabled>示例</button><button id=\"open-file\" type=\"button\" disabled>文件</button><button id=\"clear\" type=\"button\" disabled>清空</button><input id=\"file\" class=\"sr-only\" type=\"file\" tabindex=\"-1\" aria-label=\"读取本地文件\"></div></div><page-code-editor id=\"input\" language=\"plaintext\" aria-label=\"工具输入\"></page-code-editor><div class=\"panel-footer\"><span id=\"input-count\">0 字符</span><span>输入仅保留在当前页面</span></div></section>\n<section id=\"comparison\" class=\"editor-panel\" hidden><div class=\"panel-bar\"><h2>对比文本</h2><button id=\"swap-inputs\" type=\"button\" disabled>交换输入</button></div><page-code-editor id=\"other\" language=\"plaintext\" aria-label=\"对比文本\"></page-code-editor></section>\n<section id=\"output-panel\" class=\"editor-panel\"><div class=\"panel-bar\"><h2>结果</h2><div class=\"panel-actions\"><button id=\"use-output\" type=\"button\" disabled>用作输入</button><button id=\"copy\" type=\"button\" disabled>复制</button><button id=\"download\" type=\"button\" disabled>下载</button></div></div><div id=\"result-tabs\" class=\"result-tabs\" hidden><button id=\"text-tab\" type=\"button\" aria-pressed=\"true\">文本</button><button id=\"preview-tab\" type=\"button\" aria-pressed=\"false\">预览</button></div><div class=\"result-body\"><page-code-editor id=\"output\" language=\"plaintext\" readonly aria-label=\"处理结果\"></page-code-editor><div id=\"preview\" hidden></div></div><div class=\"panel-footer\"><span id=\"output-count\">等待输入</span><span id=\"result-kind\">本地处理</span></div></section></div>\n<footer class=\"workspace-footer\"><p id=\"status\" role=\"status\" aria-live=\"polite\">正在加载工具…</p><button id=\"copy-node\" type=\"button\" disabled>复制流程节点</button></footer></main></div>\n<dialog id=\"about\"><h2>Page Agent Developer Utils</h2><p>Page Agent 内置的离线开发工具，提供编码、格式化、转换、生成与预览功能。支持中英文搜索，使用 Ctrl / ⌘ + K 搜索、Ctrl / ⌘ + Enter 处理。</p><p>转换和检查工具会随输入自动更新，生成工具使用生成按钮。输入仅保留在当前页面，不自动读取剪贴板；切换工具会重置输入，Unix 时间转换默认显示当前时间。</p><p><a href=\"/utilities/THIRD_PARTY_NOTICES.html\" target=\"_blank\" rel=\"noopener\">第三方许可</a></p><form method=\"dialog\"><button type=\"submit\">关闭</button></form></dialog>",
+              "css": "@import url('app-file:app.css');",
+              "javascript": "import { mountDeveloperUtils } from './app.js';\nawait mountDeveloperUtils();\n",
+              "themeCss": "@import url('app-file:theme.css');",
+              "description": "专注于输入与结果的离线开发工作台：编码、格式化、转换、生成与预览。",
+              "capabilities": [],
+              "actions": [],
+              "dependencies": [],
+              "customBehavior": [
+                "界面与主题源码通过 sourceFiles 安装到 code.files，复制和导出携带这些文件；通过既有 /utilities SDK 服务执行工具，需 utilities.read、utilities.execute。转换和检查随输入自动更新，生成工具提供直接动作。输入不持久化，不自动读取剪贴板。目标插件仍需提供公共 UI、字体及工具服务。",
+                "对话可调用 POST /apps/{appId}/open，body 为 {input:{toolId,input,operation?}}；应用 SDK 对应 PageAgent.apps.open(appId,{toolId,input,operation?})。toolId 和文本 input 必填（input 可为空字符串），operation 可省略，默认使用该入口的首个接收操作；不接受其他字段。打开发布页后直接选择工具和操作并填入，不弹选择框。带参数新建标签页，URL 编码后最多 16 KiB；需 apps.execute。此应用原版 ID 为 app_developer_utils，副本用自己的 ID。",
+                "常用 toolId 与接收操作：base64encode/urlencode/htmlencode/backslash=encode或decode；jsonformatter=format/minify/sort/repair/schema/jsonpath/jmespath；unixtime/cronparser/colortools/regextester=inspect；textdiff=lines/words/characters；numberbase/hashing=all；htmlpreview=preview；quicktype=toCode；hex2ascii=decode；ascii2hex=encode；linesortdedupe=processLines。其余入口和操作可读已发布的 files/tools.js，其中 profile.id 是 toolId，profile.operations 指定接收操作，未指定时沿用 /utilities 中 profile.tool 的操作。randomstringgenerator、loremipsum 不接收文本。",
+                "多个工具串联时，对话直接调用 /utilities 的操作，将前一步响应 primary.data.value 作为下一步的 input；最后用 /open 的 input.input 填入文本，结构化结果先转为 JSON 字符串。打开页面只返回 tabId/url，不返回页面计算结果。启动参数仅填入一次；工具选项在页面调整，接收后沿用既有实时处理行为。"
+              ],
+              "externalResources": [],
+              "networkPolicy": "offline"
+            }
+          },
+          "assets": [],
+          "dataIncluded": false,
+          "data": []
+        }
+      }
+    }
+  }
+}

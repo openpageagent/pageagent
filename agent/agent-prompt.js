@@ -8,7 +8,7 @@
   'use strict';
 
   var API_VERSION = 5;
-  var PROMPT_VERSION = 'page-agent-system-core-v68';
+  var PROMPT_VERSION = 'page-agent-system-core-v73';
   var responseLanguage = '中文';
   // The System Core contains only stable identity, authority, execution, and completion rules.
   // Active route contracts and runtime facts are composed per Provider request.
@@ -177,6 +177,7 @@
       context.representation = dataOnly('resource-representation', input.representation);
     }
     if (input.recovery) context.recovery = clone(input.recovery);
+    if (input.applicationContext) context.application = dataOnly('current-application-permissions', input.applicationContext);
     if (input.remainingBudgets) context.remainingBudgets = clone(input.remainingBudgets);
     if (input.recordingContext && Array.isArray(input.recordingContext.recordings)
         && input.recordingContext.recordings.length) {

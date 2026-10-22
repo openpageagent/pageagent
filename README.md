@@ -1,111 +1,67 @@
 # Page Agent
 
-Page Agent 是一个基于 Chromium Manifest V3 的页面自动化扩展。它把自然语言对话、人工操作和页面事实组织成可编辑、可重复运行的 Flow，并提供运行记录、触发器、知识和 MCP/ARP/1 资源接口。
+Page Agent 是一个 Chromium 页面自动化扩展，支持通过自然语言操作网页、创建可复用流程和应用。
 
-当前版本：`1.0.3`
+当前版本：`1.1.0`
 
 ## 从对话到可复用的产出
 
-Page Agent 的核心路径是：说清楚页面目标，先观测当前页面，再生成可编辑、可重复运行的 Flow。
-
-下面的真实示例以 Books to Scrape 的 Travel 页面为输入，让 Agent 读取 11 本书的书名、价格和库存状态，并把结果写入 `result`。
+下面的示例通过对话读取 Books to Scrape 的 11 本书，提取书名、价格和库存，并保存为可重复运行的 Flow。
 
 ![Page Agent：从对话到可复用的产出](assets/readme-demo/page-agent-demo.gif)
 
-演示只保留四个关键结果：对话明确任务，Flow 把页面选择器和数据处理步骤结构化，Flow 列表把它保存为可复用资产，运行报告则验证最终结果。
+## 主要能力
 
-重点不是浏览所有功能页面，而是展示一次自然语言请求如何变成可以再次运行和继续编辑的产出。
+- **页面自动化**：读取网页、执行操作、提取数据，支持录制和截图。
+- **流程编排**：创建 Flow、FlowGroup 和脚本，支持手动、定时或 URL 触发，并查看运行报告。
+- **应用开发**：通过对话或代码创建应用，预览发布并调用流程和脚本。
+- **离线工具**：编解码、格式转换、加密校验等，支持对话、应用、流程和脚本调用。
+- **模型与知识**：支持 OpenAI Chat/Responses、Anthropic Messages 及兼容服务，可配置助手、知识和 Skill。
+- **邮件通知**：通过已连接的 MCP Server 发送流程通知，支持附件。见[邮件配置](docs/Page-Agent-12-邮件通知.md)。
+- **浏览器代理**：支持域名匹配、绕过规则和 HTTP／HTTPS 代理认证。
 
-## 能力范围
+## 应用与离线工具
 
-- 在真实网页中读取页面、执行操作并提取结果
-- 通过对话创建和维护可复用 Flow、脚本与页面配置
-- 手动、定时或 URL 触发 Flow，并查看运行报告
-- 在连接配置中保存 SMTP 账户，经已连接的 MCP Server 发送邮件通知，支持收件人、抄送、密送和附件（[SMTP 配置与用法](docs/Page-Agent-12-邮件通知.md)）
-- 连接 OpenAI Chat/Responses、Anthropic Messages 及兼容服务
-- 可选运行 MCP Server，通过 ARP/1 资源协议供外部 Agent 调用
+在配置中心的「应用」中打开或创建应用，点击「对话调整」继续修改。内置「开发者工具箱」、Developer Utils 和「GitLab 批量操作」，支持离线计算、多分支 Cherry-pick 和批量创建合并请求；需要定制时可「复制后修改」。
 
-## 已完成模块
-
-✅ Chromium Manifest V3 扩展与 Side Panel
-
-✅ 页面感知、定位、动作执行和结果验证
-
-✅ Flow / FlowGroup 编排、模板、数据处理和断点运行
-
-✅ 对话 Agent、多个模型协议 Provider、流式输出和工具调用
-
-✅ 页面、浏览器、Flow、运行、报告、知识、Skill、助手和模型服务资源路由
-
-✅ ARP/1 协议与可选 MCP Server（stdio、WebSocket、HTTP webhook）
-
-✅ 定时任务、URL 触发、并发控制、取消和会话恢复
-
-✅ Conversation Journal、运行报告、配置备份与恢复
-
-✅ 页面录制、回放素材、截图
+用法见[应用说明](docs/Page-Agent-13-应用.md)、[开发者工具箱](builtin-apps/developer-tools/README.md)、[Developer Utils](builtin-apps/developer-utils/README.md)和[GitLab 批量操作](builtin-apps/gitlab-tools/README.md)。
 
 ## 定时运行
 
-配置中心的「定时运行」支持流程、流程组和对话，输入参数填写 JSON 对象，例如 `{"reportType":"daily"}`。流程中可使用 `{{reportType}}`；对话会附加这些参数。每天或指定日期均可添加多个运行时刻，重复日期、时刻会自动去重。
+在配置中心设置流程、流程组或对话的运行计划，支持固定间隔、每天多个时刻、指定日期和 Cron，也可按工作日或节假日批量选日。
 
-固定间隔只配置分钟数，每天多个时刻只配置时刻，Cron 只配置表达式。选择「指定日期和时刻」后，可以手动添加日期，或展开「从日历批量选日（可选）」：选择日历模式、日期范围和工作日/节假日条件，点击「获取日历并选日」，勾选日期后点击「采用勾选日期」，设置时刻并保存。选日条件只用于勾选日期，保存后按明确的日期列表执行；切换为其他触发方式并保存时，会清除日历配置。运行只读取保存的日期和日历快照，不会请求公开日历。需要更新节假日安排时，在配置页重新获取并保存。
-
-| 日历模式 | 公开数据地址示例 |
-| --- | --- |
-| 中国大陆（Apple iCloud，含调休） | https://calendars.icloud.com/holidays/cn_zh.ics/ |
-| 美国全国公众假日 | https://date.nager.at/api/v3/PublicHolidays/2026/US |
-| 德国全国公众假日 | https://date.nager.at/api/v3/PublicHolidays/2026/DE |
-| 支持的国家代码 | https://date.nager.at/api/v3/AvailableCountries |
-| 仅周一至周五 | 本地计算，无需联网，不判断法定节假日 |
-
-国外模式按周六、周日和全国公众假日判断休息日，不含地方假日或特殊工作周。传入日历信息后，可读取 `{{calendar.date}}`、`{{calendar.isWorkday}}`、`{{calendar.isHoliday}}` 和 `{{calendar.isRestDay}}`；仅周一至周五模式的 `isHoliday` 为 `null`。手动新增日期时，若需传入公开日历信息，应先获取覆盖该日期的日历。
-
-国内使用 Apple iCloud 的多年 ICS 日历，每次点击获取只请求一次，按其中的 `WORK-HOLIDAY`（放假）和 `ALTERNATE-WORKDAY`（补班）标记提取所选日期。普通节气、纪念日不视为放假；所选年份尚无完整放假调休数据时会提示，不按普通节日推算调休。
-
-所有运行时刻使用浏览器本地时区。浏览器需保持运行；错过超过 5 分钟的固定时刻不补跑，所有指定日期结束后不再创建下一次闹钟。
+运行使用浏览器本地时区，浏览器需保持运行；错过超过 5 分钟的固定时刻不补跑。
 
 ## 安装扩展
 
-可直接从 [GitHub Releases](https://github.com/openpageagent/pageagent/releases) 下载打包好的扩展，无需本地打包。需要 Chromium 116 或更高版本（使用 Manifest V3 Side Panel API）。
+需要 Chromium 116 或更高版本。
 
-1. 在 Release 的 Assets 中下载 `page-agent-extension-<version>.zip` 并解压。
+1. 从 [GitHub Releases](https://github.com/openpageagent/pageagent/releases) 下载 `page-agent-extension-<version>.zip` 并解压。
 2. 打开 `chrome://extensions` 或 `edge://extensions`，启用开发者模式。
 3. 点击“加载已解压的扩展程序”，选择解压后的 `page-agent-extension/` 目录（该目录应直接包含 `manifest.json`）。
 4. 点击扩展图标打开侧边栏，在配置中心填写模型服务；API Key 仅保存于本地浏览器存储。
 
-也可以克隆仓库后按上述步骤加载源码，选择仓库根目录即可。
-
-安装与打包说明见 [`docs/Page-Agent-00-安装与打包.md`](docs/Page-Agent-00-安装与打包.md)。
+也可克隆仓库后加载根目录。详见[安装说明](docs/Page-Agent-00-安装与打包.md)。
 
 ## 可选 MCP Server
 
-MCP Server 源码位于 [`mcp-server/`](mcp-server/)，扩展本体不依赖它。Release ZIP 同时包含可直接运行的 `mcp-server/page-agent-mcp-server.cjs` 单文件包。它通过 WebSocket 连接扩展，并向 MCP 客户端暴露 `GET`、`POST`、`PUT`、`PATCH`、`DELETE`、`OPTIONS` 六个方法工具。
-
-从 Release ZIP 启动：
+MCP Server 通过 ARP/1 让外部 Agent 调用扩展，也提供本地文件、Bash、桌面操作和邮件发送能力。扩展本体可独立运行。从解压后的发布目录启动：
 
 ```bash
 node mcp-server/page-agent-mcp-server.cjs
 ```
 
-从源码启动：
-```bash
-cd mcp-server
-npm install
-npm start
-```
-
-默认监听 WebSocket `127.0.0.1:9999` 和 HTTP `127.0.0.1:9998`。配置和接口见 [`docs/Page-Agent-11-MCP服务.md`](docs/Page-Agent-11-MCP服务.md)。
+默认监听 WebSocket `127.0.0.1:9999` 和 HTTP `127.0.0.1:9998`。桌面操作支持 macOS 和 Windows，部分能力需安装可选依赖并授予系统权限。源码启动、连接配置与平台要求见 [MCP 服务说明](docs/Page-Agent-11-MCP服务.md)。
 
 ## 打包
 
-根目录的 [`page-agent-build.sh`](page-agent-build.sh) 会同步内置资源，按文件压缩 JavaScript/CSS，并生成可加载的 ZIP。脚本不会生成 CRX，也不会混淆代码：
+安装 Node.js、npm、`rsync` 和 `zip`，分别在根目录及 `mcp-server/` 安装依赖后执行：
 
 ```bash
 ./page-agent-build.sh
 ```
 
-打包前需要安装 Node.js、npm、`rsync` 和 `zip`，并分别在根目录及 `mcp-server/` 安装依赖。输出位于 `dist/`，该目录已被 Git 忽略。
+ZIP 输出到 `dist/`。内置应用源码和默认主题保留可读形式，详见[打包说明](docs/Page-Agent-02-发布包与代码压缩.md)。
 
 ## 项目结构
 
@@ -113,6 +69,8 @@ npm start
 | --- | --- |
 | `manifest.json`、`background.js`、`content/`、`options/`、`sidepanel/` | Chromium 扩展运行时 |
 | `agent/`、`flows/`、`resources/`、`shared/` | Agent、Flow 和 ARP/1 核心 |
+| `apps/`、`builtin-apps/` | 应用管理、页面 SDK、备份与内置应用 |
+| `utilities/`、`ui/` | 离线计算工具与共享界面组件 |
 | `mcp-server/` | 可选 Node.js MCP 传输服务 |
 | `dependencies/` | 随扩展分发的浏览器端第三方运行时 |
 | `builtin-flows/`、`builtin-skills/` | 内置 Flow 和 Skill |
@@ -120,11 +78,11 @@ npm start
 
 ## 权限与数据
 
-扩展声明了 `<all_urls>`、cookies、downloads、proxy、debugger 和 nativeMessaging 等高权限，因为页面自动化和文件动作需要这些能力。请只在信任的浏览器配置中安装，并审阅 Flow、外部模型和 MCP 连接配置。录制、页面内容、URL 参数及模型请求可能包含敏感信息；项目不会替用户自动脱敏。
+扩展需要访问网页、Cookie、下载、代理和调试接口等权限。请审阅应用授权、流程、模型及 MCP 配置；页面内容、录制和模型请求可能包含敏感信息，项目不会自动脱敏。
 
 ## 依赖与许可证
 
-项目使用 Apache License 2.0。直接依赖及其许可证见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)；随源码分发的第三方许可证/声明保存在对应依赖目录中。使用前请阅读 [`DISCLAIMER.md`](DISCLAIMER.md)。
+项目使用 Apache License 2.0。第三方依赖与许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，使用前请阅读 [DISCLAIMER.md](DISCLAIMER.md)。
 
 ## 致谢
 
@@ -132,12 +90,8 @@ npm start
 
 ## 联系与协作
 
-公开联系邮箱：`harrylee@linux.do`。除该邮箱外，项目不提供任何个人联系方式，不提供商业服务，也不承诺即时响应；这是个人项目，只会在空闲时间维护。
+唯一公开联系方式：`harrylee@linux.do`。个人项目，业余维护，不提供商业服务或即时响应承诺。
 
-这个项目的代码和文档全部由 AI 工具生成、修改和整理，因此难免存在缺陷和遗漏。遇到问题时，请提供日志、复现步骤和最小示例，便于维护者根据可验证事实协作处理；也请不要把技术问题变成人身攻击或情绪化争论。
+代码与文档由 AI 工具生成和维护。反馈问题请提供日志、复现步骤和最小示例；修复通过 GitHub Pull Request 提交。
 
-问题修复统一采用 GitHub Pull Request 模式。请先阅读 [`docs/Page-Agent-01-贡献与问题反馈.md`](docs/Page-Agent-01-贡献与问题反馈.md)，提交前使用仓库提供的 [Pull Request 模板](.github/pull_request_template.md)。
-
-## 贡献
-
-请先阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md)。安全问题请按 [`SECURITY.md`](SECURITY.md) 的方式报告。
+请先阅读[问题反馈说明](docs/Page-Agent-01-贡献与问题反馈.md)和 [CONTRIBUTING.md](CONTRIBUTING.md)，提交时使用 [Pull Request 模板](.github/pull_request_template.md)。安全问题按 [SECURITY.md](SECURITY.md) 报告。

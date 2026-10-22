@@ -20,11 +20,15 @@
     if (typeof createTrustedContext !== 'function') {
       throw new Error('McpRuntime requires createTrustedContext()');
     }
+    if (typeof deps.prepareNetwork !== 'function') {
+      throw new Error('McpRuntime requires prepareNetwork()');
+    }
     if (!root.WebSocketClient || typeof root.WebSocketClient.createWebSocketClient !== 'function') {
       throw new Error('WebSocketClient must load before McpRuntime initialization');
     }
 
     var wsClient = null;
+    var initQueue = Promise.resolve();
 
     function generateMcpClientId() {
       return 'pfa_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
@@ -50,7 +54,7 @@
       return 'browser';
     }
 
-    function buildMcpClientInfo(clientId, clientName, incognito) {
+    function buildMcpClientInfo(clientId, clientName, incognito, userAgent) {
       var manifest = chrome.runtime.getManifest ? chrome.runtime.getManifest() : {};
       var contextLabel = incognito ? '隐私窗口' : '主窗口';
       return {
@@ -65,7 +69,7 @@
         incognitoContext: !!incognito,
         os: (typeof navigator !== 'undefined' && navigator.platform) || '',
         language: (typeof navigator !== 'undefined' && navigator.language) || '',
-        userAgent: (typeof navigator !== 'undefined' && navigator.userAgent) || '',
+        userAgent: userAgent || (typeof navigator !== 'undefined' && navigator.userAgent) || '',
         protocol: 'arp/1',
       };
     }
@@ -96,11 +100,18 @@
         && status.url === url
         && currentInfo.clientId === clientInfo.clientId
         && currentInfo.clientName === clientInfo.clientName
+        && currentInfo.userAgent === clientInfo.userAgent
         && currentInfo.incognito === clientInfo.incognito
         && status.protocol === 'arp/1');
     }
 
-    function initClient() {
+    function initClient(options) {
+      var result = initQueue.then(function () { return initializeClient(options || {}); });
+      initQueue = result.catch(function () {});
+      return result;
+    }
+
+    function initializeClient(options) {
       var incognito = isMcpIncognitoContext();
       var clientKeys = mcpStorageKeys(incognito);
       var keys = [clientKeys.enabled, clientKeys.url, clientKeys.id, clientKeys.name, clientKeys.local, clientKeys.directory];
@@ -115,7 +126,7 @@
           persistClientId = storageSet(values);
         }
 
-        return persistClientId.then(function () {
+        return persistClientId.then(async function () {
           if (stored[clientKeys.enabled] !== true || !mcpUrl) {
             if (wsClient) {
               wsClient.disconnect();
@@ -125,9 +136,10 @@
             return null;
           }
 
-          var clientInfo = buildMcpClientInfo(clientId, clientName, incognito);
+          var networkSettings = await deps.prepareNetwork();
+          var clientInfo = buildMcpClientInfo(clientId, clientName, incognito, networkSettings.userAgent);
           var status = wsClient && wsClient.getStatus ? wsClient.getStatus() : null;
-          if (wsClient && !sameClientConfiguration(status, mcpUrl, clientInfo)) {
+          if (wsClient && (options.reconnect || !sameClientConfiguration(status, mcpUrl, clientInfo))) {
             wsClient.disconnect();
             wsClient = null;
           }

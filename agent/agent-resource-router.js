@@ -11,12 +11,14 @@
 
   var API_VERSION = 1;
   var ADAPTER_SPECS = Object.freeze([
+    Object.freeze({ root: 'apps', api: 'AppResource', factories: ['createAdapter'] }),
     Object.freeze({ root: 'page', api: 'PageResourceAdapter', factories: ['createPageResourceAdapter', 'createAdapter', 'create'] }),
     Object.freeze({ root: 'image-artifacts', api: 'ImageArtifactResourceAdapter', factories: ['createImageArtifactResourceAdapter', 'createAdapter'] }),
     Object.freeze({ root: 'browser', api: 'BrowserResourceAdapter', factories: ['createBrowserResourceAdapter', 'createAdapter', 'create'] }),
     Object.freeze({ root: 'current', api: 'CurrentResourceAdapter', factories: ['createCurrentResourceAdapter', 'createAdapter'] }),
     Object.freeze({ root: 'flows', api: 'FlowResource', factories: ['createAdapter'] }),
     Object.freeze({ root: 'node-types', api: 'NodeTypeResource', factories: ['createAdapter'] }),
+    Object.freeze({ root: 'utilities', api: 'UtilityResource', factories: ['createAdapter'] }),
     Object.freeze({ root: 'flow-groups', api: 'FlowGroupResource', factories: ['createAdapter'] }),
     Object.freeze({ root: 'conversations', api: 'ConversationResource', factories: ['createAdapter'] }),
     Object.freeze({ root: 'recordings', api: 'RecordingResource', factories: ['createAdapter'] }),
@@ -33,6 +35,8 @@
     Object.freeze({ root: 'model-services', api: 'AgentConfigurationResource', factories: ['createModelServicesAdapter'] }),
     Object.freeze({ root: 'agent-settings', api: 'AgentConfigurationResource', factories: ['createAgentSettingsAdapter'] }),
     Object.freeze({ root: 'connections', api: 'ConnectionResource', factories: ['createAdapter'] }),
+    Object.freeze({ root: 'system-settings', api: 'SystemSettingsResource', factories: ['createAdapter'] }),
+    Object.freeze({ root: 'mail-settings', api: 'MailSettingsResource', factories: ['createAdapter'] }),
     Object.freeze({ root: 'local', api: 'LocalResource', factories: ['createAdapter'] }),
     Object.freeze({ root: 'mcp-servers', api: 'McpResource', factories: ['createMcpServersAdapter', 'createAdapter'] }),
     Object.freeze({ root: 'mcp-calls', api: 'McpResource', factories: ['createMcpCallsAdapter'] }),

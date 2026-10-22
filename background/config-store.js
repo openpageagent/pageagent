@@ -353,6 +353,31 @@
       });
     }
 
+    // 仅在后台初始化时调用，并在新运行写入前排队；上一轮后台的执行实例已不存在。
+    function recoverInterruptedRuns() {
+      var recovered = 0;
+      var recoveredAt = Date.now();
+      return mutateRuns(function (runs) {
+        return runs.map(function (run) {
+          if (!runReport.isActiveStatus(run.status)) return run;
+          var outcome = runReport.applyPatch(run, {
+            status: 'stopped',
+            endedAt: recoveredAt,
+            summaries: run.summaries || [],
+            nodeStatuses: run.nodeStatuses || {},
+            logs: (Array.isArray(run.logs) ? run.logs : []).concat([{
+              timestamp: recoveredAt,
+              level: 'warn',
+              scope: 'run',
+              message: '扩展后台已重启，原运行实例已中断，记录已标记为停止。',
+            }]),
+          });
+          if (outcome.updated) recovered++;
+          return outcome.record;
+        });
+      }).then(function () { return recovered; });
+    }
+
     function isActiveRunStatus(status) {
       return runReport.isActiveStatus(status);
     }
@@ -457,6 +482,7 @@
       getRunStorageBytes: getRunStorageBytes,
       appendRun: appendRun,
       updateRun: updateRun,
+      recoverInterruptedRuns: recoverInterruptedRuns,
       deleteRun: deleteRun,
       clearRunsBefore: clearRunsBefore,
       clearRuns: clearRuns,

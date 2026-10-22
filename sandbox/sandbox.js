@@ -6,6 +6,9 @@
   var pendingApiCalls = {}; // callId → {resolve, reject}
   var runningExecs = {};    // execId → { aborted }
   var callSeq = 0;
+  var utilityDefinitions = globalThis.OfflineToolCatalog.tools.map(function (tool) {
+    return { id: tool.id, operations: tool.operations.slice() };
+  });
 
   function post(message) {
     window.parent.postMessage(message, '*');
@@ -30,6 +33,15 @@
     function bridge(api) {
       return function () {
         return callApi(execId, api, Array.prototype.slice.call(arguments));
+      };
+    }
+    function utilityMethod(toolId, operation) {
+      return function (input, options) {
+        return callApi(execId, 'utilities.execute', [toolId, {
+          operation: operation,
+          input: input === undefined ? '' : input,
+          options: options === undefined ? {} : options,
+        }]).then(function (result) { return result.value; });
       };
     }
     var api = {
@@ -93,6 +105,10 @@
       model: {
         chat: bridge('model.chat'),
       },
+      utilities: {
+        list: bridge('utilities.list'),
+        execute: bridge('utilities.execute'),
+      },
       ctx: {
         get: bridge('ctx.get'),
         set: bridge('ctx.set'),
@@ -113,6 +129,19 @@
         });
       },
     };
+    // Bind each tool/operation locally; direct calls never need a list request.
+    utilityDefinitions.forEach(function (tool) {
+      if (tool.operations.length === 1) {
+        api.utilities[tool.id] = utilityMethod(tool.id, tool.operations[0]);
+      } else {
+        // These previously single-operation tools remain callable after adding linked-view operations.
+        var methods = ['radix', 'unit', 'randomString'].includes(tool.id) ? utilityMethod(tool.id, tool.operations[0]) : Object.create(null);
+        tool.operations.forEach(function (operation) {
+          methods[operation] = utilityMethod(tool.id, operation);
+        });
+        api.utilities[tool.id] = methods;
+      }
+    });
     return api;
   }
 

@@ -137,7 +137,14 @@
         }
       }
 
-      return abortable(globalThis.PageAutomationUserAgent.fetchSystem(requestUrl, init), parentSignal).then(function (response) {
+      return Promise.resolve().then(function () {
+        if (deps.authorizeApplication) {
+          // Fetch manual redirects are opaque in Chrome. Reject them instead of
+          // issuing an unchecked redirected request on an application's behalf.
+          init.redirect = 'error';
+          return deps.authorizeApplication({ kind: 'http', url: requestUrl, method: method });
+        }
+      }).then(function () { return abortable(globalThis.PageAutomationUserAgent.fetchSystem(requestUrl, init), parentSignal); }).then(function (response) {
         return abortable(response.text(), parentSignal).then(function (text) {
           var body = text.slice(0, maxBodyLength);
           var json = null;

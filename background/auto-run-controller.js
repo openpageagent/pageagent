@@ -689,7 +689,8 @@
             });
           }
 
-          tryAttempt();
+          // 重试等待被停止/失败打断时，也必须结束外层轮次，进入运行收尾。
+          Promise.resolve().then(tryAttempt).catch(reject);
         });
       }
 

@@ -401,6 +401,9 @@
 
     function commonSnapshot(session) {
       return {
+        appAuthorization: safeClone(ownDataValue(session, 'appAuthorization') || null, null),
+        appNodes: safeClone(ownDataValue(session, 'appNodes') || null, null),
+        appConfig: safeClone(ownDataValue(session, 'appConfig') || null, null),
         runId: ownDataValue(session, 'runId'),
         flowId: ownDataValue(session, 'flowId'),
         flowLabel: ownDataValue(session, 'flowLabel'),

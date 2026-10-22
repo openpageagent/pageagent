@@ -140,6 +140,9 @@
     var input = null;
     var actionButton = null;
     var notice = null;
+    var appContextNotice = null;
+    var appContextTopicId = '';
+    var appContextRequest = 0;
     var assistants = [];
     var entryConfig = null;
     var selectedAssistantId = '';
@@ -1445,8 +1448,24 @@
       renderPreview(recordingDrawerBody);
     }
 
+    function refreshApplicationContext(force) {
+      var conversationId = !newTopicDraft && topic && topic.topicId || '';
+      if (!force && conversationId === appContextTopicId) return;
+      appContextTopicId = conversationId;
+      var request = ++appContextRequest;
+      appContextNotice.hidden = true;
+      if (!conversationId) return;
+      runtime.sendMessage({ type: 'APP_CONVERSATION_CONTEXT', conversationId: conversationId }).then(function (response) {
+        if (destroyed || request !== appContextRequest || !response || response.error || !response.result) return;
+        var app = response.result;
+        appContextNotice.textContent = '正在编辑应用：' + app.name + (app.unavailable ? ' · ' + app.unavailable : '');
+        appContextNotice.hidden = false;
+      }).catch(function () {});
+    }
+
     function renderControls() {
       if (destroyed) return;
+      refreshApplicationContext(false);
       var meta = statusMeta();
       var running = !!(topic && topic.active);
       var collapsedRunning = running && !expanded && meta.kind === 'running';
@@ -2254,6 +2273,7 @@
 
     function handleRuntimeMessage(message) {
       if (destroyed || !message) return;
+      if (message.type === 'APP_CHANGED') { if (!documentRef.hidden) refreshApplicationContext(true); return; }
       if (message.type === contract.TYPES.RECORDING_STATE_CHANGED) {
         if (!recordingState) recordingState = {};
         recordingState.active = message.payload && message.payload.active || null;
@@ -2298,6 +2318,7 @@
       renderControls();
       if (documentRef.hidden) stopPoll();
       else {
+        refreshApplicationContext(true);
         if (!newTopicDraft) refreshState({ quiet: true });
         syncPoll();
       }
@@ -2317,6 +2338,8 @@
       host.style.visibility = 'hidden';
 
       var shadow = host.attachShadow({ mode: 'closed' });
+      cleanups.push(globalThis.PageAgentCodeEditor.attach(shadow));
+      if (globalThis.PageAutomationConversationEventView.attachApplications) cleanups.push(globalThis.PageAutomationConversationEventView.attachApplications(shadow));
       // 键盘事件穿过 Shadow DOM 后会以 host 为目标，需阻止冒泡以免触发页面快捷键。
       ['keydown', 'keypress', 'keyup'].forEach(function (type) {
         listen(shadow, type, function (event) { event.stopPropagation(); });
@@ -2477,6 +2500,9 @@
       notice = documentRef.createElement('div');
       notice.className = 'notice';
       notice.hidden = true;
+      appContextNotice = documentRef.createElement('div');
+      appContextNotice.className = 'notice';
+      appContextNotice.hidden = true;
       recordingSummary = documentRef.createElement('div');
       recordingSummary.className = 'recording-summary';
       recordingSummary.hidden = true;
@@ -2530,6 +2556,7 @@
       composerRow.appendChild(input);
       composerRow.appendChild(actionButton);
       composer.appendChild(notice);
+      composer.appendChild(appContextNotice);
       composer.appendChild(recordingSummary);
       composer.appendChild(toolbar);
       composer.appendChild(composerRow);
@@ -2683,6 +2710,10 @@
     listen(input, 'keydown', handleInputKeydown);
     listen(documentRef, 'visibilitychange', handleVisibility);
     subscribe(runtime && runtime.onMessage, handleRuntimeMessage);
+    subscribe(globalThis.chrome && globalThis.chrome.storage && globalThis.chrome.storage.onChanged, function (changes, area) {
+      if (area === 'local' && (changes.app_conversation_bindings_regular || changes.app_conversation_bindings_incognito)
+          && !destroyed && !documentRef.hidden) refreshApplicationContext(true);
+    });
     if (syncEventStream) cleanups.push(syncEventStream.subscribe(handleSyncEvent));
     render();
     refreshState().then(function () { return refreshRecordingState(); }).finally(revealInitialState);

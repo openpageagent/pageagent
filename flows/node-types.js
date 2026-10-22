@@ -1,8 +1,8 @@
 // Node Types — 用户可配置节点类型的元数据与参数 schema
 // background 执行器与配置页表单共用此 schema
 (function attachNodeTypes(root, factory) {
-  root.NodeTypes = factory(root.PageActionContract, root.PageVerificationContract);
-})(globalThis, function (pageActionContract, pageVerificationContract) {
+  root.NodeTypes = factory(root.PageActionContract, root.PageVerificationContract, root.OfflineToolCatalog);
+})(globalThis, function (pageActionContract, pageVerificationContract, utilityCatalog) {
 
   var PAGE_DATA_MAX_CHARS = 10000;
   var PAGE_DATA_WINDOW_DESCRIPTION = '有效范围 2-10000，默认 10000，硬上限 10000。公共分页契约按 Math.min(maxChars, 10000) 应用请求；start 和 nextStart 都是字符边界位置，不是数组下标、对象属性序号或本页返回项数量；hasMore=true 且 nextStart 不为 null 时，下一次读取必须把本页 nextStart 原样填入 start，这才是下一页，不能再次使用 start=0，也不能把当前页当作完整结果；重复读取仅在真实观察到页面或数据发生变化时才被允许；hasMore=false 或 nextStart 为 null 均表示已读取完毕。实时只读数据变化使 start 落入当前项内部时，服务会保守回退到不大于请求位置的最近完整项边界；超过当前数据时返回空的已读完结果，不作为请求错误。响应 start 是实际采用的位置，后续仍只使用响应 nextStart。单个结构化数组项或对象属性超过窗口时会被有损投影，truncated 会标记不完整，但被裁掉的项内字段不保证能由 nextStart 恢复；应缩小读取范围或改读原始文本。';
@@ -32,6 +32,23 @@
   function cloneJson(value) {
     if (value === undefined) return undefined;
     return JSON.parse(JSON.stringify(value));
+  }
+
+  function desktopPointParams(prefix, label) {
+    return [
+      { key: prefix ? prefix + 'X' : 'x', label: label + ' X（屏幕坐标）', kind: 'number', required: true, minimum: -100000, maximum: 100000, placeholder: '{{match.center.x}}' },
+      { key: prefix ? prefix + 'Y' : 'y', label: label + ' Y（屏幕坐标）', kind: 'number', required: true, minimum: -100000, maximum: 100000, placeholder: '{{match.center.y}}' },
+    ];
+  }
+
+  function desktopRegionParams() {
+    return [
+      { key: 'useRegion', label: '使用指定区域', kind: 'boolean', default: false, description: '关闭时使用主屏幕；开启时使用下方屏幕坐标，区域须位于同一显示器内，需要 robotjs。' },
+      { key: 'x', label: '区域左上角 X', kind: 'number', default: 0, minimum: -100000, maximum: 100000 },
+      { key: 'y', label: '区域左上角 Y', kind: 'number', default: 0, minimum: -100000, maximum: 100000 },
+      { key: 'width', label: '区域宽度（屏幕坐标单位）', kind: 'number', default: 800, minimum: 1, maximum: 100000 },
+      { key: 'height', label: '区域高度（屏幕坐标单位）', kind: 'number', default: 600, minimum: 1, maximum: 100000 },
+    ];
   }
 
   function locatorParamDefinitions(options) {
@@ -195,7 +212,8 @@
     }, pageId);
   }
 
-  // param.kind: text | textarea | number | boolean | select | page | script | assistant | modelService
+  // param.kind: text | password | textarea | number | boolean | select | page | script | assistant | modelService
+  // editorLanguage selects Monaco for source/config fields; valueFormat: 'json' also implies a JSON editor.
   var TYPES = [
     {
       type: 'openPage',
@@ -456,7 +474,7 @@
       needsPage: true,
       description: '与 Agent /page/javascript-executions 使用同一页面运行时，支持只读/写入和 MAIN/ISOLATED world',
       params: [
-        { key: 'source', label: 'JavaScript 源码', kind: 'textarea', required: true, placeholder: 'return document.title' },
+        { key: 'source', label: 'JavaScript 源码', kind: 'textarea', editorLanguage: 'javascript', required: true, placeholder: 'return document.title' },
         { key: 'world', label: '执行 world', kind: 'select', default: 'MAIN', options: [
           { value: 'MAIN', label: 'MAIN（页面上下文）' },
           { value: 'ISOLATED', label: 'ISOLATED（隔离上下文）' },
@@ -487,7 +505,7 @@
       needsPage: false,
       description: '在循环中按条件写入固定长度状态位图；条件为 true 写 1，false 写 0，最近 N 位全为 0 时触发 loopBreak。适合表达“连续 N 次未满足状态则跳出”。',
       params: [
-        { key: 'condition', label: '状态条件（true 写 1，false 写 0）', kind: 'textarea', required: true, placeholder: 'hasValue({{json currentValue}}) && {{json currentValue}} !== {{json prevValue}}' },
+        { key: 'condition', label: '状态条件（true 写 1，false 写 0）', kind: 'textarea', editorLanguage: 'javascript', required: true, placeholder: 'hasValue({{json currentValue}}) && {{json currentValue}} !== {{json prevValue}}' },
         { key: 'count', label: '连续 false 次数', kind: 'number', default: 10 },
         { key: 'stateKey', label: '状态键（同一流程内隔离）', kind: 'text', placeholder: 'assistant-answer' },
         { key: 'reset', label: '重置该状态后再判断', kind: 'boolean', default: false },
@@ -521,7 +539,7 @@
       params: [
         { key: 'autoDetect', label: '自动检测列表', kind: 'boolean', default: true },
         { key: 'itemSelector', label: '列表项选择器（autoDetect=false 时必填）', kind: 'text', placeholder: '.item, li' },
-        { key: 'fields', label: '字段映射（每行：字段名|选择器|属性）', kind: 'textarea', placeholder: 'title|.title|text\nurl|a|href\nindex|.rank|text' },
+        { key: 'fields', label: '字段映射（每行：字段名|选择器|属性）', kind: 'textarea', editorLanguage: 'plaintext', placeholder: 'title|.title|text\nurl|a|href\nindex|.rank|text' },
         { key: 'maxItems', label: '最大条数（0=不限）', kind: 'number', default: 0 },
         { key: 'start', label: '读取起始位置', kind: 'number', required: true, default: 0 },
         { key: 'maxChars', label: '每页最大字符数', kind: 'number', required: true, default: 10000 },
@@ -547,7 +565,7 @@
       description: '通用滚动列表采集：从页面或滚动容器中反复提取当前已渲染列表项，使用统一页面引擎连续手势滚动后合并去重，适合虚拟列表、懒加载列表、长帖子等场景',
       params: [
         { key: 'itemSelector', label: '列表项选择器', kind: 'text', required: true, placeholder: '.item, li, article' },
-        { key: 'fields', label: '字段映射（每行：字段名|选择器|属性；选择器 "." 表示当前列表项）', kind: 'textarea', required: true, placeholder: 'id|.|data-id\ntitle|.title|text\nurl|a|href' },
+        { key: 'fields', label: '字段映射（每行：字段名|选择器|属性；选择器 "." 表示当前列表项）', kind: 'textarea', editorLanguage: 'plaintext', required: true, placeholder: 'id|.|data-id\ntitle|.title|text\nurl|a|href' },
         { key: 'keyFields', label: '去重字段（逗号或换行；为空则按整行 JSON 去重）', kind: 'text', placeholder: 'id' },
         { key: 'containerSelector', label: '滚动容器选择器（可选，留空滚动整页）', kind: 'text', placeholder: '.scroll-area' },
         { key: 'containerIndex', label: '第几个滚动容器（留空=第一个，2=第二个，-1=最后一个）', kind: 'text', placeholder: '' },
@@ -623,8 +641,8 @@
           { value: 'PATCH', label: 'PATCH' },
           { value: 'DELETE', label: 'DELETE' },
         ] },
-        { key: 'headers', label: '请求头 JSON（可选）', kind: 'textarea', placeholder: '{"content-type":"application/json"}' },
-        { key: 'body', label: '请求体（可选）', kind: 'textarea', placeholder: '{"id":1}' },
+        { key: 'headers', label: '请求头 JSON（可选）', kind: 'textarea', editorLanguage: 'json', placeholder: '{"content-type":"application/json"}' },
+        { key: 'body', label: '请求体（可选）', kind: 'textarea', editorLanguage: 'auto', placeholder: '{"id":1}' },
         { key: 'parseJson', label: '响应解析为 JSON', kind: 'boolean', default: true },
         { key: 'start', label: '正文起始位置', kind: 'number', required: true, default: 0 },
         { key: 'maxChars', label: '正文每页最大字符数', kind: 'number', required: true, default: 10000 },
@@ -660,7 +678,7 @@
       description: '在页面 MAIN world 调用已存在的业务函数',
       params: [
         { key: 'path', label: '函数路径', kind: 'text', required: true, placeholder: 'window.__APP__.encrypt / app.login' },
-        { key: 'args', label: '参数数组 JSON', kind: 'textarea', placeholder: '["foo", 123]' },
+        { key: 'args', label: '参数数组 JSON', kind: 'textarea', editorLanguage: 'json', placeholder: '["foo", 123]' },
         { key: 'thisPath', label: 'this 对象路径（可选）', kind: 'text', placeholder: 'window.__APP__' },
         { key: 'start', label: '结果起始位置', kind: 'number', required: true, default: 0 },
         { key: 'maxChars', label: '结果每页最大字符数', kind: 'number', required: true, default: 10000 },
@@ -780,8 +798,8 @@
           { value: 'PATCH', label: 'PATCH' },
           { value: 'DELETE', label: 'DELETE' },
         ] },
-        { key: 'headers', label: '请求头 JSON 或 Key: Value', kind: 'textarea', placeholder: '{"content-type":"application/json"}' },
-        { key: 'body', label: '请求体', kind: 'textarea', placeholder: '{"id":1}' },
+        { key: 'headers', label: '请求头 JSON 或 Key: Value', kind: 'textarea', editorLanguage: 'auto', placeholder: '{"content-type":"application/json"}' },
+        { key: 'body', label: '请求体', kind: 'textarea', editorLanguage: 'auto', placeholder: '{"id":1}' },
         { key: 'parseJson', label: '响应解析为 JSON', kind: 'boolean', default: true },
         { key: 'start', label: '正文起始位置', kind: 'number', required: true, default: 0 },
         { key: 'maxChars', label: '正文每页最大字符数', kind: 'number', required: true, default: 10000 },
@@ -846,7 +864,7 @@
       needsPage: false,
       description: '把数据打印到日志（侧边栏与运行历史可见），用于查看提取到的数据',
       params: [
-        { key: 'message', label: '日志内容（支持模板，{{json 变量}} 打印完整 JSON）', kind: 'textarea', default: '{{json last}}', placeholder: '提取结果: {{json orders}}' },
+        { key: 'message', label: '日志内容（支持模板，{{json 变量}} 打印完整 JSON）', kind: 'textarea', editorLanguage: 'plaintext', default: '{{json last}}', placeholder: '提取结果: {{json orders}}' },
         { key: 'level', label: '日志级别', kind: 'select', default: 'info', options: [
           { value: 'info', label: 'info' },
           { value: 'warn', label: 'warn' },
@@ -860,10 +878,10 @@
       type: 'runScript',
       label: '执行脚本',
       needsPage: false,
-      description: '兜底节点：仅当普通流程节点无法表达复合逻辑时，在扩展沙箱中执行自定义 JS 脚本；必须说明 runScriptJustification。脚本可调用页面、HTTP 和文件副作用，因此不允许节点级自动重试。可调用 api.page/api.http/api.file/api.ctx；page.open(pageId) 返回 tabId，后续 page.* 操作传 tabId；可用 page.getCurrentTab(tabId) / page.getCurrentUrl(tabId) 读取标签。写出数据：① await ctx.set("name", v) 直接写变量；② return 值 + 节点 outputVar 写入变量；③ 未设置 outputVar 时 return 纯对象会自动按键展开为变量，后续节点用 {{键名}} 引用',
+      description: '兜底节点：仅当普通流程节点无法表达复合逻辑时，在扩展沙箱中执行自定义 JS 脚本；必须说明 runScriptJustification。脚本可调用页面、HTTP 和文件副作用，因此不允许节点级自动重试。可调用 api.page/api.http/api.file/api.ctx/api.utilities；工具直接调用，如 await api.utilities.hash("abc", {algorithm:"SHA256"})、await api.utilities.base64.encode("abc")，返回计算值，不需要先 list。单操作工具使用 api.utilities.<tool>(input,options)，多操作工具使用 api.utilities.<tool>.<operation>(input,options)，与独立工具节点共用处理器。page.open(pageId) 返回 tabId，后续 page.* 操作传 tabId；可用 page.getCurrentTab(tabId) / page.getCurrentUrl(tabId) 读取标签。写出数据：① await ctx.set("name", v) 直接写变量；② return 值 + 节点 outputVar 写入变量；③ 未设置 outputVar 时 return 纯对象会自动按键展开为变量，后续节点用 {{键名}} 引用',
       params: [
         { key: 'scriptId', label: '选择已保存脚本', kind: 'script' },
-        { key: 'inlineCode', label: '或内联代码（优先级低于已选脚本）', kind: 'textarea', placeholder: 'const t = await ctx.get("orders");\nawait ctx.set("count", t.rows.length); // 写出变量，后续 {{count}}\nreturn { total: t.rows.length };      // 不设 outputVar 时自动展开为 {{total}}' },
+        { key: 'inlineCode', label: '或内联代码（优先级低于已选脚本）', kind: 'textarea', editorLanguage: 'javascript', placeholder: 'const t = await ctx.get("orders");\nawait ctx.set("count", t.rows.length); // 写出变量，后续 {{count}}\nreturn { total: t.rows.length };      // 不设 outputVar 时自动展开为 {{total}}' },
         { key: 'runScriptJustification', label: '脚本兜底原因', kind: 'textarea', required: true, placeholder: '说明为什么 click/extract/saveFile/loop/condition 等普通节点无法表达这段逻辑' },
         { key: 'timeoutMs', label: '执行超时(ms)', kind: 'number', default: 60000 },
       ],
@@ -882,8 +900,8 @@
           { value: 'PATCH', label: 'PATCH' },
           { value: 'GET', label: 'GET' },
         ] },
-        { key: 'headers', label: '请求头（每行 Key: Value）', kind: 'textarea', placeholder: 'Content-Type: application/json\nAuthorization: Bearer xxx' },
-        { key: 'bodyTemplate', label: '请求体模板', kind: 'textarea', placeholder: '{"rows": {{json orders.rows}}, "count": {{orders.rowCount}}}' },
+        { key: 'headers', label: '请求头（每行 Key: Value）', kind: 'textarea', editorLanguage: 'plaintext', placeholder: 'Content-Type: application/json\nAuthorization: Bearer xxx' },
+        { key: 'bodyTemplate', label: '请求体模板', kind: 'textarea', editorLanguage: 'auto', placeholder: '{"rows": {{json orders.rows}}, "count": {{orders.rowCount}}}' },
         { key: 'timeoutMs', label: '超时(ms)', kind: 'number', default: 30000 },
       ],
       outputHint: '{ status, ok, json, body }',
@@ -900,7 +918,7 @@
           { value: 'literal', label: '自定义 HTML' },
         ] },
         { key: 'sourcePath', label: '变量/路径', kind: 'text', default: 'last', placeholder: 'pageContent', description: '来源必须是完整 HTML。若指向 inspectHtml/extractText 等分页结果的 content/value，先确认 hasMore=false 或 nextStart 为 null；hasMore=true 且 nextStart 不为 null 时，下一次读取必须把 nextStart 原样填入 start，直接转换当前页会在页边界截断。' },
-        { key: 'html', label: '自定义 HTML（支持模板）', kind: 'textarea', placeholder: '<h1>{{title}}</h1>{{content}}' },
+        { key: 'html', label: '自定义 HTML（支持模板）', kind: 'textarea', editorLanguage: 'html', placeholder: '<h1>{{title}}</h1>{{content}}' },
         { key: 'headingStyle', label: '标题风格', kind: 'select', default: 'atx', options: [
           { value: 'atx', label: '# 标题' }, { value: 'setext', label: '下划线标题' },
         ] },
@@ -942,7 +960,7 @@
           { value: 'literal', label: '自定义内容' },
         ] },
         { key: 'sourcePath', label: '变量/路径', kind: 'text', default: 'last', placeholder: 'pageMarkdown' },
-        { key: 'content', label: '自定义 HTML / Markdown / URL 列表（支持模板）', kind: 'textarea', placeholder: '![图片](/assets/image.png)' },
+        { key: 'content', label: '自定义 HTML / Markdown / URL 列表（支持模板）', kind: 'textarea', editorLanguage: 'markdown', placeholder: '![图片](/assets/image.png)' },
         { key: 'sourceFormat', label: '内容格式', kind: 'select', default: 'auto', options: [
           { value: 'auto', label: '自动识别 HTML + Markdown' },
           { value: 'markdown', label: 'Markdown' },
@@ -989,7 +1007,7 @@
         { key: 'loopId', label: '循环 ID', kind: 'text', required: true },
         { key: 'itemsPath', label: '循环数组路径（可选）', kind: 'text', placeholder: 'pageLinks.items' },
         { key: 'maxIterations', label: '最大循环次数（0=不限）', kind: 'number', default: 0 },
-        { key: 'breakCondition', label: '跳出条件（安全表达式，支持模板与 contains(...) 等函数）', kind: 'textarea', placeholder: '{{index}} >= 5 || contains({{json last.text}}, "完成")' },
+        { key: 'breakCondition', label: '跳出条件（安全表达式，支持模板与 contains(...) 等函数）', kind: 'textarea', editorLanguage: 'javascript', placeholder: '{{index}} >= 5 || contains({{json last.text}}, "完成")' },
       ],
       outputHint: '{ index, count, item, loopBreak?, loopEmpty? }；循环体内可用 {{item.xxx}} / {{loop.item.xxx}}',
     },
@@ -1009,7 +1027,7 @@
       needsPage: false,
       description: '立即跳出当前循环',
       params: [
-        { key: 'condition', label: '条件（可选，安全表达式）', kind: 'textarea', placeholder: '{{last.status}} === "done"' },
+        { key: 'condition', label: '条件（可选，安全表达式）', kind: 'textarea', editorLanguage: 'javascript', placeholder: '{{last.status}} === "done"' },
       ],
       outputHint: '{ loopBreak }',
     },
@@ -1019,7 +1037,7 @@
       needsPage: false,
       description: '跳过本轮剩余节点，进入下一轮循环',
       params: [
-        { key: 'condition', label: '条件（可选，安全表达式）', kind: 'textarea', placeholder: '{{last.skip}} === true' },
+        { key: 'condition', label: '条件（可选，安全表达式）', kind: 'textarea', editorLanguage: 'javascript', placeholder: '{{last.skip}} === true' },
       ],
       outputHint: '{ loopContinue }',
     },
@@ -1205,7 +1223,7 @@
           { value: 'text', label: '纯文本' },
           { value: 'base64', label: 'Base64' },
         ] },
-        { key: 'content', label: '文件内容（支持模板）', kind: 'textarea', placeholder: 'a,b,c\n1,2,3' },
+        { key: 'content', label: '文件内容（支持模板）', kind: 'textarea', editorLanguage: 'auto', placeholder: 'a,b,c\n1,2,3' },
         { key: 'expect', label: '动作后置条件（高级，可选）', kind: 'textarea', valueFormat: 'json', placeholder: '{"type":"text_present","text":"上传成功"}' },
         confirmationParamDefinition(),
         { key: 'timeoutMs', label: '等待元素超时(ms)', kind: 'number', default: 10000 },
@@ -1229,7 +1247,7 @@
           { value: 'clear', label: '清空' },
         ] },
         { key: 'key', label: 'Key', kind: 'text', placeholder: 'access_token' },
-        { key: 'value', label: '值（写入时使用，支持模板）', kind: 'textarea', placeholder: '{{token}}' },
+        { key: 'value', label: '值（写入时使用，支持模板）', kind: 'textarea', editorLanguage: 'auto', placeholder: '{{token}}' },
         { key: 'start', label: '读取起始位置', kind: 'number', required: true, default: 0 },
         { key: 'maxChars', label: '读取每页最大字符数', kind: 'number', required: true, default: 10000 },
       ],
@@ -1272,13 +1290,16 @@
     },
     {
       type: 'setProxy',
-      label: '按 Host 设置代理',
+      label: '设置会话代理',
       needsPage: true,
-      description: '为匹配 Host 设置浏览器代理（chrome.proxy 为 profile 级设置，其他标签页访问相同 Host 也会受影响）',
+      description: '为匹配域名设置代理，流程结束后自动清除。',
       params: [
-        { key: 'proxyServer', label: '代理服务器（host:port 或 scheme://host:port）', kind: 'text', required: true, placeholder: '127.0.0.1:7890 或 socks5://127.0.0.1:1080' },
-        { key: 'urlPattern', label: 'Host 匹配模式（可选，留空自动使用当前域名）', kind: 'text', placeholder: '*.example.com' },
-        { key: 'bypassList', label: '绕过代理 Host（逗号或换行分隔）', kind: 'text', placeholder: 'localhost,127.0.0.1,<local>' },
+        { key: 'tabId', label: '标签页 ID', kind: 'text', placeholder: '{{tabId}} 或数字 ID', description: '未选目标页面时填写。' },
+        { key: 'proxyServer', label: '代理服务器', kind: 'text', required: true, placeholder: 'http://127.0.0.1:7890 或 socks5://127.0.0.1:1080' },
+        { key: 'proxyUsername', label: '代理用户名（可选）', kind: 'text', placeholder: 'HTTP 代理用户名' },
+        { key: 'proxyPassword', label: '代理密码（可选）', kind: 'password', description: '仅 HTTP / HTTPS 代理支持用户名密码认证。' },
+        { key: 'urlPattern', label: '匹配域名', kind: 'textarea', placeholder: 'example.com, *.example.com', description: '每行一个或逗号分隔；留空使用当前页面域名。' },
+        { key: 'bypassList', label: '绕过域名', kind: 'textarea', placeholder: 'localhost, *.internal.example.com', description: '每行一个或逗号分隔。' },
       ],
       outputHint: '{ success, tabId, proxyServer, proxyScheme, hostPattern, bypassList, activeRules, mode, scope, note }',
     },
@@ -1286,7 +1307,7 @@
       type: 'clearProxy',
       label: '清除会话代理',
       needsPage: false,
-      description: '清除当前运行会话登记的代理规则；其他会话规则仍会保留并重新合并 PAC',
+      description: '清除当前流程设置的代理规则。',
       params: [],
       outputHint: '{ cleared, activeRules }',
     },
@@ -1297,7 +1318,7 @@
       description: '条件为真执行 If 体，否则跳到 Else 分支（或分支结束）',
       params: [
         { key: 'ifId', label: '分支 ID', kind: 'text', required: true },
-        { key: 'condition', label: '条件（安全表达式，支持模板与 contains(...) 等函数）', kind: 'textarea', required: true, placeholder: '{{orders.rowCount}} > 0' },
+        { key: 'condition', label: '条件（安全表达式，支持模板与 contains(...) 等函数）', kind: 'textarea', editorLanguage: 'javascript', required: true, placeholder: '{{orders.rowCount}} > 0' },
       ],
       outputHint: '{ conditionMet }',
     },
@@ -1487,7 +1508,7 @@
         { key: 'sourceSelector', label: '源元素选择器', kind: 'text', required: true, placeholder: '.card[data-id="1"]' },
         { key: 'targetSelector', label: '目标元素选择器', kind: 'text', required: true, placeholder: '.column.done' },
         { key: 'steps', label: '鼠标移动分步数（拟人）', kind: 'number', default: 8 },
-        { key: 'dragItems', label: 'HTML5 DragData 条目（JSON，可选）', kind: 'textarea', placeholder: '[{"mimeType":"text/plain","data":"card-1"}]' },
+        { key: 'dragItems', label: 'HTML5 DragData 条目（JSON，可选）', kind: 'textarea', editorLanguage: 'json', placeholder: '[{"mimeType":"text/plain","data":"card-1"}]' },
         { key: 'dragOperationsMask', label: 'HTML5 拖放操作掩码', kind: 'number', default: 1 },
         { key: 'expect', label: '动作后置条件（高级，可选）', kind: 'textarea', valueFormat: 'json', placeholder: '{"type":"text_present","text":"已移动"}' },
         confirmationParamDefinition(),
@@ -1531,10 +1552,290 @@
           { value: 'text', label: '纯文本' },
           { value: 'html', label: 'HTML' },
         ] },
-        { key: 'body', label: '正文（支持模板，最多 1MB）', kind: 'textarea', placeholder: '运行结果：\n{{json last}}' },
-        { key: 'attachments', label: '附件（JSON 数组，可选）', kind: 'textarea', placeholder: '[{"fileName":"report.json","content":"{{json last}}"}]', description: '最多 20 个，总计 20MB。文本：{fileName,content}；Base64：{fileName,content,contentMode:"base64"}；可选 mimeType。也可填写 {{json attachments}} 引用整个数组。插件无法仅凭本地文件路径读取附件，请提供文件内容。' },
+        { key: 'body', label: '正文（支持模板，最多 1MB）', kind: 'textarea', editorLanguage: 'auto', placeholder: '运行结果：\n{{json last}}' },
+        { key: 'attachments', label: '附件（JSON 数组，可选）', kind: 'textarea', editorLanguage: 'json', placeholder: '[{"fileName":"report.json","content":"{{json last}}"}]', description: '最多 20 个，总计 20MB。文本：{fileName,content}；Base64：{fileName,content,contentMode:"base64"}；可选 mimeType。也可填写 {{json attachments}} 引用整个数组。插件无法仅凭本地文件路径读取附件，请提供文件内容。' },
       ],
       outputHint: '{ messageId, acceptedCount, rejectedCount:0 }（表示 SMTP 已接受，不代表已进入收件箱；部分拒收时节点失败，请核对投递记录后仅补发未接受的地址）',
+    },
+    {
+      type: 'localRead',
+      label: '本地读取文件',
+      needsPage: false,
+      description: '读取配置工作目录内的 UTF-8 文本文件（最多 4MB），按行分页，返回内容最多 64KB。需在连接配置中启用本地文件与命令并连接支持该能力的服务。',
+      params: [
+        { key: 'path', label: '文件路径（支持模板）', kind: 'text', required: true, placeholder: 'data/input.txt', description: '相对路径基于配置的工作目录，绝对路径也必须在该目录内。' },
+        { key: 'offset', label: '起始行号（从 1 开始，整数）', kind: 'number', default: 1, minimum: 1 },
+        { key: 'limit', label: '最多读取行数（整数，1–2000）', kind: 'number', default: 200, minimum: 1, maximum: 2000 },
+      ],
+      outputHint: '{ path, content, offset, totalLines, nextOffset, truncated }；nextOffset 非空时传入下一次 offset 继续读取',
+    },
+    {
+      type: 'localWrite',
+      label: '本地写入文件',
+      needsPage: false,
+      description: '在配置工作目录内创建或覆盖 UTF-8 文本文件（最多 1MB），自动创建父目录。需启用并连接本地文件与命令服务；不允许自动重试。',
+      params: [
+        { key: 'path', label: '文件路径（支持模板）', kind: 'text', required: true, placeholder: 'output/report.txt', description: '相对路径基于配置的工作目录，绝对路径也必须在该目录内。' },
+        { key: 'content', label: '文件内容（支持模板，留空写入空文件）', kind: 'textarea', editorLanguage: 'auto', default: '', placeholder: '{{last.content}}' },
+      ],
+      outputHint: '{ path, bytesWritten }',
+    },
+    {
+      type: 'localDelete',
+      label: '本地删除文件',
+      needsPage: false,
+      description: '删除配置工作目录内的一个文件或符号链接，不递归删除目录。需启用并连接本地文件与命令服务；不允许自动重试。',
+      params: [
+        { key: 'path', label: '文件路径（支持模板）', kind: 'text', required: true, placeholder: 'output/report.txt', description: '相对路径基于配置的工作目录，绝对路径也必须在该目录内。' },
+      ],
+      outputHint: '{ path, deleted }',
+    },
+    {
+      type: 'localGrep',
+      label: '本地搜索文本',
+      needsPage: false,
+      description: '在配置工作目录内的文件或目录递归查找字面文本，跳过符号链接、二进制、超过 4MB 的文件及 .git/node_modules 目录，输出最多 64KB。需启用并连接本地文件与命令服务。',
+      params: [
+        { key: 'path', label: '文件或目录路径（支持模板）', kind: 'text', required: true, placeholder: '.', description: '相对路径基于配置的工作目录，绝对路径也必须在该目录内。' },
+        { key: 'pattern', label: '查找文本（字面匹配，支持模板）', kind: 'text', required: true, placeholder: 'ERROR' },
+        { key: 'limit', label: '最多匹配行数（整数，1–500）', kind: 'number', default: 100, minimum: 1, maximum: 500 },
+      ],
+      outputHint: '{ path, matches, skipped, truncated }；matches 包含路径、行号和匹配行',
+    },
+    {
+      type: 'localBash',
+      label: '本地执行 Bash',
+      needsPage: false,
+      description: '在配置的工作目录内启动 Bash 命令，每次独立运行，输出最多 64KB。需启用并连接本地文件与命令服务；不允许自动重试。退出码和超时状态通过输出返回，可接断言节点判断。',
+      params: [
+        { key: 'command', label: 'Bash 命令（支持模板）', kind: 'textarea', editorLanguage: 'shell', required: true, placeholder: 'pwd' },
+        { key: 'timeoutMs', label: '超时(ms，整数，1000–60000)', kind: 'number', default: 30000, minimum: 1000, maximum: 60000 },
+      ],
+      outputHint: '{ cwd, stdout, stderr, exitCode, signal, timedOut, truncated }',
+    },
+    {
+      type: 'localDesktopCapabilities',
+      label: '查询桌面能力',
+      needsPage: false, desktopOperation: 'desktop',
+      description: '查询服务端平台、robotjs 是否安装、支持的桌面动作和所需系统权限；此查询不验证原生二进制能否加载或系统权限是否已授予。',
+      params: [],
+      outputHint: '{ platform, supported, robotjs, permissionsVerified:false, requirements, unsupported }',
+    },
+    {
+      type: 'localMousePosition',
+      label: '获取鼠标位置',
+      needsPage: false, desktopOperation: 'mouse',
+      description: '读取鼠标屏幕坐标和显示器列表，坐标允许副屏负值；需要 robotjs。',
+      params: [],
+      outputHint: '{ x, y, displays:[{ id, x, y, width, height, isMain }] }',
+    },
+    {
+      type: 'localMouseMove',
+      label: '移动鼠标',
+      needsPage: false, desktopOperation: 'mouse',
+      description: '沿缓入缓出的轨迹移动到指定屏幕坐标，耗时 0 表示直接定位；需要 robotjs，不自动重试。',
+      params: desktopPointParams('', '目标').concat([
+        { key: 'durationMs', label: '移动耗时(ms)', kind: 'number', default: 300, minimum: 0, maximum: 10000 },
+      ]),
+      outputHint: '{ action:"move", x, y }',
+    },
+    {
+      type: 'localMouseClick',
+      label: '点击鼠标',
+      needsPage: false, desktopOperation: 'mouse',
+      description: '移动到指定屏幕坐标后单击或双击，支持左键、中键和右键；需要 robotjs，不自动重试。使用图片定位结果时，先判断 found=true。',
+      params: desktopPointParams('', '点击位置').concat([
+        { key: 'button', label: '鼠标按键', kind: 'select', default: 'left', options: [
+          { value: 'left', label: '左键' }, { value: 'middle', label: '中键' }, { value: 'right', label: '右键' },
+        ] },
+        { key: 'double', label: '双击', kind: 'boolean', default: false },
+        { key: 'durationMs', label: '点击前移动耗时(ms)', kind: 'number', default: 300, minimum: 0, maximum: 10000 },
+      ]),
+      outputHint: '{ action:"click", x, y }',
+    },
+    {
+      type: 'localMouseDrag',
+      label: '拖拽鼠标',
+      needsPage: false, desktopOperation: 'mouse',
+      description: '先移动到起点，再按住左键平滑拖到终点，结束或取消时释放左键；需要 robotjs，不自动重试。',
+      params: desktopPointParams('from', '起点').concat(desktopPointParams('', '终点'), [
+        { key: 'durationMs', label: '每段移动耗时(ms)', kind: 'number', default: 300, minimum: 0, maximum: 10000, description: '移动到起点、拖到终点分别使用此耗时。' },
+      ]),
+      outputHint: '{ action:"drag", x, y }',
+    },
+    {
+      type: 'localMouseScroll',
+      label: '滚动鼠标滚轮',
+      needsPage: false, desktopOperation: 'mouse',
+      description: '在当前鼠标位置发送水平和竖直滚轮输入；需要 robotjs，不自动重试。',
+      params: [
+        { key: 'deltaX', label: '水平滚轮量', kind: 'number', default: 0, minimum: -100, maximum: 100 },
+        { key: 'deltaY', label: '竖直滚轮量（正数向上，负数向下）', kind: 'number', default: -3, minimum: -100, maximum: 100 },
+      ],
+      outputHint: '{ action:"scroll", x, y }',
+    },
+    {
+      type: 'localKeyPress',
+      label: '按下键盘按键',
+      needsPage: false, desktopOperation: 'keyboard',
+      description: '向当前焦点发送一个按键。支持英文字母、数字及 enter/tab/space/backspace/delete/escape/方向键；robotjs 额外支持 home/end/pageup/pagedown/f1-f12。Windows 需要 robotjs，不自动重试。',
+      params: [{ key: 'key', label: '键名', kind: 'text', required: true, placeholder: 'enter' }],
+      outputHint: '{ action:"press", sent:true }',
+    },
+    {
+      type: 'localHotkey',
+      label: '发送键盘快捷键',
+      needsPage: false, desktopOperation: 'keyboard',
+      description: '向当前焦点发送组合键，至少选择一个修饰键。primary 在 macOS 为 Command、Windows 为 Ctrl；Windows 不要同时勾选 primary 和 Ctrl。Windows 需要 robotjs，不自动重试。',
+      params: [
+        { key: 'key', label: '主键', kind: 'text', required: true, placeholder: 's' },
+        { key: 'primary', label: 'Command(macOS) / Ctrl(Windows)', kind: 'boolean', default: true },
+        { key: 'ctrl', label: 'Ctrl', kind: 'boolean', default: false },
+        { key: 'alt', label: 'Alt / Option', kind: 'boolean', default: false },
+        { key: 'shift', label: 'Shift', kind: 'boolean', default: false },
+      ],
+      outputHint: '{ action:"hotkey", sent:true }',
+    },
+    {
+      type: 'localTypeText',
+      label: '输入桌面文本',
+      needsPage: false, desktopOperation: 'keyboard',
+      description: '向当前焦点输入文本，最多 4096 字符。粘贴模式支持 Unicode 并覆盖剪贴板；逐字模式需 robotjs，预计总耗时限 30 秒。Windows 需要 robotjs，不自动重试。',
+      params: [
+        { key: 'text', label: '输入文本（支持模板）', kind: 'textarea', required: true, placeholder: '{{message}}' },
+        { key: 'mode', label: '输入方式', kind: 'select', default: 'paste', options: [
+          { value: 'paste', label: '通过剪贴板粘贴' }, { value: 'keys', label: '逐字输入' },
+        ] },
+        { key: 'intervalMs', label: '逐字间隔(ms，仅逐字模式)', kind: 'number', default: 50, minimum: 0, maximum: 1000 },
+      ],
+      outputHint: '{ action:"type", sent?, pasteRequested?, characters?, clipboardChanged }',
+    },
+    {
+      type: 'localClipboardRead',
+      label: '读取剪贴板',
+      needsPage: false, desktopOperation: 'clipboard',
+      description: '读取系统剪贴板的文本内容，最多 64KB UTF-8。',
+      params: [],
+      outputHint: '{ text }',
+    },
+    {
+      type: 'localClipboardWrite',
+      label: '写入剪贴板',
+      needsPage: false, desktopOperation: 'clipboard',
+      description: '替换系统剪贴板文本，最多 64KB UTF-8；不自动重试。',
+      params: [{ key: 'text', label: '剪贴板文本（支持模板，允许留空）', kind: 'textarea', default: '', placeholder: '{{message}}' }],
+      outputHint: '{ action:"write" }',
+    },
+    {
+      type: 'localClipboardClear',
+      label: '清空剪贴板',
+      needsPage: false, desktopOperation: 'clipboard',
+      description: '清空系统文本剪贴板；不自动重试。',
+      params: [],
+      outputHint: '{ action:"clear" }',
+    },
+    {
+      type: 'localScreenshot',
+      label: '截取桌面图像',
+      needsPage: false, desktopOperation: 'screenshot',
+      description: '截取主屏幕或指定区域，返回 PNG Base64，最多 8MB、2000 万实际像素；Windows 和区域截图需要 robotjs。',
+      params: desktopRegionParams(),
+      outputHint: '{ width, height, modelContent:[{ type:"image", mimeType:"image/png", data }], region?, originX?, originY?, pixelsPerUnitX?, pixelsPerUnitY? }',
+    },
+    {
+      type: 'localLocate',
+      label: '查找桌面图片',
+      needsPage: false, desktopOperation: 'locate',
+      description: '在主屏幕或指定区域查找工作目录内的 PNG 模板，需要 robotjs。模板须保持相同像素比例，最多 8MB、200 万像素；返回首个匹配，不自动点击，不做 OCR 或语义识别。',
+      params: [
+        { key: 'templatePath', label: 'PNG 模板路径（工作目录内）', kind: 'text', required: true, placeholder: 'templates/save.png' },
+        { key: 'tolerance', label: '颜色误差容忍度', kind: 'number', default: 0.1, minimum: 0, maximum: 0.5, description: '0 为精确匹配；此值不是置信度。' },
+      ].concat(desktopRegionParams()),
+      outputHint: '{ found, center?, bounds?, tolerance, region }；found=true 时 center 为可直接传给鼠标的屏幕坐标',
+    },
+    {
+      type: 'localApplicationOpen',
+      label: '打开桌面应用',
+      needsPage: false, desktopOperation: 'application',
+      description: '启动服务端应用；macOS 填应用名或 .app 路径，Windows 填 .exe/.com 路径或 PATH 中的名称。只返回启动已请求，可接窗口查询确认就绪；不自动重试。',
+      params: [
+        { key: 'application', label: '应用名称或路径', kind: 'text', required: true, placeholder: 'Calculator 或 calc.exe' },
+        { key: 'args', label: '启动参数（可选，每行一个）', kind: 'textarea', default: '', description: '最多 32 个，每个最多 4096 字符；按行原样传递，不解析 shell、不需要为包含空格的参数添加引号。' },
+      ],
+      outputHint: '{ application, launchRequested:true }',
+    },
+    {
+      type: 'localApplicationClose',
+      label: '请求关闭桌面应用',
+      needsPage: false, desktopOperation: 'application',
+      description: '按 PID 请求正常退出；Windows 请求关闭主窗口。保存提示可能阻止退出，不强杀进程；不自动重试。',
+      params: [{ key: 'pid', label: '进程 PID（从窗口列表获取）', kind: 'number', required: true, minimum: 1, maximum: 2147483647 }],
+      outputHint: '{ pid, quitRequested?（macOS）, closeRequested?（Windows） }',
+    },
+    {
+      type: 'localApplicationPrint',
+      label: '打开应用打印对话框',
+      needsPage: false, desktopOperation: 'application',
+      description: '激活指定 PID 的应用，向当前窗口发送 Command+P 或 Ctrl+P；不确认打印，是否显示对话框取决于应用，不自动重试。',
+      params: [{ key: 'pid', label: '进程 PID（从窗口列表获取）', kind: 'number', required: true, minimum: 1, maximum: 2147483647 }],
+      outputHint: '{ pid, printDialogRequested:true, printed:false }',
+    },
+    {
+      type: 'localWindowList',
+      label: '获取桌面窗口',
+      needsPage: false, desktopOperation: 'window',
+      description: '列出桌面窗口，最多 200 个；Windows 包含 UI Automation 暴露的同应用多个窗口和对话框。标题按包含文本过滤，区分大小写；skipped 或 truncated 表示列表不完整。',
+      params: [
+        { key: 'title', label: '标题包含文本（留空不限制）', kind: 'text', default: '' },
+        { key: 'pid', label: '进程 PID（0 不限制）', kind: 'number', default: 0, minimum: 0, maximum: 2147483647 },
+      ],
+      outputHint: '{ windows:[{ pid, application, title }], skipped, truncated }',
+    },
+    {
+      type: 'localWindowActivate',
+      label: '激活桌面窗口',
+      needsPage: false, desktopOperation: 'window',
+      description: '按 PID 和唯一精确标题恢复最小化窗口并切换到前台，检查目标窗口焦点并返回屏幕边界。Windows 通过系统 UI Automation 支持多窗口和对话框；同标题歧义、系统拒绝激活或窗口已变化时失败，不自动重试。',
+      params: [
+        { key: 'pid', label: '进程 PID（从窗口列表获取）', kind: 'number', required: true, minimum: 1, maximum: 2147483647 },
+        { key: 'title', label: '窗口精确标题', kind: 'text', required: true },
+      ],
+      outputHint: '{ pid, title, x, y, width, height, minimized:false, active:true }；边界可传给截图或图片查找的区域参数',
+    },
+    {
+      type: 'localWindowBounds',
+      label: '获取窗口边界',
+      needsPage: false, desktopOperation: 'window',
+      description: '按 PID 和唯一精确标题读取窗口当前屏幕位置、大小和激活状态。窗口最小化时失败，应先激活。Windows 通过系统 UI Automation 支持多窗口和对话框；查询不改变窗口状态。',
+      params: [
+        { key: 'pid', label: '进程 PID（从窗口列表获取）', kind: 'number', required: true, minimum: 1, maximum: 2147483647 },
+        { key: 'title', label: '窗口精确标题', kind: 'text', required: true },
+      ],
+      outputHint: '{ pid, title, x, y, width, height, minimized:false, active }；找图时 useRegion=true 并引用 x/y/width/height，区域须位于同一显示器内',
+    },
+    {
+      type: 'localWindowMove',
+      label: '移动桌面窗口',
+      needsPage: false, desktopOperation: 'window',
+      description: '仅 macOS：按 PID 和精确标题定位唯一窗口后移动，返回实际边界；Windows 未实现，不自动重试。',
+      params: [
+        { key: 'pid', label: '进程 PID', kind: 'number', required: true, minimum: 1, maximum: 2147483647 },
+        { key: 'title', label: '窗口精确标题', kind: 'text', required: true },
+      ].concat(desktopPointParams('', '窗口左上角')),
+      outputHint: '{ pid, title, x, y, width, height }',
+    },
+    {
+      type: 'localWindowResize',
+      label: '调整桌面窗口大小',
+      needsPage: false, desktopOperation: 'window',
+      description: '仅 macOS：按 PID 和精确标题定位唯一窗口后调整大小，返回实际边界；Windows 未实现，不自动重试。',
+      params: [
+        { key: 'pid', label: '进程 PID', kind: 'number', required: true, minimum: 1, maximum: 2147483647 },
+        { key: 'title', label: '窗口精确标题', kind: 'text', required: true },
+        { key: 'width', label: '窗口宽度', kind: 'number', required: true, minimum: 1, maximum: 100000 },
+        { key: 'height', label: '窗口高度', kind: 'number', required: true, minimum: 1, maximum: 100000 },
+      ],
+      outputHint: '{ pid, title, x, y, width, height }',
     },
     {
       type: 'httpRequest',
@@ -1550,8 +1851,8 @@
           { value: 'PATCH', label: 'PATCH' },
           { value: 'DELETE', label: 'DELETE' },
         ] },
-        { key: 'headers', label: '请求头（每行 Key: Value，支持模板）', kind: 'textarea', placeholder: 'Authorization: Bearer {{token}}' },
-        { key: 'body', label: '请求体（支持模板）', kind: 'textarea', placeholder: '{"page": 1}' },
+        { key: 'headers', label: '请求头（每行 Key: Value，支持模板）', kind: 'textarea', editorLanguage: 'plaintext', placeholder: 'Authorization: Bearer {{token}}' },
+        { key: 'body', label: '请求体（支持模板）', kind: 'textarea', editorLanguage: 'auto', placeholder: '{"page": 1}' },
         { key: 'timeoutMs', label: '超时(ms)', kind: 'number', default: 30000 },
       ],
       outputHint: '{ status, ok, json, body }',
@@ -1570,8 +1871,8 @@
           { value: 'PATCH', label: 'PATCH' },
           { value: 'DELETE', label: 'DELETE' },
         ] },
-        { key: 'headers', label: '请求头（每行 Key: Value，支持模板）', kind: 'textarea', placeholder: 'Authorization: Bearer {{token}}' },
-        { key: 'body', label: '请求体（支持模板）', kind: 'textarea', placeholder: '{"page": 1}' },
+        { key: 'headers', label: '请求头（每行 Key: Value，支持模板）', kind: 'textarea', editorLanguage: 'plaintext', placeholder: 'Authorization: Bearer {{token}}' },
+        { key: 'body', label: '请求体（支持模板）', kind: 'textarea', editorLanguage: 'auto', placeholder: '{"page": 1}' },
         { key: 'concurrency', label: '并发数', kind: 'number', default: 5 },
         { key: 'maxRequests', label: '最大请求数（0=按时长运行）', kind: 'number', default: 50 },
         { key: 'durationMs', label: '最长运行时长(ms，0=不限)', kind: 'number', default: 0 },
@@ -1589,7 +1890,7 @@
       description: '对对象或数组做字段映射、重命名和类型转换。映射每行格式：目标字段|来源路径|类型|默认值，也支持 source -> target:type',
       params: [
         { key: 'sourcePath', label: '数据源路径', kind: 'text', default: 'last', placeholder: 'last / orders.items' },
-        { key: 'mappings', label: '字段映射', kind: 'textarea', placeholder: 'id|order.id|string\namount|price|number\nactive|enabled|boolean' },
+        { key: 'mappings', label: '字段映射', kind: 'textarea', editorLanguage: 'plaintext', placeholder: 'id|order.id|string\namount|price|number\nactive|enabled|boolean' },
         { key: 'keepUnmapped', label: '保留未映射字段', kind: 'boolean', default: false },
       ],
       outputHint: '{ result, items?, count }',
@@ -1621,10 +1922,10 @@
       type: 'dataFilter',
       label: '数据过滤',
       needsPage: false,
-      description: '按表达式过滤数组。表达式支持 {{item.xxx}}、{{index}}，例如 {{item.amount}} > 100',
+      description: '按表达式过滤数组。表达式支持 {{item.xxx}}、{{index}}。',
       params: [
         { key: 'sourcePath', label: '数组数据源路径', kind: 'text', default: 'last', placeholder: 'last.items' },
-        { key: 'expression', label: '过滤表达式', kind: 'textarea', placeholder: '{{item.status}} == "paid" && {{item.amount}} > 100' },
+        { key: 'expression', label: '过滤表达式', kind: 'textarea', editorLanguage: 'javascript', placeholder: '{{item.status}} == "paid" && {{item.amount}} > 100' },
         { key: 'field', label: '字段路径（无表达式时使用）', kind: 'text', placeholder: 'status' },
         { key: 'operator', label: '比较方式', kind: 'select', default: '==', options: [
           { value: '==', label: '等于' },
@@ -1668,7 +1969,7 @@
       params: [
         { key: 'sourcePath', label: '数组数据源路径', kind: 'text', default: 'last', placeholder: 'last.items' },
         { key: 'keyFields', label: '去重字段（逗号或换行）', kind: 'text', placeholder: 'id,email' },
-        { key: 'keyExpression', label: '去重表达式（可选）', kind: 'textarea', placeholder: '{{item.id}}-{{item.version}}' },
+        { key: 'keyExpression', label: '去重表达式（可选）', kind: 'textarea', editorLanguage: 'plaintext', placeholder: '{{item.id}}-{{item.version}}' },
         { key: 'keep', label: '保留策略', kind: 'select', default: 'first', options: [
           { value: 'first', label: '保留第一条' },
           { value: 'last', label: '保留最后一条' },
@@ -1684,7 +1985,7 @@
       params: [
         { key: 'sourcePath', label: '数组数据源路径', kind: 'text', default: 'last', placeholder: 'last.items' },
         { key: 'groupBy', label: '分组字段（逗号或换行，可选）', kind: 'text', placeholder: 'status,region' },
-        { key: 'metrics', label: '汇总指标（每行 op|field|alias 或 sum(amount) as total）', kind: 'textarea', placeholder: 'count||count\nsum|amount|totalAmount\navg(amount) as avgAmount' },
+        { key: 'metrics', label: '汇总指标（每行 op|field|alias 或 sum(amount) as total）', kind: 'textarea', editorLanguage: 'plaintext', placeholder: 'count||count\nsum|amount|totalAmount\navg(amount) as avgAmount' },
         { key: 'operation', label: '单指标操作（metrics 为空时）', kind: 'select', default: 'count', options: [
           { value: 'count', label: 'count' },
           { value: 'sum', label: 'sum' },
@@ -1717,7 +2018,7 @@
       params: [
         { key: 'scope', label: '游标作用域（留空=当前流程）', kind: 'text', placeholder: 'orders-sync' },
         { key: 'name', label: '游标名称', kind: 'text', default: 'default', placeholder: 'updatedAt' },
-        { key: 'value', label: '游标值（留空使用 sourcePath）', kind: 'textarea', placeholder: '{{last.maxUpdatedAt}}' },
+        { key: 'value', label: '游标值（留空使用 sourcePath）', kind: 'textarea', editorLanguage: 'plaintext', placeholder: '{{last.maxUpdatedAt}}' },
         { key: 'sourcePath', label: '游标值来源路径', kind: 'text', placeholder: 'last.maxUpdatedAt' },
         { key: 'parseJson', label: '按 JSON 解析游标值', kind: 'boolean', default: false },
       ],
@@ -1759,9 +2060,9 @@
           { value: 'PATCH', label: 'PATCH' },
           { value: 'DELETE', label: 'DELETE' },
         ] },
-        { key: 'headers', label: '请求头', kind: 'textarea', placeholder: 'Authorization: Bearer {{token}}' },
-        { key: 'bodyTemplate', label: '请求体模板', kind: 'textarea', placeholder: '{{json item}}' },
-        { key: 'resultTemplate', label: '结果模板（template 动作用）', kind: 'textarea', placeholder: '{"id": {{json item.id}}, "index": {{index}}}' },
+        { key: 'headers', label: '请求头', kind: 'textarea', editorLanguage: 'plaintext', placeholder: 'Authorization: Bearer {{token}}' },
+        { key: 'bodyTemplate', label: '请求体模板', kind: 'textarea', editorLanguage: 'auto', placeholder: '{{json item}}' },
+        { key: 'resultTemplate', label: '结果模板（template 动作用）', kind: 'textarea', editorLanguage: 'auto', placeholder: '{"id": {{json item.id}}, "index": {{index}}}' },
         { key: 'failFast', label: '任一失败立即中止', kind: 'boolean', default: true },
         { key: 'timeoutMs', label: '单项超时(ms)', kind: 'number', default: 30000 },
       ],
@@ -1803,7 +2104,7 @@
           { value: 'file', label: '文件' },
         ] },
         { key: 'sourcePath', label: '内容来源路径', kind: 'text', default: 'last' },
-        { key: 'content', label: '直接内容（留空使用来源路径）', kind: 'textarea', placeholder: '{{json last}}' },
+        { key: 'content', label: '直接内容（留空使用来源路径）', kind: 'textarea', editorLanguage: 'auto', placeholder: '{{json last}}' },
         { key: 'mimeType', label: 'MIME 类型', kind: 'text', placeholder: 'application/json' },
       ],
       outputHint: '{ attached, artifact, count }',
@@ -1830,7 +2131,7 @@
       description: '按断言、报告或运行摘要生成 CI 成败状态',
       params: [
         { key: 'sourcePath', label: '汇总数据路径（留空使用当前节点状态）', kind: 'text', placeholder: 'last.summary' },
-        { key: 'condition', label: '通过条件表达式（可选）', kind: 'textarea', placeholder: '{{summary.failed}} == 0' },
+        { key: 'condition', label: '通过条件表达式（可选）', kind: 'textarea', editorLanguage: 'javascript', placeholder: '{{summary.failed}} == 0' },
         { key: 'maxFailures', label: '最大失败数', kind: 'number', default: 0 },
         { key: 'requiredStatus', label: '要求状态（可选）', kind: 'text', placeholder: 'success' },
       ],
@@ -1903,8 +2204,8 @@
           { value: 'DELETE', label: 'DELETE' },
         ] },
         { key: 'status', label: '响应状态码', kind: 'number', default: 200 },
-        { key: 'responseHeaders', label: '响应头', kind: 'textarea', placeholder: 'Content-Type: application/json' },
-        { key: 'responseBody', label: '响应体', kind: 'textarea', placeholder: '{"ok":true}' },
+        { key: 'responseHeaders', label: '响应头', kind: 'textarea', editorLanguage: 'plaintext', placeholder: 'Content-Type: application/json' },
+        { key: 'responseBody', label: '响应体', kind: 'textarea', editorLanguage: 'auto', placeholder: '{"ok":true}' },
         { key: 'delayMs', label: '延迟(ms)', kind: 'number', default: 0 },
         { key: 'timeoutMs', label: '注入超时(ms)', kind: 'number', default: 30000 },
       ],
@@ -1947,7 +2248,7 @@
       description: '把模板计算结果写入上下文变量（下游节点用 {{变量名}} 引用）',
       params: [
         { key: 'name', label: '变量名', kind: 'text', required: true, placeholder: 'orderNo' },
-        { key: 'value', label: '值（支持模板）', kind: 'textarea', placeholder: '{{t.rows[0].订单号}}' },
+        { key: 'value', label: '值（支持模板）', kind: 'textarea', editorLanguage: 'auto', placeholder: '{{t.rows[0].订单号}}' },
         { key: 'parseJson', label: '解析为 JSON（值是 JSON 文本时勾选）', kind: 'boolean', default: false },
       ],
       outputHint: '变量值',
@@ -1958,7 +2259,7 @@
       needsPage: false,
       description: '删除指定 ctx 路径，释放长流程中不再需要的中间结果；也可清空 last/_lastContent 或调试追踪。适合放在循环尾部或阶段切换处',
       params: [
-        { key: 'paths', label: '要删除的 ctx 路径（逗号或换行分隔）', kind: 'textarea', placeholder: 'largeHtml\nrawRows\ntemp.response' },
+        { key: 'paths', label: '要删除的 ctx 路径（逗号或换行分隔）', kind: 'textarea', editorLanguage: 'plaintext', placeholder: 'largeHtml\nrawRows\ntemp.response' },
         { key: 'clearLast', label: '同时清空 last/_lastContent', kind: 'boolean', default: false },
         { key: 'clearDebugTrace', label: '清空调试追踪', kind: 'boolean', default: false },
       ],
@@ -2053,7 +2354,7 @@
           { value: 'auto', label: '自动（单个返回值，多个返回 items）' },
           { value: 'array', label: '总是输出 {items,count}' },
         ] },
-        { key: 'fields', label: '字段模板（可选；每行 field|kind|参数JSON，或 JSON 对象/数组）', kind: 'textarea', placeholder: 'name|name\nmobile|phone\nidNo|idCard|{"minAge":18,"maxAge":60}\namount|float|{"min":1,"max":999,"decimals":2}' },
+        { key: 'fields', label: '字段模板（可选；每行 field|kind|参数JSON，或 JSON 对象/数组）', kind: 'textarea', editorLanguage: 'auto', placeholder: 'name|name\nmobile|phone\nidNo|idCard|{"minAge":18,"maxAge":60}\namount|float|{"min":1,"max":999,"decimals":2}' },
       ],
       outputHint: '单值；count>1 时 { items, count }；配置 fields 时生成对象或对象数组',
     },
@@ -2105,7 +2406,7 @@
           { value: 'literal', label: '自定义内容' },
         ] },
         { key: 'sourcePath', label: '变量/路径（保存来源为指定变量时使用）', kind: 'text', default: 'last', placeholder: 'orders.rows 或 last' },
-        { key: 'content', label: '自定义内容（保存来源为自定义内容时使用，支持模板）', kind: 'textarea', placeholder: '{{json last}}' },
+        { key: 'content', label: '自定义内容（保存来源为自定义内容时使用，支持模板）', kind: 'textarea', editorLanguage: 'auto', placeholder: '{{json last}}' },
         { key: 'format', label: '内容格式', kind: 'select', default: 'auto', options: [
           { value: 'auto', label: '自动（对象保存 JSON，字符串保存文本）' },
           { value: 'json', label: 'JSON（对象自动序列化）' },
@@ -2180,8 +2481,8 @@
       params: [
         { key: 'tabId', label: '页面 tabId（附带页面内容时可选）', kind: 'text', placeholder: '{{tabId}}' },
         { key: 'serviceId', label: '模型服务（可选）', kind: 'modelService', placeholder: '使用全局默认模型服务', description: '留空使用全局默认模型服务；显式指定的服务不存在或已删除时以 SERVICE_NOT_FOUND 失败，不回退默认服务。' },
-        { key: 'systemPrompt', label: '系统提示词（可选，仅静态角色与规则，不支持运行变量）', kind: 'textarea', placeholder: '你是数据清洗助手，把输入的表格数据规范化…' },
-        { key: 'prompt', label: '用户提示词（模板值按 data-only 输入，{{json 变量}} 可注入完整数据）', kind: 'textarea', required: true, placeholder: '把以下订单数据按金额排序并汇总：\n{{json orders.rows}}' },
+        { key: 'systemPrompt', label: '系统提示词（可选，仅静态角色与规则，不支持运行变量）', kind: 'textarea', editorLanguage: 'markdown', placeholder: '你是数据清洗助手，把输入的表格数据规范化…' },
+        { key: 'prompt', label: '用户提示词（模板值按 data-only 输入，{{json 变量}} 可注入完整数据）', kind: 'textarea', editorLanguage: 'markdown', required: true, placeholder: '把以下订单数据按金额排序并汇总：\n{{json orders.rows}}' },
         { key: 'pageContext', label: '附带页面内容', kind: 'select', default: 'none', options: [
           { value: 'none', label: '不附带（纯文本任务）' },
           { value: 'text', label: '附带页面文本' },
@@ -2207,7 +2508,7 @@
       description: '在 Flow 中启动一个已有助手，等待其完成页面/浏览器/流程等 Agent 操作，并把最终回答与运行标识返回给下游。节点为非交互运行，助手不能中途询问用户；确定性任务优先使用普通节点。该节点可能产生外部副作用，不允许自动重试。',
       params: [
         { key: 'assistantId', label: '助手', kind: 'assistant', required: true },
-        { key: 'prompt', label: '交给助手的任务（模板值按 data-only 输入）', kind: 'textarea', required: true, placeholder: '检查当前订单并处理异常；输入：\n{{json last}}' },
+        { key: 'prompt', label: '交给助手的任务（模板值按 data-only 输入）', kind: 'textarea', editorLanguage: 'markdown', required: true, placeholder: '检查当前订单并处理异常；输入：\n{{json last}}' },
         { key: 'tabId', label: '默认目标 tabId（可选，支持模板）', kind: 'text', default: '{{tabId}}', placeholder: '{{tabId}}' },
         { key: 'serviceId', label: '模型服务（可选）', kind: 'modelService', placeholder: '使用助手绑定或全局默认模型服务', description: '留空时依次使用 Assistant 绑定的模型服务和全局默认服务；显式指定或 Assistant 绑定的服务不存在时以 SERVICE_NOT_FOUND 失败，不回退其他服务。' },
         { key: 'conversationId', label: '复用对话 ID（可选）', kind: 'text', placeholder: '留空则每次创建独立助手运行', description: '留空会创建独立且可审计的 Conversation；仅在需要延续同一 Assistant 历史时复用已有 ID，同一 conversationId 不要在并发运行间共享。' },
@@ -2235,6 +2536,26 @@
     },
   ];
 
+  var utilityTools = utilityCatalog ? utilityCatalog.tools : [];
+  utilityTools.forEach(function (tool) {
+    TYPES.push({
+      type: tool.nodeType, utilityId: tool.id, label: tool.label, needsPage: false,
+      description: '离线工具。' + tool.description + ' 与内置应用共用实现，无联网；输入 65536 字符以内，计算最多 15 秒。',
+      params: [
+        { key: 'operation', label: '操作', kind: 'select', default: tool.operations[0], options: tool.operations.map(function (value) { return { value: value, label: value }; }) },
+        { key: 'input', label: '输入文本', kind: 'textarea', default: '', placeholder: '{{last.value}}' },
+      ].concat(Object.keys(tool.fields).map(function (key) {
+        var field = tool.fields[key];
+        var param = { key: key, label: field.title, default: field.default,
+          kind: field.enum ? 'select' : field.type === 'boolean' ? 'boolean' : field.type === 'integer' ? 'number' : 'textarea' };
+        if (field.enum) param.options = field.enum.map(function (value) { return { value: value, label: value }; });
+        if (field.minimum !== undefined) { param.minimum = field.minimum; param.maximum = field.maximum; }
+        return param;
+      })),
+      outputHint: '{tool, operation, value}；下一节点用 {{last.value}} 或 {{json last.value}} 读取结果',
+    });
+  });
+
   // Retry is fail-closed: only nodes whose execution is known to be free of
   // durable page/browser/file/model side effects are automatically replayed.
   var REPLAY_SAFE_TYPES = {
@@ -2255,6 +2576,15 @@
     logData: true,
     turndownToMarkdown: true,
     waitDownload: true,
+    localRead: true,
+    localGrep: true,
+    localDesktopCapabilities: true,
+    localMousePosition: true,
+    localClipboardRead: true,
+    localScreenshot: true,
+    localLocate: true,
+    localWindowList: true,
+    localWindowBounds: true,
     loopStart: true,
     loopEnd: true,
     loopBreak: true,
@@ -2649,6 +2979,9 @@
   }
 
   TYPES.forEach(function (typeDef) {
+    if (typeDef.desktopOperation) {
+      appendMetadataDescription(typeDef, '作用于 MCP Server 所在机器的 macOS/Windows 桌面；需启用本地文件、命令与桌面并连接服务。可先用「查询桌面能力」确认平台支持范围。应用 SDK 绑定流程还需 local.execute 模块权限。');
+    }
     (typeDef.params || []).forEach(function (param) {
       if (!param) return;
       if (param.required === true && param.default !== undefined) param.required = false;
@@ -2673,7 +3006,9 @@
     typeDef.needsPage = false;
     typeDef.optionalPage = true;
     typeDef.needsTab = true;
-    typeDef.description = (typeDef.description || '') + '；选择目标页面时由 pageId 认领或打开标签页，未选页面时才使用 tabId';
+    if (typeDef.type !== 'setProxy') {
+      typeDef.description = (typeDef.description || '') + '；选择目标页面时由 pageId 认领或打开标签页，未选页面时才使用 tabId';
+    }
     ensureRuntimeTabParam(typeDef);
   });
 
@@ -2682,6 +3017,7 @@
 
   // 节点分类（配置页选择抽屉分组展示）
   var CATEGORIES = [
+    { id: 'utilities', label: '🧰 开发者工具箱', types: utilityTools.map(function (tool) { return tool.nodeType; }) },
     { id: 'nav', label: '🌐 页面导航', types: ['openPage', 'refreshPage', 'navigate', 'waitForPageLoad', 'activateTab', 'getCurrentTab', 'closePage'] },
     { id: 'interact', label: '🖱 页面交互', types: ['clickElement', 'fillInput', 'selectOption', 'fillFormFields', 'hoverElement', 'keyPress', 'scrollPage', 'dragDrop', 'uploadFile', 'handleDialog', 'pageAction'] },
     { id: 'wait-assert', label: '✅ 等待与断言', types: ['waitForCondition', 'waitForElement', 'delay', 'assertElement', 'assertText', 'assertValue', 'assertUrl', 'assertAttribute', 'assertScreenshot', 'assertPerformance', 'routeAssert', 'waitDownload'] },
@@ -2691,6 +3027,13 @@
     { id: 'model-dialog', label: '🤖 模型对话', types: ['runAssistant', 'requestModelAssert', 'requestModelExtract', 'requestModelAction'] },
     { id: 'control', label: '🔀 流程控制', types: ['ifStart', 'elseBlock', 'ifEnd', 'loopStart', 'loopEnd', 'loopBreak', 'loopContinue', 'statusBreak'] },
     { id: 'session', label: '🔑 会话与存储', types: ['webStorage', 'setCookie', 'getCookie', 'clearCookies', 'setProxy', 'clearProxy'] },
+    { id: 'local', label: '💻 本地文件与命令', types: ['localRead', 'localWrite', 'localDelete', 'localGrep', 'localBash'] },
+    { id: 'desktop', label: '🖥 桌面自动化', types: [
+      'localDesktopCapabilities', 'localMousePosition', 'localMouseMove', 'localMouseClick', 'localMouseDrag', 'localMouseScroll',
+      'localKeyPress', 'localHotkey', 'localTypeText', 'localClipboardRead', 'localClipboardWrite', 'localClipboardClear',
+      'localScreenshot', 'localLocate', 'localApplicationOpen', 'localApplicationClose', 'localApplicationPrint',
+      'localWindowList', 'localWindowActivate', 'localWindowBounds', 'localWindowMove', 'localWindowResize',
+    ] },
     { id: 'flow-report', label: '📋 流程报告', types: ['exportTestReport', 'attachArtifact', 'exportRunSummary', 'exitGate'] },
     { id: 'debug', label: '🧪 诊断与注入', types: ['accessibilityCheck', 'mockNetwork'] },
     { id: 'misc', label: '📤 输出与集成', types: ['logData', 'saveFile', 'screenshot', 'cdp.screenshot', 'executePageJavascript', 'patchPage', 'callPageFunction', 'runtimeModuleAction', 'runScript', 'webhook', 'sendEmail', 'httpRequest', 'httpLoadTest'] },
@@ -3195,8 +3538,8 @@
       }
       var hostPattern = params.urlPattern;
       if (typeof hostPattern === 'string' && hostPattern.trim() && hostPattern.indexOf('{{') === -1) {
-        if (hostPattern.indexOf('://') !== -1 || /[\/?#]/.test(hostPattern)) {
-          errors.push('[' + (node.title || def.label) + '] Host 匹配模式只支持主机名通配符，不支持完整 URL 或路径');
+        if (hostPattern.indexOf('://') !== -1 || /[\/#]/.test(hostPattern)) {
+          errors.push('[' + (node.title || def.label) + '] 匹配域名不支持完整 URL 或路径');
         }
       }
     }

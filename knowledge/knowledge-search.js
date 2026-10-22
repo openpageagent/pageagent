@@ -124,6 +124,65 @@
     return '';
   }
 
+  var GREP_QUERY_PROPERTIES = Object.freeze({
+    limit: { type: 'integer', minimum: 1, maximum: 100 },
+    q: { type: 'string', maxLength: 4096, description: 'mode=grep 为逐行匹配模式（正则时长度上限 256，fixedStrings=true 时按字面匹配、上限 4096）；mode=relevance 为相关性查询；mode=list 不参与过滤' },
+    before: { type: 'integer', minimum: 0, maximum: 20 },
+    after: { type: 'integer', minimum: 0, maximum: 20 },
+    context: { type: 'integer', minimum: 0, maximum: 20 },
+    perItemLimit: { type: 'integer', minimum: 1, maximum: 50 },
+    maxLineLength: { type: 'integer', minimum: 80, maximum: 2000, description: '仅 mode=grep：匹配行的单行截断长度，默认 500' },
+    fixedStrings: { type: 'boolean' },
+    caseSensitive: { type: 'boolean' },
+  });
+
+  // Shared text matching; resource owners supply the content and identity.
+  function createGrep(args) {
+    args = args || {};
+    var pattern = String(args.pattern || args.query || '').trim();
+    if (!pattern) throw new Error('grep 需要 pattern');
+    var fixedStrings = args.fixedStrings === true;
+    if (fixedStrings && pattern.length > MAX_FIXED_PATTERN_CHARS) throw new Error('grep pattern exceeds 4096 characters (fixed string limit)');
+    if (!fixedStrings && pattern.length > MAX_REGEX_PATTERN_CHARS) throw new Error('grep regex pattern exceeds 256 characters');
+    if (!fixedStrings) {
+      var complexityReason = regexComplexityReason(pattern);
+      if (complexityReason) throw new Error('grep regex complexity rejected: ' + complexityReason);
+    }
+    var regex;
+    try { regex = new RegExp(fixedStrings ? escapeRegExp(pattern) : pattern, args.caseSensitive ? '' : 'i'); }
+    catch (err) { throw new Error('无效 grep 正则: ' + (err && err.message || String(err))); }
+    var maxLineLength = finiteInteger(args.maxLineLength, 80, 2000, 500, true);
+    var limit = finiteInteger(args.limit, 1, 300, 80, true);
+    var perItemLimit = finiteInteger(args.perItemLimit, 1, 50, 5, true);
+    var context = finiteInteger(args.context, 0, 20, 0, false);
+    function pickContext(primary, alias) {
+      var raw = primary !== undefined ? primary : (alias !== undefined ? alias : context);
+      return finiteInteger(raw, 0, 20, context, false);
+    }
+    var beforeContext = pickContext(args.beforeContext, args.before);
+    var afterContext = pickContext(args.afterContext, args.after);
+    function search(text, maxMatches) {
+      var lines = String(text || '').split(/\r?\n/), matches = [], truncated = false;
+      maxMatches = maxMatches === undefined ? Math.min(limit, perItemLimit) : maxMatches;
+      function line(index, kind) {
+        var value = lines[index];
+        return { line: index + 1, kind: kind, content: value.length > maxLineLength ? value.slice(0, maxLineLength) + '...' : value.trim() };
+      }
+      for (var i = 0; i < lines.length; i++) {
+        regex.lastIndex = 0;
+        if (!regex.test(lines[i])) continue;
+        if (matches.length >= maxMatches) { truncated = true; break; }
+        var before = [], after = [];
+        for (var j = Math.max(0, i - beforeContext); j < i; j++) before.push(line(j, 'before'));
+        for (var k = i + 1; k <= Math.min(lines.length - 1, i + afterContext); k++) after.push(line(k, 'after'));
+        var match = line(i, 'match');
+        matches.push({ line: i + 1, content: match.content, before: before, after: after, lines: before.concat([match], after) });
+      }
+      return { mode: 'grep', pattern: pattern, fixedStrings: fixedStrings, caseSensitive: args.caseSensitive === true, beforeContext: beforeContext, afterContext: afterContext, perItemLimit: perItemLimit, total: matches.length, truncated: truncated, matches: matches };
+    }
+    return { pattern: pattern, fixedStrings: fixedStrings, beforeContext: beforeContext, afterContext: afterContext, limit: limit, perItemLimit: perItemLimit, search: search };
+  }
+
   function create(options) {
     options = options || {};
     var typeLabels = options.typeLabels || {};
@@ -419,57 +478,13 @@
       };
     }
 
-    function grepLine(lines, index, kind, maxLineLength) {
-      var line = String(lines[index] || '');
-      return {
-        line: index + 1,
-        kind: kind,
-        content: line.length > maxLineLength ? line.slice(0, maxLineLength) + '...' : line.trim(),
-      };
-    }
-
     function grep(state, args) {
       args = args || {};
-      var pattern = String(args.pattern || args.query || '').trim();
-      if (!pattern) throw new Error('grep_knowledge 需要 pattern');
-      var fixedStrings = args.fixedStrings === true;
-      if (fixedStrings && pattern.length > MAX_FIXED_PATTERN_CHARS) {
-        throw new Error('grep pattern exceeds 4096 characters (fixed string limit)');
-      }
-      if (!fixedStrings && pattern.length > MAX_REGEX_PATTERN_CHARS) {
-        throw new Error('grep regex pattern exceeds 256 characters');
-      }
-
-      var regexPattern = fixedStrings ? escapeRegExp(pattern) : pattern;
-      if (!fixedStrings) {
-        var complexityReason = regexComplexityReason(pattern);
-        if (complexityReason) throw new Error('grep regex complexity rejected: ' + complexityReason);
-      }
-      var regex;
-      try {
-        regex = new RegExp(regexPattern, args.caseSensitive ? '' : 'i');
-      } catch (err) {
-        throw new Error('无效 grep 正则: ' + (err && err.message || String(err)));
-      }
-      function lineMatches(line) {
-        regex.lastIndex = 0;
-        return regex.test(line);
-      }
-
-      var maxLineLength = finiteInteger(args.maxLineLength, 80, 2000, 500, true);
-      var limit = finiteInteger(args.limit, 1, 300, 80, true);
-      var perItemLimit = finiteInteger(args.perItemLimit, 1, 50, 5, true);
-      var context = finiteInteger(args.context, 0, 20, 0, false);
-      function pickContext(primary, alias) {
-        var raw = primary !== undefined ? primary : (alias !== undefined ? alias : context);
-        return finiteInteger(raw, 0, 20, context, false);
-      }
-      var beforeContext = pickContext(args.beforeContext, args.before);
-      var afterContext = pickContext(args.afterContext, args.after);
+      var matcher = createGrep(args);
       var matches = [];
       var truncated = false;
       var entries = filterByArgs(orderedItems(state), args).map(function (entry) {
-        return { item: entry, score: scoreItem(entry, pattern) };
+        return { item: entry, score: scoreItem(entry, matcher.pattern) };
       }).sort(compareKnowledgeEntries);
 
       entries.some(function (entry) {
@@ -481,51 +496,33 @@
           'source: ' + (item.sourceKind || item.source && item.source.kind || '') + ' priority: ' + sourcePriorityTier(item),
           item.content || '',
         ].filter(Boolean).join('\n');
-        var lines = text.split(/\r?\n/);
-        var itemMatchCount = 0;
-        for (var i = 0; i < lines.length; i++) {
-          if (itemMatchCount >= perItemLimit) break;
-          var line = lines[i];
-          if (!lineMatches(line)) continue;
-          if (matches.length >= limit) {
-            truncated = true;
-            return true;
-          }
-          var beforeLines = [];
-          var afterLines = [];
-          var start = Math.max(0, i - beforeContext);
-          var end = Math.min(lines.length - 1, i + afterContext);
-          for (var j = start; j < i; j++) beforeLines.push(grepLine(lines, j, 'before', maxLineLength));
-          for (var k = i + 1; k <= end; k++) afterLines.push(grepLine(lines, k, 'after', maxLineLength));
-          matches.push({
-            uri: 'knowledge://' + item.id + ':' + (i + 1),
+        var remaining = Math.min(matcher.perItemLimit, matcher.limit - matches.length);
+        var found = matcher.search(text, remaining);
+        found.matches.forEach(function (match) {
+          matches.push(Object.assign({
+            uri: 'knowledge://' + item.id + ':' + match.line,
             knowledgeId: item.id,
-            line: i + 1,
             title: item.title,
             type: item.type,
             sourceKind: item.sourceKind || item.source && item.source.kind || '',
             sourceLabel: item.sourceLabel || '',
             priorityTier: sourcePriorityTier(item),
             updatedAt: item.updatedAt,
-            content: line.length > maxLineLength ? line.slice(0, maxLineLength) + '...' : line.trim(),
-            before: beforeLines,
-            after: afterLines,
-            lines: beforeLines.concat([grepLine(lines, i, 'match', maxLineLength)], afterLines),
-          });
-          itemMatchCount += 1;
-        }
-        return false;
+          }, match));
+        });
+        truncated = found.truncated && remaining < matcher.perItemLimit;
+        return truncated;
       });
 
       return {
         provider: 'built-in-knowledge',
         mode: 'grep',
-        pattern: pattern,
-        fixedStrings: fixedStrings,
+        pattern: matcher.pattern,
+        fixedStrings: matcher.fixedStrings,
         caseSensitive: args.caseSensitive === true,
-        beforeContext: beforeContext,
-        afterContext: afterContext,
-        perItemLimit: perItemLimit,
+        beforeContext: matcher.beforeContext,
+        afterContext: matcher.afterContext,
+        perItemLimit: matcher.perItemLimit,
         priorityRule: priorityRule,
         total: matches.length,
         truncated: truncated,
@@ -554,6 +551,8 @@
 
   return {
     create: create,
+    createGrep: createGrep,
+    GREP_QUERY_PROPERTIES: GREP_QUERY_PROPERTIES,
     finiteInteger: finiteInteger,
     normalizeQuery: normalizeQuery,
     escapeRegExp: escapeRegExp,

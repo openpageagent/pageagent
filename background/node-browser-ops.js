@@ -4,13 +4,6 @@
 })(globalThis, function () {
   'use strict';
 
-  var PROXY_PAC_TYPES = {
-    http: 'PROXY',
-    https: 'HTTPS',
-    socks4: 'SOCKS',
-    socks5: 'SOCKS5',
-  };
-
   function createBrowserOps(deps) {
     deps = deps || {};
     var chrome = deps.chrome || globalThis.chrome;
@@ -125,6 +118,8 @@
           if (c.storeId) details.storeId = c.storeId;
           if (c.partitionKey) details.partitionKey = c.partitionKey;
           return Promise.resolve().then(function () {
+            return deps.authorizeApplication ? deps.authorizeApplication({ kind: 'page', command: 'clearCookies', url: details.url }) : null;
+          }).then(function () {
             ensureNotStopped(execution);
             dispatchedCount++;
             return chrome.cookies.remove(details);
@@ -149,47 +144,6 @@
       });
     }
 
-    function parseProxyServer(raw) {
-      var text = String(raw || '').trim();
-      if (!text) throw new Error('代理服务器地址不能为空');
-      if (/\s/.test(text)) throw new Error('代理服务器地址不能包含空白字符');
-
-      var urlText = /^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : ('http://' + text);
-      var url;
-      try {
-        url = new URL(urlText);
-      } catch (err) {
-        throw new Error('代理服务器格式无效，应为 host:port 或 scheme://host:port');
-      }
-
-      var scheme = String(url.protocol || '').replace(/:$/, '').toLowerCase();
-      if (!PROXY_PAC_TYPES[scheme]) {
-        throw new Error('不支持的代理协议: ' + scheme + '（支持 http/https/socks4/socks5）');
-      }
-      if (url.username || url.password) {
-        throw new Error('代理服务器地址不支持内嵌用户名密码，请使用无认证代理或系统级认证');
-      }
-      if ((url.pathname && url.pathname !== '/') || url.search || url.hash) {
-        throw new Error('代理服务器只填写 host:port，不支持路径、查询参数或 hash');
-      }
-      if (!url.hostname || !url.port) {
-        throw new Error('代理服务器必须包含 host 和 port');
-      }
-
-      var port = Number(url.port);
-      if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        throw new Error('代理服务器端口必须在 1-65535 之间');
-      }
-
-      return {
-        scheme: scheme,
-        host: url.hostname,
-        port: port,
-        server: url.host,
-        pacValue: PROXY_PAC_TYPES[scheme] + ' ' + url.host,
-      };
-    }
-
     function getHostnameFromUrl(rawUrl) {
       try {
         var url = new URL(String(rawUrl || ''));
@@ -198,31 +152,6 @@
       } catch (_) {
         return '';
       }
-    }
-
-    function normalizeHostPattern(raw, label, allowLocal) {
-      var text = String(raw || '').trim().toLowerCase();
-      label = label || '主机匹配模式';
-      if (!text) throw new Error(label + '不能为空');
-      if (allowLocal && text === '<local>') return text;
-      if (text.indexOf('://') !== -1 || /[\/?#]/.test(text)) {
-        throw new Error(label + '只支持 host 通配符，不支持完整 URL 或路径');
-      }
-      if (/[\s"'\\]/.test(text)) {
-        throw new Error(label + '不能包含空白、引号或反斜杠');
-      }
-      if (!/^[a-z0-9*?.:_\-\[\]]+$/i.test(text)) {
-        throw new Error(label + '只能包含字母、数字、点、冒号、中括号、连字符和 * ? 通配符');
-      }
-      return text;
-    }
-
-    function parseBypassList(raw) {
-      return String(raw || '').split(/[,\n]/).map(function (item) {
-        return item.trim();
-      }).filter(Boolean).map(function (item) {
-        return normalizeHostPattern(item, '绕过代理主机', true);
-      });
     }
 
     function execSetProxy(pageId, params, execution) {
@@ -240,7 +169,7 @@
         if (!proxyManager || !proxyManager.setRule) {
           throw new Error('代理管理器不可用，无法安全设置浏览器代理');
         }
-        var proxy = parseProxyServer(params.proxyServer);
+        var proxy = globalThis.ProxyManager.parseProxyServer(params.proxyServer);
 
         return perceiveTabInfo(tabId, execution).then(function (tab) {
           var currentUrl = tab && tab.url || '';
@@ -250,8 +179,10 @@
           if (!currentHost) {
             throw new Error('当前页面不是 http/https URL，无法按 host 设置代理');
           }
-          var hostPattern = normalizeHostPattern(params.hostPattern || params.urlPattern || currentHost, '主机匹配模式');
-          var bypassList = parseBypassList(params.bypassList);
+          var hostPatterns = globalThis.ProxyManager.parseHostList(params.hostPattern || params.urlPattern || currentHost, '匹配域名', false);
+          if (!hostPatterns.length) hostPatterns = [currentHost];
+          var hostPattern = hostPatterns.join(',');
+          var bypassList = globalThis.ProxyManager.parseHostList(params.bypassList, '绕过域名', true);
 
           log(execution, '设置浏览器代理（profile 级）: ' + proxy.server + '，匹配 host: ' + hostPattern + ' (tabId=' + tabId + ')');
           if (hostPattern === '*') {
@@ -271,7 +202,10 @@
               proxyServer: proxy.server,
               proxyScheme: proxy.scheme,
               proxyPacValue: proxy.pacValue,
+              proxyUsername: params.proxyUsername,
+              proxyPassword: params.proxyPassword,
               hostPattern: hostPattern,
+              hostPatterns: hostPatterns,
               bypassList: bypassList,
             });
           }).then(function (result) {
@@ -318,6 +252,8 @@
           log(execution, '当前会话没有已登记的代理规则');
         } else if (result.activeRules > 0) {
           log(execution, '已清除当前会话代理规则；仍保留其他会话代理规则 ' + result.activeRules + ' 条');
+        } else if (result.systemProxyServer) {
+          log(execution, result.controlledByThisExtension ? '已清除当前会话代理规则，已恢复系统代理' : '已清除当前会话代理规则；系统代理未取得浏览器控制权');
         } else {
           log(execution, '已清除当前会话代理规则，浏览器代理控制已释放');
         }

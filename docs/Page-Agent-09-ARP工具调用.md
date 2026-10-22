@@ -1,16 +1,17 @@
 # Page Agent ARP 工具调用
 
-ARP 调用成功依赖三类确定信息：当前可用的资源路径、目标路径的 RouteContract，以及固定的工具外层。运行时只处理能证明不改变语义的小瑕疵，不替模型猜测业务意图。
+模型通过固定工具调用资源或询问用户。
 
 ## 固定工具
 
-模型始终使用七个工具：
+协议定义以下七个工具，运行时按入口和权限确定可用集合：
 
 ```text
 GET  POST  PUT  PATCH  DELETE  OPTIONS  ASK_USER
 ```
 
-工具 schema 只描述通用 Web 请求外层，业务能力通过资源路径和 RouteContract 扩展。新增资源不新增模型工具。同一 generation 内工具集合和 schema 保持稳定。
+资源工具 schema 描述通用 Web 请求外层，业务能力由资源路径和 RouteContract 定义。
+同一 generation 内工具集合和 schema 保持稳定。
 
 | 方法 | 模型输入 |
 | --- | --- |
@@ -20,80 +21,79 @@ GET  POST  PUT  PATCH  DELETE  OPTIONS  ASK_USER
 | PATCH | `uri`、非空 `patch` |
 | DELETE | `uri`，路由声明时才有 `body` |
 | OPTIONS | `uri`，可选 `match`、`relation`、`cursor`、`limit` |
-| ASK_USER | 当前资源和运行时无法提供、且会改变结果的用户事实 |
+| ASK_USER | `mode`、`prompt`，选择模式可附 `choices`；只询问当前资源和运行时无法提供、且会改变结果的用户事实 |
 
-外层 schema 是闭合对象。GET 不接受独立 `query` 或 body；PATCH 不用 `body` 代替 `patch`；`resourceUri` 等同义字段不属于当前协议。
+写入方法还支持 `preconditions` 和 `idempotencyKey`，按路由契约提供。
+PATCH 可指定 `contentType: "application/merge-patch+json"`，省略时由运行时补全。
 
-## 路径和 ID
+外层 schema 是闭合对象。
+GET 不接受独立 `query` 或 body；PATCH 不用 `body` 代替 `patch`；`resourceUri` 等同义字段不属于当前协议。
 
-模型可使用的路径只来自：
+完整字段约束、响应及错误码见 [ARP 协议](./Page-Agent-10-ARP协议.md)。
 
-1. 当前权限下 `ResourceRegistry` 生成的路径目录；
-2. 当前上下文中的 canonical URI 或真实 ID；
-3. 资源表示的 `links[].href`；
-4. `OPTIONS` 返回的 RouteContract。
+## 查找资源
 
-不能根据产品名称、自然语言动词、旧接口或 REST 惯例创造同义路径。`{id}` 只能替换为已经取得的真实 ID。
+路径来自当前权限下的资源目录、上下文 URI、响应 `links` 或 `OPTIONS`。资源 ID 使用查询得到的真实值。
 
-路径使用小写 kebab-case，资源只有一个 canonical path。执行、运行、交互和外部调用建模为 POST 创建的资源，不能隐藏在 GET 或 PATCH 中。
+路径或参数未知时，对最窄的已知资源调用 `OPTIONS`。返回的 RouteContract 描述 query、body、patch、前置条件和输出；`OPTIONS` 本身不读取业务数据或执行动作。
 
-## GET request-target
+## 读取
 
-GET 的 query 属于 `uri`：
+GET 查询参数写在 `uri` 中：
 
 ```json
 { "uri": "/flows/flow_123?view=validation" }
 ```
 
-query 字段必须符合该路径的闭合 schema，只能是字符串、数字、整数、布尔值或重复参数形式的一维标量数组：
+数组使用重复参数，例如 `/recordings/r_1?fromSeq=1&toSeq=3&kinds=click&kinds=navigate`。
 
-```text
-/recordings/r_1?fromSeq=1&toSeq=3&kinds=click&kinds=navigate
+参数类型由目标路由的 schema 定义。
+
+默认返回路由声明的内容；需要 ETag 等协议元数据时设置 `responseMode: "full"`。
+
+## 写入与执行
+
+1. 读取目标资源及其契约；需要版本保护时，取得同一 URI 的当前 ETag。
+2. 按方法提供 `body` 或非空 `patch`，将 ETag 放入 `preconditions.ifMatch`。
+3. POST 和非天然幂等 PATCH 使用 `idempotencyKey`；一次操作的重试复用同一个键。
+4. 检查响应状态和 `receipt`；异步任务通过返回的运行 URI 查询结果。
+
+PATCH 使用 `application/merge-patch+json`，字符串和数组按字段整体替换。DELETE 仅在路由契约声明时接受 body。
+
+每次写入或执行请求表达一个用户意图；存在副作用的调用顺序执行。
+`performed: "unknown"` 时保留原幂等键，读取状态确认结果，不通过更换键重放操作。
+
+## 离线计算
+
+离线工具通过 `POST /utilities/{tool}/{operation}` 执行，操作由路径确定，请求体只含 `input` 和可选的 `options`。例如：
+
+```json
+{
+  "uri": "/utilities/hash/digest",
+  "body": { "input": "abc", "options": { "algorithm": "SHA256" } }
+}
 ```
 
-不要把对象或 JSON 文本塞进 query。Runtime 会拆分 path/query，并按 RouteContract 做有限类型转换；不会替换路径、补造字段或改变业务值。request-target 保持可读，网络传输的最终 URL 编码由传输层完成。
+已知契约时可直接执行；工具或参数未知时，通过 `GET /utilities`、`GET /utilities/{tool}` 或具体操作的 `OPTIONS` 查询。目录中的 `uri`、`operationUris` 提供准确地址。
 
-## RouteContract 与 OPTIONS
+执行结果为 `{tool, operation, value}`，完整 ARP 响应中位于 `primary.data`。
+读取目录需要 `utilities.read`，执行需要 `utilities.execute`；系统默认包含这两项，实际调用受入口权限范围限制。
 
-路径目录回答“有哪些路径”，RouteContract 回答“这个路径如何调用”。query、body、patch、前置条件和返回结构都必须来自当前 RouteContract 或 `OPTIONS`，不能凭字段名猜测。
+工具范围、输入输出和限制见[开发者工具箱](../builtin-apps/developer-tools/README.md)。Developer Utils 的 HTML/Markdown 页面预览不属于计算资源。
 
-当路径或精确合同未披露时，先对最窄的已知 URI 调用 `OPTIONS`。`OPTIONS` 只返回能力描述，不读取业务数据，也不执行动作。已知路径但收到 `404`、`405` 或 `422` 时，使用错误中的精确恢复信息或再次对同一 URI 调用 `OPTIONS`。
+## 错误处理
 
-## 前置条件和幂等
-
-RouteContract 声明 `If-Match` 时，先 GET 同一 canonical URI 取得当前 ETag，再执行 PUT、PATCH 或 DELETE。不能猜 ETag、跨资源复用或在 `412` 后直接重放旧请求。
-
-POST 和非天然幂等 PATCH 使用 Idempotency-Key。一次不安全调用只表达一个用户意图；写入和执行请求不并行。`performed=unknown` 表示结果不确定，不能更换 Key 自动重放，只能读取状态或报告未知。
-
-## 允许的规范化
-
-运行时只做唯一、确定且不改变语义的处理：
-
-- 聚合同一协议的流式工具参数片段；
-- 规范化固定方法名大小写和首尾空白；
-- 依据已匹配 schema 转换 query 标量类型；
-- 合同明确时补空对象、Merge Patch media type 或幂等 Key；
-- 对 request-target 做必要的分隔字符转义。
-
-不存在唯一解释时必须返回错误。不得把相似路径自动映射、恢复旧 `query` 外层、把 JSON Patch 改成 Merge Patch、截断越界值、补造业务字段或拆分一个请求中的多个动作。
-
-## 结构化错误
-
-工具结果包含 `performed`、`retryable`、错误阶段和可用恢复信息。常见错误：
-
-| 情况 | 状态 |
+| 结果 | 后续操作 |
 | --- | --- |
-| 外层字段错误 | `400 INVALID_REQUEST` |
-| 路径未注册 | `404 RESOURCE_NOT_FOUND` |
-| 方法不允许 | `405 METHOD_NOT_ALLOWED` |
-| media type 不支持 | `415 UNSUPPORTED_MEDIA_TYPE` |
-| RouteContract 校验失败 | `422 SCHEMA_VALIDATION_FAILED` |
-| 缺少前置条件 | `428 PRECONDITION_REQUIRED` |
-| ETag 冲突 | `412 ETAG_MISMATCH` |
-| 权限不足 | `403 FORBIDDEN` |
+| `404`、`405`、`422` | 检查错误详情，必要时对已知 URI 读取 `OPTIONS` |
+| `428` | 补齐契约要求的前置条件 |
+| `412` | 重新读取资源，核对修改后再提交 |
+| `403` | 检查当前授权范围 |
+| `performed: "unknown"` | 查询实际状态，确认结果后再决定是否重试 |
 
-恢复逻辑优先使用结构化字段和 links，不能把所有失败统一重试一次。工具卡片和 trace 同时保留原始 `uri`、解析后的 canonical path、匹配的 route template、校验结果和终态 `performed`。
+## 规范化边界
 
-## 成功率的实现重点
+运行时规范化固定方法名的大小写和首尾空白，按路由 schema 转换查询参数类型；契约明确时补全空对象、Merge Patch 类型或幂等键。
 
-提高首次成功率的顺序是：先补齐当前路径目录，再披露 RouteContract，再处理确定性规范化，最后才分析模型差异。缓存相关的前缀和 guidance 行为见 [Page-Agent-07-提示词缓存](./Page-Agent-07-提示词缓存.md)，完整方法和响应合同见 [Page-Agent-10-ARP协议](./Page-Agent-10-ARP协议.md)。
+未知路径、额外字段和越界参数返回错误。
+运行时不把相似路径自动映射，不将 JSON Patch 改为 Merge Patch，也不补造业务字段或拆分多个动作。

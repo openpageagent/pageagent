@@ -15,6 +15,9 @@
   },
   "dependencies": {
     "croner": "10.0.1",
+    "dompurify": "3.4.15",
+    "marked": "14.0.0",
+    "monaco-editor": "0.57.0",
     "turndown": "7.2.4",
     "turndown-plugin-gfm": "1.0.2"
   }

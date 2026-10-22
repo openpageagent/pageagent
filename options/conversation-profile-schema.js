@@ -3,10 +3,10 @@
   'use strict';
 
   var commonJs = typeof module === 'object' && module.exports;
-  var api = factory();
+  var api = factory(commonJs ? require('../shared/system-runtime-permissions.js') : root.SystemRuntimePermissions);
   if (commonJs) module.exports = api;
   if (root) root.ConversationProfileSchema = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (runtimePermissions) {
   'use strict';
 
   var PROFILE_VERSION = 9;
@@ -14,6 +14,7 @@
   // Keep this order aligned with the Options sidebar. A resource root belongs
   // to the product surface where users configure or inspect that capability.
   var RESOURCE_SECTIONS = Object.freeze([
+    Object.freeze({ id: 'apps', label: '应用', description: '对话生成的应用、草稿、发布与动作。' }),
     Object.freeze({ id: 'conversation', label: '对话', description: '助手、话题与对话上下文。' }),
     Object.freeze({ id: 'flows', label: '流程', description: '流程、节点类型与校验。' }),
     Object.freeze({ id: 'pages', label: '页面', description: '页面源、当前页面与浏览器资源。' }),
@@ -24,10 +25,20 @@
     Object.freeze({ id: 'url-triggers', label: '触发运行', description: 'URL 自动触发规则。' }),
     Object.freeze({ id: 'logs', label: '流程报告', description: '运行记录、报告与调试证据。' }),
     Object.freeze({ id: 'model-settings', label: '模型配置', description: '模型服务配置与验证。' }),
-    Object.freeze({ id: 'mcp', label: '连接配置', description: '插件与本地 MCP Server 的 WebSocket 连接。' }),
-    Object.freeze({ id: 'system-settings', label: '系统配置', description: '公开配置分区与 Agent 默认设置。' }),
+    Object.freeze({ id: 'mcp', label: '连接配置', description: '插件与本地 MCP Server 的 WebSocket 连接及邮件配置。' }),
+    Object.freeze({ id: 'system-settings', label: '系统配置', description: '系统配置、公开配置分区与 Agent 默认设置。' }),
   ]);
   var RESOURCE_ROOTS = Object.freeze([
+    Object.freeze({ uri: '/apps', section: 'apps', label: '应用', description: '发现、创建和修改应用，读取当前 SDK 授权并执行已授权动作。',
+      supportedMethods: Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']),
+      methodPermissions: Object.freeze({
+        GET: Object.freeze(['apps.read']),
+        POST: Object.freeze(['apps.write', 'apps.execute']),
+        PUT: Object.freeze(['apps.write']),
+        PATCH: Object.freeze(['apps.write']),
+        DELETE: Object.freeze(['apps.delete']),
+      }),
+    }),
     Object.freeze({ uri: '/conversations', section: 'conversation', label: '对话', description: '管理对话及其持久化状态。' }),
     Object.freeze({ uri: '/assistants', section: 'conversation', label: '助手', description: '管理助手配置。' }),
 
@@ -86,8 +97,17 @@
       }),
     }),
 
-    Object.freeze({ uri: '/local', section: 'mcp', label: '本地文件与命令',
-      description: '在连接配置开启后，通过已连接的服务端读取、写入、删除、查找文件及执行 Bash。',
+    Object.freeze({ uri: '/mail-settings', section: 'mcp', label: '邮件配置',
+      description: '管理邮件通知开关、SMTP 账号和发件信息，查询邮件服务状态或发送测试邮件；密码只写不读。',
+      supportedMethods: Object.freeze(['GET', 'PATCH', 'POST', 'OPTIONS']),
+      methodPermissions: Object.freeze({
+        GET: Object.freeze(['mail-settings.read']),
+        PATCH: Object.freeze(['mail-settings.write']),
+        POST: Object.freeze(['mail-settings.execute']),
+      }),
+    }),
+    Object.freeze({ uri: '/local', section: 'mcp', label: '本地文件、命令与桌面',
+      description: '在连接配置开启后，通过服务端操作文件、执行 Bash，以及调用平台支持的鼠标、键盘、剪贴板、截图、图片定位、应用和窗口能力。',
       supportedMethods: Object.freeze(['POST', 'OPTIONS']),
       methodPermissions: Object.freeze({ POST: Object.freeze(['local.execute']) }),
     }),
@@ -104,7 +124,21 @@
     Object.freeze({ uri: '/scripts', section: 'scripts', label: '脚本', description: '管理并运行可复用脚本。' }),
     Object.freeze({ uri: '/schedules', section: 'schedules', label: '定时任务', description: '管理定时任务并立即运行。' }),
     Object.freeze({ uri: '/url-triggers', section: 'url-triggers', label: 'URL 触发器', description: '管理 URL 自动触发规则。' }),
-    Object.freeze({ uri: '/runs', section: 'logs', label: '运行与报告', description: '读取、执行和清理运行记录。' }),
+    Object.freeze({ uri: '/runs', section: 'logs', label: '运行与报告', description: '读取运行和报告、停止活动流程、继续可恢复流程，以及清理运行记录。',
+      supportedMethods: Object.freeze(['GET', 'POST', 'DELETE', 'OPTIONS']),
+      methodPermissions: Object.freeze({
+        GET: Object.freeze(['runs.read', 'runs.report.read', 'runs.debug.read']),
+        POST: Object.freeze(['runs.execute', 'runs.cancel']),
+        DELETE: Object.freeze(['runs.delete']),
+      }),
+    }),
+    Object.freeze({ uri: '/system-settings', section: 'system-settings', label: '系统配置', description: '管理网页悬浮入口、非模型请求 User-Agent 和浏览器代理。',
+      supportedMethods: Object.freeze(['GET', 'PATCH', 'OPTIONS']),
+      methodPermissions: Object.freeze({
+        GET: Object.freeze(['system-settings.read']),
+        PATCH: Object.freeze(['system-settings.write']),
+      }),
+    }),
     Object.freeze({ uri: '/config', section: 'system-settings', label: '公开配置', description: '读取允许公开的配置分区。' }),
     Object.freeze({ uri: '/agent-settings', section: 'system-settings', label: 'Agent 设置', description: '管理 Agent 默认设置。' }),
   ]);
@@ -131,13 +165,16 @@
     'pages.read', 'pages.write', 'pages.delete',
     'url-triggers.read', 'url-triggers.write', 'url-triggers.delete',
     'scripts.read', 'scripts.write', 'scripts.delete',
-    'runs.read', 'runs.report.read', 'runs.debug.read', 'runs.execute', 'runs.delete',
+    'apps.read', 'apps.write', 'apps.execute', 'apps.delete',
+    'runs.read', 'runs.report.read', 'runs.debug.read', 'runs.execute', 'runs.cancel', 'runs.delete',
     'schedules.read', 'schedules.write', 'schedules.delete',
     'knowledge.read', 'knowledge.write', 'knowledge.delete',
     'skills.read', 'skills.write', 'skills.delete',
     'assistants.read', 'assistants.write', 'assistants.delete',
     'model-services.read', 'model-services.write', 'model-services.delete', 'model-services.execute',
     'agent-settings.read', 'agent-settings.write',
+    'system-settings.read', 'system-settings.write',
+    'mail-settings.read', 'mail-settings.write', 'mail-settings.execute',
     'connections.read', 'connections.write', 'connections.execute',
     'local.execute',
     'mcp-servers.read', 'mcp-servers.write', 'mcp-servers.delete', 'mcp-servers.call',
@@ -146,38 +183,6 @@
     'conversations.trace.read', 'conversations.export.read',
     'config.read',
   ]);
-  // Core capability floor derived from agent-prompt.js SYSTEM_INTRO. Built-in and
-  // user-selected Assistant policies may add capabilities, but cannot remove this floor.
-  var PAGE_AGENT_CORE_PERMISSION_SCOPE = Object.freeze([
-    'page.read', 'page.interact',
-    'browser.read', 'browser.tabs.write', 'browser.navigate',
-    'flows.read', 'flows.write', 'flows.nodes.read', 'flows.nodes.write',
-    'flow-groups.read', 'flow-groups.write', 'node-types.read', 'recordings.read',
-    'runs.read', 'runs.report.read', 'runs.debug.read', 'runs.execute',
-    'pages.read', 'pages.write',
-    'url-triggers.read', 'url-triggers.write',
-    'scripts.read', 'scripts.write',
-    'schedules.read', 'schedules.write',
-    'knowledge.read', 'knowledge.write', 'skills.read', 'assistants.read',
-    'local.execute',
-  ]);
-  var PAGE_AGENT_CORE_ROOT_METHODS = Object.freeze({
-    '/page': Object.freeze(['GET', 'POST', 'OPTIONS']),
-    '/browser': Object.freeze(['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS']),
-    '/flows': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
-    '/node-types': Object.freeze(['GET', 'OPTIONS']),
-    '/flow-groups': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
-    '/recordings': Object.freeze(['GET', 'OPTIONS']),
-    '/runs': Object.freeze(['GET', 'OPTIONS']),
-    '/knowledge': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
-    '/skills': Object.freeze(['GET', 'OPTIONS']),
-    '/assistants': Object.freeze(['GET', 'OPTIONS']),
-    '/pages': Object.freeze(['GET', 'POST', 'PATCH', 'OPTIONS']),
-    '/url-triggers': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
-    '/scripts': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
-    '/schedules': Object.freeze(['GET', 'POST', 'PATCH', 'OPTIONS']),
-    '/local': Object.freeze(['POST', 'OPTIONS']),
-  });
   var BLOCKED_KEYS = Object.create(null);
   BLOCKED_KEYS.__proto__ = true;
   BLOCKED_KEYS.prototype = true;
@@ -274,12 +279,12 @@
     return { roots: roots, permissions: RESOURCE_PERMISSION_NAMES.slice() };
   }
 
-  function pageAgentResourcePolicy() {
+  function defaultRuntimeResourcePolicy() {
     var roots = {};
     RESOURCE_ROOTS.forEach(function (root) {
-      roots[root.uri] = { methods: (PAGE_AGENT_CORE_ROOT_METHODS[root.uri] || ['OPTIONS']).slice() };
+      roots[root.uri] = { methods: (runtimePermissions.rootMethods[root.uri] || ['OPTIONS']).slice() };
     });
-    return { roots: roots, permissions: PAGE_AGENT_CORE_PERMISSION_SCOPE.slice() };
+    return { roots: roots, permissions: runtimePermissions.permissions.slice() };
   }
 
   function normalizedPermissions(value, fallback) {
@@ -289,7 +294,7 @@
       permission = String(permission || '').trim();
       if (RESOURCE_PERMISSION_NAMES.indexOf(permission) !== -1) selected[permission] = true;
     });
-    PAGE_AGENT_CORE_PERMISSION_SCOPE.forEach(function (permission) { selected[permission] = true; });
+    runtimePermissions.permissions.forEach(function (permission) { selected[permission] = true; });
     return RESOURCE_PERMISSION_NAMES.filter(function (permission) { return !!selected[permission]; });
   }
 
@@ -311,7 +316,7 @@
     var sourceProvided = isRecord(policy);
     var baseProvided = isRecord(base);
     var source = sourceProvided ? policy : {};
-    var fallback = baseProvided ? base : pageAgentResourcePolicy();
+    var fallback = baseProvided ? base : defaultRuntimeResourcePolicy();
     var sourceRoots = isRecord(source.roots) ? source.roots : {};
     var fallbackRoots = isRecord(fallback.roots) ? fallback.roots : {};
     var knownRoots = RESOURCE_ROOTS.reduce(function (output, root) {
@@ -340,7 +345,7 @@
       }
       var fallbackMethods = Array.isArray(fallbackValue)
         ? fallbackValue
-        : (isRecord(fallbackValue) ? fallbackValue.methods : RESOURCE_METHODS.map(function (method) { return method.name; }));
+        : (isRecord(fallbackValue) ? fallbackValue.methods : runtimePermissions.rootMethods[root.uri] || ['OPTIONS']);
       var methods = normalizedMethods(sourceValue, fallbackMethods);
       // Recording retrieval is a core capability of every assistant. Keep the
       // legacy root present even when an older explicit allowlist omitted it.
@@ -351,7 +356,7 @@
           return methods.indexOf(method) !== -1;
         });
       }
-      var requiredMethods = PAGE_AGENT_CORE_ROOT_METHODS[root.uri] || [];
+      var requiredMethods = runtimePermissions.rootMethods[root.uri] || [];
       requiredMethods.forEach(function (method) {
         if (methods.indexOf(method) === -1) methods.push(method);
       });
@@ -393,7 +398,7 @@
       if (Object.prototype.hasOwnProperty.call(input, 'permissions')) rootPolicy.permissions = input.permissions;
       return normalizeResourcePolicy(rootPolicy);
     }
-    return pageAgentResourcePolicy();
+    return defaultRuntimeResourcePolicy();
   }
 
   function resourcePolicyCatalog() {
@@ -402,8 +407,8 @@
       roots: RESOURCE_ROOTS,
       methods: RESOURCE_METHODS,
       permissions: RESOURCE_PERMISSION_NAMES,
-      coreRootMethods: PAGE_AGENT_CORE_ROOT_METHODS,
-      corePermissions: PAGE_AGENT_CORE_PERMISSION_SCOPE,
+      coreRootMethods: runtimePermissions.rootMethods,
+      corePermissions: runtimePermissions.permissions,
     });
   }
 
@@ -458,6 +463,14 @@
   function buildTemplatePrompt(kind) {
     if (kind === 'default') {
       return '处理未限定专精流程的通用任务。以用户本次要求的交付物为目标，在已配置能力范围内直接回答或完成操作。';
+    }
+    if (kind === 'app-developer') {
+      return [
+        '处理应用的创建、修改和修复，交付符合用户需求的 HTML、CSS、JavaScript、主题及功能声明。围绕本次需求做必要修改，优先复用已有应用和依赖。',
+        '开始前读取 /apps 或目标应用，再完整读取 /knowledge/builtin_app_generation_guide。仅改名称、别名、图标或描述时按摘要 ETag 局部 PATCH 应用；修改源码时先读摘要和权限，通过 /apps/{appId}/draft/{field} 独立读取字段，已发布版本用 /published/{field}。长文本加 q 按标准 grep 定位，省略 q 按行读取，用 startLine/startColumn 和 revision 续读。PATCH 是字段整体替换，须读齐待修改字段，不能以搜索片段覆盖全文。',
+        '需要持久数据或调用流程、流程组、脚本时，使用 PageAgent SDK，核对能力范围、依赖和实际授权。只声明本次功能需要的能力与依赖。',
+        '按用户要求保存草稿或发布应用，以资源写入回执确认结果；说明已完成的功能、验证结果和待处理事项。',
+      ].join('\n');
     }
     if (kind === 'network-writer') {
       return [
@@ -662,9 +675,9 @@
 
     function assistantTemplates() {
       var baseSettings = defaultSettings(defaultMaxIterations, defaultMaxToolCalls);
-      var pageAgentPolicy = pageAgentResourcePolicy();
+      var defaultPolicy = defaultRuntimeResourcePolicy();
       function builtinPolicy(rootOverrides, extraPermissions) {
-        var roots = cloneSafe(pageAgentPolicy.roots);
+        var roots = cloneSafe(defaultPolicy.roots);
         (Array.isArray(rootOverrides) ? rootOverrides : []).forEach(function (group) {
           (Array.isArray(group.roots) ? group.roots : []).forEach(function (uri) {
             roots[uri] = { methods: group.methods || ['OPTIONS'] };
@@ -672,7 +685,7 @@
         });
         return createResourcePolicy({
           roots: roots,
-          permissions: pageAgentPolicy.permissions.concat(Array.isArray(extraPermissions) ? extraPermissions : []),
+          permissions: defaultPolicy.permissions.concat(Array.isArray(extraPermissions) ? extraPermissions : []),
         });
       }
       var networkWritingPolicy = builtinPolicy();
@@ -703,6 +716,14 @@
           description: '完成未限定专精流程的问答、分析与执行任务',
           prompt: buildTemplatePrompt('default'),
           modelServiceId: '',
+          settings: baseSettings,
+          resourcePolicy: createResourcePolicy(),
+        }),
+        tpl_app_developer: templateProfile({
+          id: 'tpl_app_developer',
+          name: '应用开发助手',
+          description: '创建、修改和修复应用，保存源码并维护 SDK 能力与依赖',
+          prompt: buildTemplatePrompt('app-developer'),
           settings: baseSettings,
           resourcePolicy: createResourcePolicy(),
         }),
@@ -758,6 +779,7 @@
       return {
         order: [
           'tpl_default_assistant',
+          'tpl_app_developer',
           'tpl_network_search_writer',
           'tpl_page_reader_writer',
           'tpl_flow_builder',
@@ -787,8 +809,6 @@
 
   return {
     PROFILE_VERSION: PROFILE_VERSION,
-    PAGE_AGENT_CORE_PERMISSION_SCOPE: PAGE_AGENT_CORE_PERMISSION_SCOPE.slice(),
-    PAGE_AGENT_CORE_ROOT_METHODS: cloneSafe(PAGE_AGENT_CORE_ROOT_METHODS),
     create: create,
     cloneSafe: cloneSafe,
     safeMerge: safeMerge,

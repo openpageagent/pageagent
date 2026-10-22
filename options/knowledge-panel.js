@@ -68,7 +68,7 @@
   var knowledgeDraft = null;
   var skillDraft = null;
   var skillImportDraft = null;
-  var skillFilter = { q: '', page: 0 };
+  var skillFilter = { q: '', page: 0, limit: DEFAULT_PAGE_SIZE };
   var selectedSkills = new Set();
   var selectedKnowledge = new Set();
   var activeTask = null;
@@ -183,10 +183,12 @@
     if (task && task.cancelled) throw new DOMException('已停止', 'AbortError');
   }
 
-  function renderLocalPagination(page, total, action) {
-    var pages = Math.max(1, Math.ceil(total / DEFAULT_PAGE_SIZE));
-    return '<div class="knowledge-pagination"><span>第 ' + (page + 1) + ' / ' + pages + ' 页 · 共 ' + total + ' 项</span>'
-      + '<div class="knowledge-pagination-controls"><button class="btn-small" data-skill-action="' + action + '" data-page="' + (page - 1) + '"' + (page > 0 ? '' : ' disabled') + '>上一页</button>'
+  function renderLocalPagination(state, total, kind) {
+    var page = state.page, limit = normalizePageSize(state.limit), pages = Math.max(1, Math.ceil(total / limit));
+    var action = kind === 'import' ? 'import-page' : 'page';
+    return '<div class="list-pagination"><span class="list-pagination-status">第 ' + (page + 1) + ' / ' + pages + ' 页 · 共 ' + total + ' 项</span>'
+      + '<div class="list-pagination-controls"><select data-skill-page-size="' + kind + '" aria-label="' + (kind === 'import' ? '待导入 Skill' : 'Skill') + '每页数量">' + renderPageSizeOptions(limit) + '</select>'
+      + '<button class="btn-small" data-skill-action="' + action + '" data-page="' + (page - 1) + '"' + (page > 0 ? '' : ' disabled') + '>上一页</button>'
       + '<button class="btn-small" data-skill-action="' + action + '" data-page="' + (page + 1) + '"' + (page + 1 < pages ? '' : ' disabled') + '>下一页</button></div></div>';
   }
 
@@ -243,8 +245,9 @@
       node.items.forEach(function (item) { rows.push({ item: item, depth: node.depth + 1 }); });
     }
     visit(tree);
-    state.page = Math.min(state.page || 0, Math.max(0, Math.ceil(rows.length / DEFAULT_PAGE_SIZE) - 1));
-    return '<div class="skill-directory-tree">' + rows.slice(state.page * DEFAULT_PAGE_SIZE, (state.page + 1) * DEFAULT_PAGE_SIZE).map(function (row) {
+    var limit = normalizePageSize(state.limit);
+    state.page = Math.min(state.page || 0, Math.max(0, Math.ceil(rows.length / limit) - 1));
+    return '<div class="skill-directory-tree">' + rows.slice(state.page * limit, (state.page + 1) * limit).map(function (row) {
       var indent = ' style="--tree-depth:' + Math.min(12, row.depth) + '"';
       if (row.item) return '<div class="skill-tree-entry"' + indent + '>' + renderItem(row.item) + '</div>';
       var node = row.node;
@@ -255,8 +258,8 @@
         + (node.selected > 0 && node.selected < node.eligible ? ' data-indeterminate="true"' : '') + '>'
         + '<button type="button" class="skill-tree-folder-name" data-skill-action="tree-toggle" data-tree-kind="' + kind + '" data-tree-path="' + esc(node.path) + '" title="' + esc(node.path) + '">' + esc(node.name) + '</button>'
         + '<span>' + node.total + ' 个 Skill · 已选 ' + node.selected + '</span></div>';
-    }).join('') + '</div>' + renderLocalPagination(state.page, rows.length, kind === 'import' ? 'import-page' : 'page')
-      + '<div class="form-help">按原目录展示，每页最多 50 个目录或 Skill 节点；目录勾选包含未展开、未显示在本页的子项。搜索时仅选择匹配项。</div>';
+    }).join('') + '</div>' + renderLocalPagination(state, rows.length, kind)
+      + '<div class="form-help">按原目录展示，每页最多 ' + limit + ' 个目录或 Skill 节点；目录勾选包含未展开、未显示在本页的子项。搜索时仅选择匹配项。</div>';
   }
 
   function selectSkillDirectory(kind, path, checked) {
@@ -571,13 +574,11 @@
     var cursor = page.cursor;
     var pageCount = Math.max(1, Math.ceil(total / limit));
     var current = Math.min(pageCount, Math.floor(cursor / limit) + 1);
-    var start = total ? cursor + 1 : 0;
-    var end = Math.min(total, cursor + page.items.length);
     var hasNext = page.nextCursor !== null && page.nextCursor < total;
-    return '<div class="knowledge-pagination">'
-      + '<div class="knowledge-pagination-status">第 ' + esc(current) + ' / ' + esc(pageCount) + ' 页 · ' + esc(start) + '-' + esc(end) + ' / ' + esc(total) + '</div>'
-      + '<div class="knowledge-pagination-controls">'
-      + '<select data-knowledge-page-size>' + renderPageSizeOptions(limit) + '</select>'
+    return '<div class="list-pagination">'
+      + '<span class="list-pagination-status">第 ' + esc(current) + ' / ' + esc(pageCount) + ' 页 · 共 ' + esc(total) + ' 项</span>'
+      + '<div class="list-pagination-controls">'
+      + '<select data-knowledge-page-size aria-label="知识每页数量">' + renderPageSizeOptions(limit) + '</select>'
       + '<button class="btn-small" data-knowledge-action="page-prev" data-cursor="' + esc(Math.max(0, cursor - limit)) + '"' + (cursor > 0 ? '' : ' disabled') + '>上一页</button>'
       + '<button class="btn-small" data-knowledge-action="page-next" data-cursor="' + esc(hasNext ? page.nextCursor : cursor) + '"' + (hasNext ? '' : ' disabled') + '>下一页</button>'
       + '</div></div>';
@@ -638,7 +639,7 @@
       + '<div class="form-row"><label>类型</label><select id="knowledge-type"' + (readonly ? ' disabled' : '') + '>' + renderTypeOptions(item.type || 'custom', false) + '</select></div>'
       + '</div>'
       + '<div class="form-row"><label>摘要</label><textarea id="knowledge-summary" rows="3"' + (readonly ? ' disabled' : '') + '>' + esc(item.summary || '') + '</textarea></div>'
-      + '<div class="form-row"><label>内容</label><textarea id="knowledge-content" rows="12"' + (readonly ? ' disabled' : '') + '>' + esc(item.content || '') + '</textarea></div>'
+      + '<div class="form-row"><label>内容</label><page-code-editor id="knowledge-content" language="markdown" rows="12"' + (readonly ? ' disabled' : '') + '>' + esc(item.content || '') + '</page-code-editor></div>'
       + '<div class="form-grid">'
       + '<div class="form-row"><label>标签</label><input type="text" id="knowledge-tags" value="' + esc((item.tags || []).join(', ')) + '"' + (readonly ? ' disabled' : '') + '></div>'
       + '<div class="form-row"><label>来源</label><input type="text" value="' + esc(SOURCE_LABELS[item.sourceKind || source.kind] || item.sourceKind || source.kind || '维护知识') + '" disabled></div>'
@@ -719,8 +720,7 @@
         return '<details><summary' + (metadataOnly ? '' : ' data-skill-action="view-resource" data-resource-index="' + index + '"') + '>'
           + '<span class="skill-resource-path">' + esc(resource.path || resource.name || resource.id) + '</span>'
           + (metadataOnly ? '<span class="skill-import-file-size">仅保存文件信息</span>' : '')
-          + '</summary><pre class="mcp-snippet">' + (metadataOnly ? '此文件未保存原始内容，无法预览；agent 也只能读取文件信息。' : '展开后读取文本内容。')
-          + '</pre></details>';
+          + '</summary>' + PageAgentCodeEditor.html(metadataOnly ? '此文件未保存原始内容，无法预览；agent 也只能读取文件信息。' : '展开后读取文本内容。', 'plaintext', { 'data-filename': resource.path || resource.name || '' }) + '</details>';
       }).join('') + '</div>' : '<div class="form-help">没有附带资源。</div>')
       + '</div>';
   }
@@ -738,7 +738,7 @@
       + '<div class="form-row"><label>版本</label><input type="text" id="skill-edit-version" value="' + esc(item.version || '1') + '"' + (builtin ? ' disabled' : '') + '></div>'
       + '</div>'
       + '<div class="form-row"><label>说明</label><textarea id="skill-edit-description" rows="3"' + (builtin ? ' disabled' : '') + '>' + esc(item.description || '') + '</textarea></div>'
-      + '<div class="form-row"><label>指令（SKILL.md 正文）</label><textarea id="skill-edit-instructions" rows="14"' + (builtin ? ' disabled' : '') + '>' + esc(item.instructions || '') + '</textarea></div>'
+      + '<div class="form-row"><label>指令（SKILL.md 正文）</label><page-code-editor id="skill-edit-instructions" language="markdown" rows="14"' + (builtin ? ' disabled' : '') + '>' + esc(item.instructions || '') + '</page-code-editor></div>'
       + renderSkillResources(item)
       + '<div class="form-row"><label>标签</label><input type="text" id="skill-edit-tags" value="' + esc((item.tags || []).join(', ')) + '"' + (builtin ? ' disabled' : '') + '></div>'
       + '<div class="knowledge-editor-checks">'
@@ -995,7 +995,7 @@
         + '<button class="btn-small" data-skill-action="import-select-all" title="全选搜索结果">全选</button><button class="btn-small" data-skill-action="import-clear" title="清空选择">清空</button></div>'
         + '<div class="skill-import-drawer-list">' + packageHtml + '</div>' : '')
       + '<div class="form-row"><label>来源地址</label><input type="text" id="skill-import-source-uri" value="' + esc(skillImportDraft.sourceUri || '') + '" placeholder="可选"></div>'
-      + '<div class="form-row"><label>或粘贴 SKILL.md</label><textarea id="skill-import-markdown" rows="12" placeholder="---&#10;name: example&#10;description: ...&#10;---&#10;&#10;# Instructions">' + esc(skillImportDraft.markdown || '') + '</textarea></div>'
+      + '<div class="form-row"><label>或粘贴 SKILL.md</label><page-code-editor id="skill-import-markdown" language="markdown" rows="12" placeholder="---&#10;name: example&#10;description: ...&#10;---&#10;&#10;# Instructions">' + esc(skillImportDraft.markdown || '') + '</page-code-editor></div>'
       + '<div class="editor-actions"><button class="btn-primary" data-skill-action="import">导入 Skill</button><button class="btn-secondary" data-skill-action="cancel-import">取消</button></div>'
       + '</div>';
   }
@@ -1016,7 +1016,8 @@
       + '<input type="search" id="skill-search" aria-label="搜索 Skill" placeholder="搜索 Skill 名称、说明、标签或目录" value="' + esc(skillFilter.q) + '">'
       + renderSelectionToolbar('skill', selectedSkills.size, '全选搜索结果中可删除项')
       + '<div class="item-list knowledge-skill-list">'
-      + (skills.length ? renderSkillTree(skills, 'skill', skillFilter, renderSkillCard) : '<div class="placeholder">没有匹配的 Skill。可以导入 Skill 或修改搜索条件。</div>')
+      + (skills.length ? '' : '<div class="placeholder">没有匹配的 Skill。可以导入 Skill 或修改搜索条件。</div>')
+      + renderSkillTree(skills, 'skill', skillFilter, renderSkillCard)
       + '</div>'
       + '<div id="skill-import-editor-wrap">' + renderSkillImportEditor() + '</div>'
       + '<div id="skill-editor-wrap">' + renderSkillEditor() + '</div>'
@@ -1045,7 +1046,7 @@
     if ((status === 'failed' || status === 'interrupted') && data.error) details = ' · ' + esc(data.error);
     if (operation.pollError) details += ' · 状态读取失败：' + esc(operation.pollError);
     var result = data.kind === 'mcp-call' && status === 'succeeded'
-      ? '<pre class="mcp-snippet">' + esc(JSON.stringify(data.result, null, 2)) + '</pre>'
+      ? PageAgentCodeEditor.html(JSON.stringify(data.result, null, 2), 'json')
       : '';
     return '<div class="knowledge-operation-status"><span class="badge' + badgeClass + '">' + esc(OPERATION_LABELS[status] || status) + '</span>'
       + '<span class="knowledge-meta">' + esc(OPERATION_KIND_LABELS[data.kind] || '操作') + details + '</span>' + result + '</div>';
@@ -1148,7 +1149,7 @@
       + '<div class="form-row"><label>Bearer Token</label><input type="password" id="http-mcp-token" value="' + esc(item._bearerToken || '') + '" autocomplete="off" placeholder="' + (existing && auth.bearerTokenConfigured ? '已配置；留空保持不变' : '可选') + '"></div>'
       + '<div class="form-row"><label>协议版本</label><input type="text" id="http-mcp-protocol" value="' + esc(item.protocolVersion || '2025-11-25') + '"></div>'
       + '</div>'
-      + '<div class="form-row"><label>自定义 Header</label><textarea id="http-mcp-headers" rows="4" placeholder="' + (existing && auth.customHeaderNames && auth.customHeaderNames.length ? '已配置 ' + esc(auth.customHeaderNames.join(', ')) + '；留空保持不变' : 'X-Api-Key: ...') + '">' + esc(item._headersText || '') + '</textarea></div>'
+      + '<div class="form-row"><label>自定义 Header</label><page-code-editor id="http-mcp-headers" language="plaintext" rows="4" placeholder="' + (existing && auth.customHeaderNames && auth.customHeaderNames.length ? '已配置 ' + esc(auth.customHeaderNames.join(', ')) + '；留空保持不变' : 'X-Api-Key: ...') + '">' + esc(item._headersText || '') + '</page-code-editor></div>'
       + '<div class="knowledge-editor-checks">'
       + '<label class="switch-label"><input type="checkbox" id="http-mcp-enabled"' + (item.enabled !== false ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">启用</span></label>'
       + '<label class="switch-label"><input type="checkbox" id="http-mcp-browser-cookies"' + (item.useBrowserCookies === true ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">使用浏览器登录 Cookie</span></label>'
@@ -1210,8 +1211,8 @@
       + '<h3>调用工具：' + esc(toolCallDraft.toolName) + '</h3>'
       + '<p class="item-sub">' + esc(toolCallDraft.description || '') + '</p>'
       + '<div class="form-grid">'
-      + '<div class="form-row"><label>参数 JSON</label><textarea id="http-mcp-call-arguments" rows="10">' + esc(toolCallDraft.argumentsText || '{}') + '</textarea></div>'
-      + '<div class="form-row"><label>参数结构</label><pre class="mcp-snippet">' + esc(JSON.stringify(toolCallDraft.argumentSchema || {}, null, 2)) + '</pre><label>超时毫秒</label><input type="number" id="http-mcp-call-timeout" min="1000" max="600000" value="' + esc(toolCallDraft.timeoutMs || 120000) + '"></div>'
+      + '<div class="form-row"><label>参数 JSON</label><page-code-editor id="http-mcp-call-arguments" language="json" rows="10">' + esc(toolCallDraft.argumentsText || '{}') + '</page-code-editor></div>'
+      + '<div class="form-row"><label>参数结构</label>' + PageAgentCodeEditor.html(JSON.stringify(toolCallDraft.argumentSchema || {}, null, 2), 'json') + '<label>超时毫秒</label><input type="number" id="http-mcp-call-timeout" min="1000" max="600000" value="' + esc(toolCallDraft.timeoutMs || 120000) + '"></div>'
       + '</div>'
       + '<div class="editor-actions"><button class="btn-primary" data-http-mcp-action="submit-call">调用工具</button><button class="btn-secondary" data-http-mcp-action="cancel-call">取消</button></div>'
       + renderOperationSlot(key)
@@ -1255,6 +1256,8 @@
         + '<fieldset class="knowledge-content"' + (taskRunning() ? ' disabled' : '') + '>'
         + renderMcpSection() + renderSkillSection() + renderKnowledgeSection() + '</fieldset>';
     element.querySelectorAll('[data-indeterminate]').forEach(function (input) { input.indeterminate = true; });
+    var toolArguments = $('#http-mcp-call-arguments');
+    if (toolArguments && toolCallDraft) toolArguments.schema = toolCallDraft.argumentSchema || {};
     if (restoreSearch) {
       var search = $('#' + searchId);
       if (search) {
@@ -1284,7 +1287,7 @@
       var element = $(selector);
       if (!element) return;
       element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      var focus = element.querySelector('input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled])');
+      var focus = element.querySelector('input:not([disabled]), textarea:not([disabled]), page-code-editor:not([disabled]), select:not([disabled]), button:not([disabled])');
       if (focus) focus.focus();
     });
   }
@@ -1408,7 +1411,7 @@
     if (!resource || !details) return;
     details.open = !details.open;
     if (!details.open || details.dataset.loaded || details.dataset.loading) return;
-    var preview = details.querySelector('pre');
+    var preview = details.querySelector('page-code-editor');
     details.dataset.loading = 'true';
     preview.textContent = '正在读取…';
     return ensureClient().get(resource.href).then(function (envelope) {
@@ -1756,7 +1759,7 @@
       var skillAction = skillTarget.dataset.skillAction;
       var skillId = skillTarget.dataset.id || '';
       if (skillAction === 'new-import') {
-        skillImportDraft = { sourceUri: '', markdown: '', packages: [] };
+        skillImportDraft = { sourceUri: '', markdown: '', packages: [], page: 0, limit: DEFAULT_PAGE_SIZE };
         treeExpansion.import.clear();
         renderCurrentState(true);
         scrollIntoView('#skill-import-editor-wrap .knowledge-skill-editor');
@@ -1898,6 +1901,15 @@
       queryState.cursor = 0;
       knowledgeDraft = null;
       loadKnowledgePage().then(function () { renderCurrentState(false, 'knowledge'); });
+      return;
+    }
+    if (target.matches && target.matches('[data-skill-page-size]')) {
+      var state = target.dataset.skillPageSize === 'import' ? skillImportDraft : skillFilter;
+      if (state) {
+        state.limit = normalizePageSize(target.value);
+        state.page = 0;
+        renderCurrentState(false, 'skill');
+      }
       return;
     }
     if (target.id === 'knowledge-filter-type' || target.id === 'knowledge-filter-source'

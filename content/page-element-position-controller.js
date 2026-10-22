@@ -113,7 +113,7 @@
       win.removeEventListener('pointercancel', finish, true);
       try { if (handle && handle.releasePointerCapture) handle.releasePointerCapture(finished.pointerId); } catch (_) {}
       if (onFinish) onFinish(finished, event);
-      if (!finished.moved) return;
+      if (destroyed || !finished.moved) return;
       suppressClick = true;
       if (suppressClickTimer) win.clearTimeout(suppressClickTimer);
       suppressClickTimer = win.setTimeout(function () {
@@ -200,6 +200,7 @@
     var interactiveSelector = String(options.interactiveSelector || 'button,select,textarea,input');
     var layoutDelay = Math.max(0, finiteNumber(options.layoutDelay, 320));
     var anchorBottom = options.verticalAnchor === 'bottom';
+    var onPositionChange = typeof options.onPositionChange === 'function' ? options.onPositionChange : null;
 
     if (!win || !documentRef || !host || !handle) {
       throw new Error('free position controller requires window, document, host and handle');
@@ -274,8 +275,18 @@
     }
 
     function persistPosition() {
-      if (!currentPosition || !storage || typeof storage.setItem !== 'function') return;
-      try { storage.setItem(storageKey, JSON.stringify(currentPosition)); } catch (_) {}
+      if (!currentPosition || destroyed) return;
+      if (storage && typeof storage.setItem === 'function') {
+        try { storage.setItem(storageKey, JSON.stringify(currentPosition)); } catch (_) {}
+      }
+      if (onPositionChange) onPositionChange(Object.assign({}, currentPosition));
+    }
+
+    function moveBy(dx, dy) {
+      if (destroyed || pointerDrag && pointerDrag.isDragging()) return;
+      var rect = host.getBoundingClientRect();
+      applyPosition(rect.left + finiteNumber(dx, 0), rect.top + finiteNumber(dy, 0));
+      persistPosition();
     }
 
     function loadPosition() {
@@ -347,8 +358,8 @@
 
     function destroy() {
       if (destroyed) return;
-      if (pointerDrag) pointerDrag.destroy();
       destroyed = true;
+      if (pointerDrag) pointerDrag.destroy();
       win.removeEventListener('resize', refresh, { passive: true });
       if (resizeObserver) resizeObserver.disconnect();
       cancelScheduledRefresh();
@@ -359,6 +370,7 @@
       boundaryElement = null;
       dragClassTarget = null;
       storage = null;
+      onPositionChange = null;
       handle = null;
       host = null;
       documentRef = null;
@@ -369,6 +381,7 @@
       init: init,
       refresh: refresh,
       resize: refresh,
+      moveBy: moveBy,
       isDragging: function () { return !!(pointerDrag && pointerDrag.isDragging()); },
       consumeSuppressedClick: function () {
         return !!(pointerDrag && pointerDrag.consumeSuppressedClick());

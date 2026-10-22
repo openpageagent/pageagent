@@ -8,6 +8,7 @@
 
   var API_VERSION = 1;
   var STYLE_ATTRIBUTE = 'data-page-automation-conversation-event-view';
+  var markdown;
 
   function esc(value) {
     if (value === undefined || value === null) return '';
@@ -16,132 +17,70 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  function inlineMarkdown(text) {
-    var raw = String(text === undefined || text === null ? '' : text);
-    var parts = [];
-    var last = 0;
-    raw.replace(/`([^`\n]+)`/g, function (match, code, offset) {
-      if (offset > last) parts.push({ type: 'text', value: raw.slice(last, offset) });
-      parts.push({ type: 'code', value: code });
-      last = offset + match.length;
-      return match;
-    });
-    if (last < raw.length) parts.push({ type: 'text', value: raw.slice(last) });
-    return parts.map(function (part) {
-      if (part.type === 'code') return '<code>' + esc(part.value) + '</code>';
-      var html = esc(part.value);
-      html = html.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, function (_, label, href) {
-        return '<a href="' + href + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+  function renderMarkdown(text, options) {
+    text = String(text === undefined || text === null ? '' : text).replace(/\r\n?/g, '\n');
+    try {
+      if (!markdown) markdown = new root.marked.Marked({
+        gfm: true, breaks: true, async: false,
+        renderer: {
+          // Keep user/model HTML as text, including conversation action attributes.
+          html: function (token) { return esc(token.text).replace(/\n/g, '<br>'); },
+          code: function (token) {
+            var language = String(token.lang || '').trim().split(/\s+/)[0] || 'plaintext';
+            return '<pre><code class="language-' + esc(language) + '">' + esc(token.text) + '</code></pre>\n';
+          }
+        }
       });
-      html = html.replace(/(\*\*|__)(.+?)\1/g, '<strong>$2</strong>');
-      html = html.replace(/(^|[\s(])(\*|_)([^\s*_][^*_]*?[^\s*_])\2(?=$|[\s).,，。；;:：!?！？])/g, '$1<em>$3</em>');
-      return html;
-    }).join('');
-  }
-
-  function isTableSeparator(line) {
-    return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line || '');
-  }
-
-  function splitTableRow(line) {
-    var text = String(line || '').trim();
-    if (text.charAt(0) === '|') text = text.slice(1);
-    if (text.charAt(text.length - 1) === '|') text = text.slice(0, -1);
-    return text.split('|').map(function (cell) { return cell.trim(); });
-  }
-
-  function renderTable(lines) {
-    var header = splitTableRow(lines[0]);
-    var rows = lines.slice(2).map(splitTableRow);
-    var html = '<table><thead><tr>' + header.map(function (cell) {
-      return '<th>' + inlineMarkdown(cell) + '</th>';
-    }).join('') + '</tr></thead><tbody>';
-    html += rows.map(function (row) {
-      return '<tr>' + header.map(function (_, index) {
-        return '<td>' + inlineMarkdown(row[index] || '') + '</td>';
-      }).join('') + '</tr>';
-    }).join('');
-    return html + '</tbody></table>';
-  }
-
-  function isBlockStart(line, nextLine) {
-    return /^```/.test(line)
-      || /^#{1,6}\s+/.test(line)
-      || /^>\s?/.test(line)
-      || /^[-*+]\s+/.test(line)
-      || /^\d+\.\s+/.test(line)
-      || /^\s*(---|\*\*\*)\s*$/.test(line)
-      || (/\|/.test(line) && isTableSeparator(nextLine || ''));
-  }
-
-  function renderMarkdown(text) {
-    var lines = String(text === undefined || text === null ? '' : text).replace(/\r\n?/g, '\n').split('\n');
-    var html = [];
-    var index = 0;
-    while (index < lines.length) {
-      var line = lines[index];
-      if (!line.trim()) {
-        index += 1;
-        continue;
+      var sanitizeOptions = {
+        ALLOWED_TAGS: ['a', 'blockquote', 'br', 'code', 'del', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'img', 'input', 'li', 'ol', 'p', 'pre', 'strong', 'table', 'tbody', 'td', 'th', 'thead', 'tr', 'ul'],
+        ALLOWED_ATTR: ['href', 'title', 'src', 'alt', 'align', 'start', 'type', 'checked', 'disabled', 'class'],
+        ALLOW_DATA_ATTR: false, ALLOW_ARIA_ATTR: false, RETURN_DOM_FRAGMENT: true
+      };
+      if (options && options.localImages === true) {
+        sanitizeOptions.ALLOWED_URI_REGEXP = /^(?:https?:\/\/|mailto:|data:image\/(?:png|jpeg|gif|webp|avif);base64,|blob:chrome-extension:\/\/)/i;
       }
-      var fence = line.match(/^```\s*([A-Za-z0-9_-]+)?\s*$/);
-      if (fence) {
-        var code = [];
-        index += 1;
-        while (index < lines.length && !/^```\s*$/.test(lines[index])) code.push(lines[index++]);
-        if (index < lines.length) index += 1;
-        html.push('<pre><code' + (fence[1] ? ' class="language-' + esc(fence[1]) + '"' : '') + '>' + esc(code.join('\n')) + '</code></pre>');
-        continue;
-      }
-      if (/\|/.test(line) && isTableSeparator(lines[index + 1] || '')) {
-        var tableLines = [line, lines[index + 1]];
-        index += 2;
-        while (index < lines.length && /\|/.test(lines[index]) && lines[index].trim()) {
-          tableLines.push(lines[index++]);
+      var fragment = root.DOMPurify.sanitize(markdown.parse(text), sanitizeOptions);
+      // A template keeps custom elements inert while we serialize the shared view.
+      var template = root.document.createElement('template');
+      template.content.appendChild(fragment);
+      template.content.querySelectorAll('a').forEach(function (link) {
+        // Conversations have no document base: relative URLs would differ between the two hosts.
+        if (!/^(https?:\/\/|mailto:)/i.test(link.getAttribute('href') || '')) {
+          link.replaceWith(...link.childNodes);
+          return;
         }
-        html.push(renderTable(tableLines));
-        continue;
-      }
-      var heading = line.match(/^(#{1,6})\s+(.+)$/);
-      if (heading) {
-        var level = Math.min(6, heading[1].length);
-        html.push('<h' + level + '>' + inlineMarkdown(heading[2].trim()) + '</h' + level + '>');
-        index += 1;
-        continue;
-      }
-      if (/^\s*(---|\*\*\*)\s*$/.test(line)) {
-        html.push('<hr>');
-        index += 1;
-        continue;
-      }
-      if (/^>\s?/.test(line)) {
-        var quote = [];
-        while (index < lines.length && /^>\s?/.test(lines[index])) {
-          quote.push(lines[index++].replace(/^>\s?/, ''));
+        link.setAttribute('target', '_blank');
+        link.setAttribute('rel', 'noopener noreferrer');
+      });
+      template.content.querySelectorAll('img').forEach(function (image) {
+        var source = image.getAttribute('src') || '';
+        var localImage = options && options.localImages === true && root.location && root.location.protocol === 'chrome-extension:'
+          && source.startsWith('blob:chrome-extension://' + root.location.host + '/');
+        if (!localImage && !/^(https?:\/\/|data:image\/(?:png|jpeg|gif|webp|avif);base64,)/i.test(source)) {
+          image.replaceWith(root.document.createTextNode(image.getAttribute('alt') || ''));
+          return;
         }
-        html.push('<blockquote>' + renderMarkdown(quote.join('\n')) + '</blockquote>');
-        continue;
-      }
-      if (/^[-*+]\s+/.test(line) || /^\d+\.\s+/.test(line)) {
-        var ordered = /^\d+\.\s+/.test(line);
-        var tag = ordered ? 'ol' : 'ul';
-        var items = [];
-        while (index < lines.length && (ordered ? /^\d+\.\s+/.test(lines[index]) : /^[-*+]\s+/.test(lines[index]))) {
-          items.push(lines[index++].replace(ordered ? /^\d+\.\s+/ : /^[-*+]\s+/, ''));
-        }
-        html.push('<' + tag + '>' + items.map(function (item) {
-          return '<li>' + inlineMarkdown(item) + '</li>';
-        }).join('') + '</' + tag + '>');
-        continue;
-      }
-      var paragraph = [line];
-      index += 1;
-      while (index < lines.length && lines[index].trim() && !isBlockStart(lines[index], lines[index + 1])) {
-        paragraph.push(lines[index++]);
-      }
-      html.push('<p>' + paragraph.map(inlineMarkdown).join('<br>') + '</p>');
+        image.setAttribute('loading', 'lazy');
+        image.setAttribute('decoding', 'async');
+        image.setAttribute('referrerpolicy', 'no-referrer');
+      });
+      template.content.querySelectorAll('table').forEach(function (table) {
+        var wrapper = root.document.createElement('div');
+        wrapper.className = 'conversation-markdown-table';
+        table.replaceWith(wrapper); wrapper.appendChild(table);
+      });
+      // Only our generated code blocks become editor elements, after HTML sanitization.
+      template.content.querySelectorAll('pre > code').forEach(function (code) {
+        var editor = root.document.createElement('template');
+        editor.innerHTML = root.PageAgentCodeEditor.html(code.textContent, code.className.slice('language-'.length) || 'plaintext');
+        code.parentNode.replaceWith(editor.content);
+      });
+      return '<div class="conversation-markdown">' + template.innerHTML + '</div>';
+    } catch (error) {
+      // A malformed message must not interrupt the conversation controls or streaming updates.
+      console.error('Markdown 渲染失败', error);
+      return '<div class="conversation-markdown"><p>' + esc(text).replace(/\n/g, '<br>') + '</p></div>';
     }
-    return '<div class="conversation-markdown">' + html.join('') + '</div>';
   }
 
   function eventText(event) {
@@ -230,8 +169,7 @@
   function renderJsonCode(value) {
     var source = jsonCodeText(value);
     if (!source) return '';
-    return '<pre class="conversation-event-code" tabindex="0" aria-label="JSON 详情"><code class="language-json">'
-      + esc(source) + '</code></pre>';
+    return globalThis.PageAgentCodeEditor.html(source, 'json', { 'aria-label': 'JSON 详情' });
   }
 
   function statusLabel(value) {
@@ -350,6 +288,8 @@
       ? (kind === 'error' ? '<p class="conversation-error-text">' + esc(text) + '</p>' : renderMarkdown(text))
       : '');
     var attachmentHtml = renderAttachments(eventAttachments(event, options), optionValue(options, 'topicId', event.topicId || ''));
+    var application = options.applicationLinks === false ? null : applicationResult(event.result || event.detail || event.text);
+    if (options.applicationLinks !== false && !application && event.text) application = applicationResult(event.text);
     if (attachmentHtml) detailHtml += '<div class="conversation-image-attachments">' + attachmentHtml + '</div>';
     var collapsible = optionValue(options, 'collapsible', (kind === 'tool' || kind === 'tool-result'
       || kind === 'llm-request' || kind === 'llm-response') && !!(summary || detailHtml) && !attachmentHtml);
@@ -359,6 +299,7 @@
       + (status ? '<span class="conversation-event-status conversation-event-status-' + statusTone(statusValue) + '">' + esc(status) + '</span>' : '')
       + (options.retry === true ? '<button class="conversation-event-copy conversation-event-retry" data-conversation-action="retry-event" data-event-id="' + esc(target) + '" title="重试">↻</button>' : '')
       + (options.copy === true ? '<button type="button" class="conversation-event-copy" data-conversation-action="copy-event" data-event-id="' + esc(target) + '" title="复制" aria-label="复制"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3"></path></svg></button>' : '')
+      + (application ? '<button type="button" class="conversation-event-copy" data-app-open="' + esc(application.appId) + '" title="打开应用：' + esc(application.name) + '" aria-label="打开应用：' + esc(application.name) + '"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M21 3 10 14M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"></path></svg></button>' : '')
       + (options.download === true ? '<button type="button" class="conversation-event-copy" data-conversation-action="download-event-md" data-event-id="' + esc(target) + '" title="下载 Markdown" aria-label="下载 Markdown"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 20h14"></path></svg></button>' : '')
       + '<time>' + esc(timeText) + '</time></span>';
     var titleHtml = esc(title);
@@ -378,6 +319,32 @@
     }
     return '<article class="conversation-event conversation-event-' + esc(kind) + '"' + attrs + '>'
       + '<header>' + header + '</header>' + detailHtml + '</article>';
+  }
+
+  function applicationResult(value, depth) {
+    depth = depth || 0;
+    if (!value || depth > 4) return null;
+    if (typeof value === 'string') { if (!value.includes('"appId"')) return null; try { value = JSON.parse(value); } catch (_) { return null; } }
+    if (typeof value !== 'object') return null;
+    if (/^app_[A-Za-z0-9_-]+$/.test(value.appId || '') && value.name && value.permissions && value.links) return value;
+    for (var key of ['result', 'primary', 'data', 'content']) { var found = applicationResult(value[key], depth + 1); if (found) return found; }
+    return null;
+  }
+  function applicationClick(event) {
+    var target = event.target && event.target.closest && event.target.closest('[data-app-open]');
+    if (!target) return;
+    var appId = target.dataset.appOpen;
+    if (!/^app_[A-Za-z0-9_-]+$/.test(appId)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    root.chrome.runtime.sendMessage({ type: 'APP_OPEN', appId: appId }).then(function (result) {
+      if (result && result.error) throw new Error(result.error.message);
+    }).catch(function (error) { target.title = error.message; });
+  }
+  function attachApplications(container) {
+    if (!root.chrome || !root.chrome.runtime) return function () {};
+    container.addEventListener('click', applicationClick);
+    return function () { container.removeEventListener('click', applicationClick); };
   }
 
   function keyedEventNode(container, key) {
@@ -408,7 +375,7 @@
   var STYLE_TEXT = [
     '.conversation-event-stream{position:relative;flex:1 1 auto;height:auto;min-height:0;overflow-y:auto;overscroll-behavior-y:contain;padding:14px 14px 12px;border:0;background:var(--bg);}',
     '.conversation-history-loading{position:absolute;z-index:3;top:6px;left:50%;display:inline-flex;min-height:24px;box-sizing:border-box;align-items:center;justify-content:center;transform:translateX(-50%);padding:3px 9px;border:1px solid var(--border-strong);border-radius:var(--control-radius);background:var(--bg-secondary);box-shadow:0 2px 8px rgba(20,40,43,.12);color:var(--text-secondary);font-size:11px;line-height:1.2;pointer-events:none;white-space:nowrap;}.conversation-history-loading[hidden]{display:none;}',
-    '.conversation-event{margin:0 0 8px;padding:9px 10px;border:1px solid var(--border);border-left:3px solid var(--border-strong);background:var(--bg);}',
+    '.conversation-event{margin:0 0 8px;padding:9px 10px;border:1px solid var(--border);border-left:3px solid var(--border-strong);border-radius:var(--control-radius);background:var(--bg);}',
     '.conversation-event header,.conversation-event summary{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 6px;padding:0;color:var(--accent);font-size:12px;font-weight:500;}',
     '.conversation-event-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
     '.conversation-event-actions{display:inline-flex;flex-shrink:0;align-items:center;gap:6px;}',
@@ -424,18 +391,18 @@
     '.conversation-markdown{color:var(--text);font-size:13px;line-height:1.58;word-break:break-word;}',
     '.conversation-markdown h1,.conversation-markdown h2,.conversation-markdown h3,.conversation-markdown h4,.conversation-markdown h5,.conversation-markdown h6{margin:10px 0 6px;color:var(--accent);font-family:Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-weight:500;line-height:1.35;}',
     '.conversation-markdown h1{font-size:18px}.conversation-markdown h2{font-size:16px}.conversation-markdown h3,.conversation-markdown h4,.conversation-markdown h5,.conversation-markdown h6{font-size:14px}',
-    '.conversation-markdown p{margin:0 0 8px;white-space:normal;}.conversation-markdown p:last-child,.conversation-markdown ul:last-child,.conversation-markdown ol:last-child,.conversation-markdown blockquote:last-child,.conversation-markdown pre:last-child,.conversation-markdown table:last-child{margin-bottom:0;}',
+    '.conversation-markdown p{margin:0 0 8px;white-space:normal;}.conversation-markdown p:last-child,.conversation-markdown ul:last-child,.conversation-markdown ol:last-child,.conversation-markdown blockquote:last-child,.conversation-markdown page-code-editor:last-child,.conversation-markdown table:last-child,.conversation-markdown-table:last-child{margin-bottom:0;}',
     '.conversation-markdown ul,.conversation-markdown ol{margin:0 0 8px 20px;padding:0;}.conversation-markdown li{margin:3px 0;}',
+    '.conversation-markdown input[type="checkbox"]{display:inline-block;box-sizing:border-box;width:14px;height:14px;min-height:0;margin:0 6px 0 0;padding:0;vertical-align:-2px;accent-color:var(--accent);pointer-events:none;}',
     '.conversation-markdown blockquote{margin:0 0 8px;padding:6px 10px;border-left:3px solid var(--border-strong);background:var(--bg-secondary);color:var(--text-secondary);}',
     '.conversation-markdown code{padding:1px 4px;border:1px solid var(--border);background:var(--bg-muted);color:var(--value);font-family:"SF Mono","JetBrains Mono",Consolas,monospace;font-size:12px;}',
-    '.conversation-markdown pre{max-height:360px;margin:0 0 8px;overflow:auto;}.conversation-markdown pre code{display:block;padding:0;border:0;background:transparent;color:inherit;white-space:pre;word-break:normal;}',
+    '.conversation-markdown page-code-editor{display:block;min-width:0;width:100%;--code-height:260px;margin:0 0 8px;}',
     '.conversation-markdown table{width:100%;margin:0 0 8px;border-collapse:collapse;font-size:12px;}.conversation-markdown th,.conversation-markdown td{padding:5px 7px;border:1px solid var(--border);text-align:left;vertical-align:top;}.conversation-markdown th{background:var(--table-header);color:#fff;font-weight:500;}',
+    '.conversation-markdown-table{max-width:100%;overflow-x:auto;margin:0 0 8px;}.conversation-markdown th[align="center"],.conversation-markdown td[align="center"]{text-align:center;}.conversation-markdown th[align="right"],.conversation-markdown td[align="right"]{text-align:right;}',
+    '.conversation-markdown img{max-width:100%;height:auto;vertical-align:middle;}',
     '.conversation-markdown a{color:var(--accent);text-decoration:underline;text-underline-offset:2px;}.conversation-markdown hr{height:1px;margin:10px 0;border:0;background:var(--border);}',
     '.conversation-event-summary{margin-top:6px!important;color:var(--text-secondary)!important;font-size:12px!important;}',
-    '.conversation-event pre{max-height:180px;overflow:auto;padding:8px;border:1px solid var(--border);background:var(--bg-muted);color:var(--text);font-family:"SF Mono","JetBrains Mono",Consolas,monospace;font-size:11px;line-height:1.45;white-space:pre-wrap;word-break:break-word;}',
-    '.conversation-event .conversation-event-code{box-sizing:border-box;width:100%;height:220px;max-height:40vh;margin:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:10px 12px;border:1px solid var(--border);border-radius:var(--control-radius);background:var(--bg-muted);color:var(--text);font-family:"SF Mono","JetBrains Mono",Consolas,monospace;font-size:11px;line-height:1.5;white-space:pre;word-break:normal;overflow-wrap:normal;tab-size:2;}',
-    '.conversation-event .conversation-event-code code{display:block;min-width:max-content;padding:0;border:0;background:transparent;color:inherit;font:inherit;white-space:inherit;word-break:normal;overflow-wrap:normal;}',
-    '.conversation-event .conversation-event-code:focus{outline:2px solid var(--accent);outline-offset:1px;}',
+    '.conversation-event page-code-editor{display:block;min-width:0;width:100%;--code-height:220px;max-height:40vh;margin:6px 0;}',
     '.conversation-image-attachments{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,360px));gap:8px;margin-top:8px;}.conversation-image-attachment{max-width:360px;margin:0;border:1px solid var(--border);background:var(--bg-muted);}.conversation-image-preview{display:grid;width:100%;min-height:96px;max-height:280px;padding:0;place-items:center;overflow:hidden;border:0;background:var(--bg-secondary);cursor:zoom-in;}.conversation-image-preview img{display:block;width:100%;height:auto;max-height:280px;object-fit:contain;}.conversation-image-placeholder{padding:16px;color:var(--text-secondary);font-size:12px;}.conversation-image-attachment figcaption{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;color:var(--text-secondary);font-size:11px;}.conversation-image-attachment figcaption button{padding:3px 7px;border:1px solid var(--control-border);background:var(--control-bg);color:var(--accent);cursor:pointer;}.conversation-image-attachment.is-missing .conversation-image-placeholder{color:var(--danger);}',
     '.conversation-image-lightbox{position:fixed;z-index:2147483647;inset:0;display:grid;place-items:center;padding:32px;background:rgba(0,0,0,.82);}.conversation-image-lightbox img{max-width:calc(100vw - 64px);max-height:calc(100vh - 64px);object-fit:contain;box-shadow:0 8px 36px rgba(0,0,0,.5);}.conversation-image-lightbox button{position:absolute;top:14px;right:18px;width:38px;height:38px;border:1px solid rgba(255,255,255,.65);border-radius:50%;background:rgba(0,0,0,.45);color:#fff;font-size:28px;line-height:1;cursor:pointer;}',
     '.conversation-event-user{border-left-color:var(--accent)}.conversation-event-assistant{border-left-color:var(--success)}.conversation-event-tool,.conversation-event-tool-result,.conversation-event-run{border-left-color:var(--transmitting)}.conversation-event-llm-request,.conversation-event-llm-response{border-left-color:var(--value)}.conversation-event-warn,.conversation-event-reasoning{border-left-color:var(--warn)}.conversation-event-error{border-left-color:var(--danger)}.conversation-error-text{color:var(--danger)!important;}',
@@ -467,6 +434,7 @@
     formatElapsedDuration: formatElapsedDuration,
     updateElapsedLabels: updateElapsedLabels,
     renderEvent: renderEvent,
+    attachApplications: attachApplications,
     keyedEventNode: keyedEventNode,
     replaceKeyedEvent: replaceKeyedEvent,
     installStyles: installStyles,

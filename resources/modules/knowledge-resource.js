@@ -4,11 +4,12 @@
   var commonJs = typeof module === 'object' && module.exports;
   var arp = commonJs ? require('../../resources/protocol/index.js') : root.AgentResourceProtocol;
   var adapterModule = commonJs ? require('../../resources/resource-module-adapter') : root.ResourceModuleAdapter;
-  if (!arp || !adapterModule) throw new Error('KnowledgeResource dependencies are incomplete');
-  var api = factory(arp, adapterModule);
+  var searchModule = commonJs ? require('../../knowledge/knowledge-search') : root.KnowledgeSearch;
+  if (!arp || !adapterModule || !searchModule) throw new Error('KnowledgeResource dependencies are incomplete');
+  var api = factory(arp, adapterModule, searchModule);
   if (commonJs) module.exports = api;
   else root.KnowledgeResource = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (arp, ResourceModuleAdapter) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (arp, ResourceModuleAdapter, KnowledgeSearch) {
   'use strict';
 
   var URI_TEMPLATES = Object.freeze({
@@ -59,22 +60,14 @@
   ]);
   var PAGE_QUERY = Object.freeze({
     type: 'object',
-    properties: {
-      cursor: { type: 'string', maxLength: 200 }, limit: { type: 'integer', minimum: 1, maximum: 100 },
-      q: { type: 'string', maxLength: 4096, description: 'mode=grep 为逐行匹配模式（正则时长度上限 256，fixedStrings=true 时按字面匹配、上限 4096）；mode=relevance 为相关性查询；mode=list 不参与过滤' },
+    properties: Object.assign({}, KnowledgeSearch.GREP_QUERY_PROPERTIES, {
+      cursor: { type: 'string', maxLength: 200 },
       mode: { type: 'string', enum: ['list', 'grep', 'relevance'] },
       includeArchived: { type: 'boolean' }, sourceKind: { type: 'string', maxLength: 100 },
       includeStale: { type: 'boolean' },
       type: { type: 'string', enum: ['conversation', 'process', 'experience', 'tool', 'mcp', 'skill', 'document', 'custom'] },
       contextChars: { type: 'integer', minimum: 60, maximum: 600 },
-      before: { type: 'integer', minimum: 0, maximum: 20 },
-      after: { type: 'integer', minimum: 0, maximum: 20 },
-      context: { type: 'integer', minimum: 0, maximum: 20 },
-      perItemLimit: { type: 'integer', minimum: 1, maximum: 50 },
-      maxLineLength: { type: 'integer', minimum: 80, maximum: 2000, description: '仅 mode=grep：匹配行的单行截断长度，默认 500' },
-      fixedStrings: { type: 'boolean' },
-      caseSensitive: { type: 'boolean' },
-    },
+    }),
     additionalProperties: false,
   });
   var PATCH_SCHEMA = Object.freeze({
@@ -319,6 +312,7 @@
     }
     handlers.GET[URI_TEMPLATES.item] = function (request, context) {
       return service.getKnowledge(request.params.knowledgeId).then(function (data) {
+        if (data && data.id === 'builtin_app_generation_guide' && data.retrieval !== 'grep' && typeof globalThis.AppGenerationGate !== 'undefined') globalThis.AppGenerationGate.knowledge(context);
         var actorId = String(context && (context.actorId || context.actor) || '');
         if (data && data.retrieval === 'grep' && actorId.indexOf('ui:') !== 0) {
           data = grepOnlyDigest(data);

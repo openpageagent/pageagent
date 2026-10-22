@@ -1,0 +1,595 @@
+[
+  {
+    "package": "crypto-js",
+    "version": "4.2.0",
+    "file": "crypto-js.js",
+    "url": "https://cdn.jsdelivr.net/npm/crypto-js@4.2.0/crypto-js.js",
+    "sha256": "ee02257ffbaf0a9b481c7039b0f3bb20c360c9674fe4be8b38ae709b2ea59bbe",
+    "bytes": 219092
+  },
+  {
+    "package": "sm-crypto",
+    "version": "0.3.13",
+    "file": "dist/sm2.js",
+    "url": "https://cdn.jsdelivr.net/npm/sm-crypto@0.3.13/dist/sm2.js",
+    "sha256": "320dc9bed7f6a6be32c690f893f87c9c1e5dfd7d56e44dbec056080b3cf7a08d",
+    "bytes": 36233
+  },
+  {
+    "package": "sm-crypto",
+    "version": "0.3.13",
+    "file": "dist/sm3.js",
+    "url": "https://cdn.jsdelivr.net/npm/sm-crypto@0.3.13/dist/sm3.js",
+    "sha256": "c3329bb0c5d89ddf34de553865ca4176276d573f2e85f6f8af73eef407ae9b76",
+    "bytes": 3677
+  },
+  {
+    "package": "sm-crypto",
+    "version": "0.3.13",
+    "file": "dist/sm4.js",
+    "url": "https://cdn.jsdelivr.net/npm/sm-crypto@0.3.13/dist/sm4.js",
+    "sha256": "a22681baf1048b29264102aaea74e186c051a10d681a849ea16aeff6b16d90ac",
+    "bytes": 5424
+  },
+  {
+    "package": "bcryptjs",
+    "version": "2.4.3",
+    "file": "dist/bcrypt.min.js",
+    "url": "https://cdn.jsdelivr.net/npm/bcryptjs@2.4.3/dist/bcrypt.min.js",
+    "sha256": "afd4bd299bcde6710dd6fa029156e3e1174c48bc006b8a9eba32f964e5923783",
+    "bytes": 21634
+  },
+  {
+    "package": "qrcode-generator",
+    "version": "1.4.4",
+    "file": "qrcode.js",
+    "url": "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js",
+    "sha256": "18ae399f81182bc9de916e9c77b195df20cc58d6f2d55a62b085a299f1bf1780",
+    "bytes": 56694
+  },
+  {
+    "package": "qrcode-generator",
+    "version": "1.4.4",
+    "file": "qrcode_UTF8.js",
+    "url": "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode_UTF8.js",
+    "sha256": "e522d64003b332e29271fdce4993ed3ae2934c8947f41654bd324ddcfa2de301",
+    "bytes": 793
+  },
+  {
+    "package": "jsqr",
+    "version": "1.4.0",
+    "file": "dist/jsQR.js",
+    "url": "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js",
+    "sha256": "bc40c8a15196236b2314db0856f72ca0b49980cd5413b8c852a7349f5fee0859",
+    "bytes": 256885
+  },
+  {
+    "package": "jsbarcode",
+    "version": "3.11.6",
+    "file": "dist/JsBarcode.all.min.js",
+    "url": "https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js",
+    "sha256": "52e032534c3f98976ad95cb8c20baf80ed0cc83d42590602a8cf1db16e2e22ed",
+    "bytes": 60817
+  },
+  {
+    "package": "pinyin-pro",
+    "version": "3.20.4",
+    "file": "dist/index.js",
+    "url": "https://cdn.jsdelivr.net/npm/pinyin-pro@3.20.4/dist/index.js",
+    "sha256": "4adf115bdc6f5f998f85547f1b1fa1c329fc68770ffee649916f252a308b4254",
+    "bytes": 318593
+  },
+  {
+    "package": "js-yaml",
+    "version": "4.1.0",
+    "file": "dist/js-yaml.min.js",
+    "url": "https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js",
+    "sha256": "45dc3dd03dc07a06705a2c2989b8c7f709013f04bd5386e3279d4e447f07ebd7",
+    "bytes": 39430
+  },
+  {
+    "package": "papaparse",
+    "version": "5.4.1",
+    "file": "papaparse.min.js",
+    "url": "https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js",
+    "sha256": "b8e870c5d2b29772f10c9fa9a693c8b896aac8540ed6701e3cc6304c683febdb",
+    "bytes": 19469
+  },
+  {
+    "package": "fast-xml-parser",
+    "version": "5.2.5",
+    "file": "lib/fxp.min.js",
+    "url": "https://cdn.jsdelivr.net/npm/fast-xml-parser@5.2.5/lib/fxp.min.js",
+    "sha256": "802e75d9dc7563f3b7b669d430c421b55193c8292650aa23ff60f14dd9b53d5b",
+    "bytes": 29236
+  },
+  {
+    "package": "smol-toml",
+    "version": "1.3.1",
+    "file": "dist/index.js",
+    "url": "https://cdn.jsdelivr.net/npm/smol-toml@1.3.1/dist/index.js",
+    "sha256": "ded3ee91f3ce1ef746f6b57459b0c68475658eacb8e88fd18336a5408de009a1",
+    "bytes": 1883
+  },
+  {
+    "package": "smol-toml",
+    "version": "1.3.1",
+    "file": "dist/date.js",
+    "url": "https://cdn.jsdelivr.net/npm/smol-toml@1.3.1/dist/date.js",
+    "sha256": "467524c66559cafa8c37835a88cc2ca68fe34c026639530df77f8fce1a1d29eb",
+    "bytes": 4754
+  },
+  {
+    "package": "smol-toml",
+    "version": "1.3.1",
+    "file": "dist/error.js",
+    "url": "https://cdn.jsdelivr.net/npm/smol-toml@1.3.1/dist/error.js",
+    "sha256": "28dbfc2871c0707f97cebb5a8be7e343a9cee58250b5814813d748b90d9e0d3b",
+    "bytes": 2787
+  },
+  {
+    "package": "smol-toml",
+    "version": "1.3.1",
+    "file": "dist/extract.js",
+    "url": "https://cdn.jsdelivr.net/npm/smol-toml@1.3.1/dist/extract.js",
+    "sha256": "81dc347bf91bf95b62ea7a3e8380adfb2ccd7c1b8501011f9423e74d190cca36",
+    "bytes": 4581
+  },
+  {
+    "package": "smol-toml",
+    "version": "1.3.1",
+    "file": "dist/parse.js",
+    "url": "https://cdn.jsdelivr.net/npm/smol-toml@1.3.1/dist/parse.js",
+    "sha256": "da1a47bd9e5661a11b2d0c2b7b0823bb22876d5ea3a6109f6b6a60805b6407f0",
+    "bytes": 5681
+  },
+  {
+    "package": "smol-toml",
+    "version": "1.3.1",
+    "file": "dist/primitive.js",
+    "url": "https://cdn.jsdelivr.net/npm/smol-toml@1.3.1/dist/primitive.js",
+    "sha256": "7d12bf15e6a4fe490ddd96857bf9e0b84cdac645a448532a9e15ee42e107b3ee",
+    "bytes": 6284
+  },
+  {
+    "package": "smol-toml",
+    "version": "1.3.1",
+    "file": "dist/stringify.js",
+    "url": "https://cdn.jsdelivr.net/npm/smol-toml@1.3.1/dist/stringify.js",
+    "sha256": "f2649706affeca405d433b0d1894364bec6e78bdd941162e83c20033d79f8ac3",
+    "bytes": 5888
+  },
+  {
+    "package": "smol-toml",
+    "version": "1.3.1",
+    "file": "dist/struct.js",
+    "url": "https://cdn.jsdelivr.net/npm/smol-toml@1.3.1/dist/struct.js",
+    "sha256": "fe48e0ccecc5f32f83b3ed88647519a35c7c96a1bed775fc6c99f12a4dbdf29e",
+    "bytes": 7752
+  },
+  {
+    "package": "smol-toml",
+    "version": "1.3.1",
+    "file": "dist/util.js",
+    "url": "https://cdn.jsdelivr.net/npm/smol-toml@1.3.1/dist/util.js",
+    "sha256": "1a62d64b8b6ad4288f9e1fb911fbb682bede95725300ab7f719166d8696f337e",
+    "bytes": 3937
+  },
+  {
+    "package": "jsonpath-plus",
+    "version": "10.3.0",
+    "file": "dist/index-browser-umd.js",
+    "url": "https://cdn.jsdelivr.net/npm/jsonpath-plus@10.3.0/dist/index-browser-umd.cjs",
+    "sha256": "85667908eee7ca1835b9cdb10e10add3ce9e3cd21bb377c0e143d02656b8bc7c",
+    "bytes": 68529,
+    "sourceFile": "dist/index-browser-umd.cjs"
+  },
+  {
+    "package": "jmespath",
+    "version": "0.16.0",
+    "file": "jmespath.js",
+    "url": "https://cdn.jsdelivr.net/npm/jmespath@0.16.0/jmespath.js",
+    "sha256": "a88012bb68aa9e52a316d3be81598573d686cdad226a4c5d3177d720e187fe53",
+    "bytes": 58448
+  },
+  {
+    "package": "@cfworker/json-schema",
+    "version": "4.1.1",
+    "file": "dist/esm/index.js",
+    "url": "https://cdn.jsdelivr.net/npm/@cfworker/json-schema@4.1.1/dist/esm/index.js",
+    "sha256": "a204e4f8f148eacfce004a47fb7920ffce1e7744323c2018731d288bf805c590",
+    "bytes": 260
+  },
+  {
+    "package": "@cfworker/json-schema",
+    "version": "4.1.1",
+    "file": "dist/esm/deep-compare-strict.js",
+    "url": "https://cdn.jsdelivr.net/npm/@cfworker/json-schema@4.1.1/dist/esm/deep-compare-strict.js",
+    "sha256": "22e2f69237e382c7c7bf0ab2c28ef9368550e2aeec71b51a45a1ff2939ed91de",
+    "bytes": 975
+  },
+  {
+    "package": "@cfworker/json-schema",
+    "version": "4.1.1",
+    "file": "dist/esm/dereference.js",
+    "url": "https://cdn.jsdelivr.net/npm/@cfworker/json-schema@4.1.1/dist/esm/dereference.js",
+    "sha256": "31f6e9efa95a71467802ef4748d41d1fb953490aaae236fc2118ab0d9f3a63ad",
+    "bytes": 4225
+  },
+  {
+    "package": "@cfworker/json-schema",
+    "version": "4.1.1",
+    "file": "dist/esm/format.js",
+    "url": "https://cdn.jsdelivr.net/npm/@cfworker/json-schema@4.1.1/dist/esm/format.js",
+    "sha256": "5520a0a12d84540f476ae92d88271e99a2e786b7d2ed8f4515f4a61fb6374738",
+    "bytes": 7579
+  },
+  {
+    "package": "@cfworker/json-schema",
+    "version": "4.1.1",
+    "file": "dist/esm/pointer.js",
+    "url": "https://cdn.jsdelivr.net/npm/@cfworker/json-schema@4.1.1/dist/esm/pointer.js",
+    "sha256": "1eb10df554449bf31729cc216c216c6ca2d769c5179b82844fd693864a40afb2",
+    "bytes": 169
+  },
+  {
+    "package": "@cfworker/json-schema",
+    "version": "4.1.1",
+    "file": "dist/esm/types.js",
+    "url": "https://cdn.jsdelivr.net/npm/@cfworker/json-schema@4.1.1/dist/esm/types.js",
+    "sha256": "dc94711ff6619f343c5bb4bfba437a51bdc5c9d8dd26c69eac83bee16183ad67",
+    "bytes": 262
+  },
+  {
+    "package": "@cfworker/json-schema",
+    "version": "4.1.1",
+    "file": "dist/esm/ucs2-length.js",
+    "url": "https://cdn.jsdelivr.net/npm/@cfworker/json-schema@4.1.1/dist/esm/ucs2-length.js",
+    "sha256": "8bf05de7b72b8a522df0fd0eb3e61cc5dfd03ab1dd12baee2eb2df0db106a184",
+    "bytes": 448
+  },
+  {
+    "package": "@cfworker/json-schema",
+    "version": "4.1.1",
+    "file": "dist/esm/validate.js",
+    "url": "https://cdn.jsdelivr.net/npm/@cfworker/json-schema@4.1.1/dist/esm/validate.js",
+    "sha256": "d79f5c0fbe509843822380b5b0e22818c0cac27ed1b2ee1686a246e52444e32f",
+    "bytes": 36016
+  },
+  {
+    "package": "@cfworker/json-schema",
+    "version": "4.1.1",
+    "file": "dist/esm/validator.js",
+    "url": "https://cdn.jsdelivr.net/npm/@cfworker/json-schema@4.1.1/dist/esm/validator.js",
+    "sha256": "47d8b3faf0dbf0a40d063621161556206220ca9585f2c793dbb6183a7975ec39",
+    "bytes": 657
+  },
+  {
+    "package": "prettier",
+    "version": "3.3.3",
+    "file": "standalone.js",
+    "url": "https://cdn.jsdelivr.net/npm/prettier@3.3.3/standalone.js",
+    "sha256": "0127d72f138eec832f4068ab60f4531d24d3060b0ece9739cc36b91b1c1d7dd4",
+    "bytes": 79270
+  },
+  {
+    "package": "prettier",
+    "version": "3.3.3",
+    "file": "plugins/babel.js",
+    "url": "https://cdn.jsdelivr.net/npm/prettier@3.3.3/plugins/babel.js",
+    "sha256": "3a8bf48f17fc69ca14a8b41032ef4d14343be2dba186c44aa6f467e97b78f65a",
+    "bytes": 313919
+  },
+  {
+    "package": "prettier",
+    "version": "3.3.3",
+    "file": "plugins/estree.js",
+    "url": "https://cdn.jsdelivr.net/npm/prettier@3.3.3/plugins/estree.js",
+    "sha256": "e8085abd6f2573d71a8149bc7c6c9f709d18b32681ff0b0a4a568a418320fb4c",
+    "bytes": 199072
+  },
+  {
+    "package": "prettier",
+    "version": "3.3.3",
+    "file": "plugins/typescript.js",
+    "url": "https://cdn.jsdelivr.net/npm/prettier@3.3.3/plugins/typescript.js",
+    "sha256": "04e47b1a98a348dad2603fdfbcd726eb5f6358eeeebb5710c9ba6ac502b34309",
+    "bytes": 883414
+  },
+  {
+    "package": "prettier",
+    "version": "3.3.3",
+    "file": "plugins/html.js",
+    "url": "https://cdn.jsdelivr.net/npm/prettier@3.3.3/plugins/html.js",
+    "sha256": "86dedc37483a899fb86729ffb929865b5c5c1d22538412e43cd8d73c83cad340",
+    "bytes": 151970
+  },
+  {
+    "package": "prettier",
+    "version": "3.3.3",
+    "file": "plugins/postcss.js",
+    "url": "https://cdn.jsdelivr.net/npm/prettier@3.3.3/plugins/postcss.js",
+    "sha256": "cb13d68446c453654c00a2e95b9449bc4a22cff6a8f58ab1ff3e174339d744a2",
+    "bytes": 151337
+  },
+  {
+    "package": "prettier",
+    "version": "3.3.3",
+    "file": "plugins/markdown.js",
+    "url": "https://cdn.jsdelivr.net/npm/prettier@3.3.3/plugins/markdown.js",
+    "sha256": "37f6f182e625b4cce9498da85386fb7d9ff0042a2ea86840f29fbc9cf374c670",
+    "bytes": 147907
+  },
+  {
+    "package": "prettier",
+    "version": "3.3.3",
+    "file": "plugins/yaml.js",
+    "url": "https://cdn.jsdelivr.net/npm/prettier@3.3.3/plugins/yaml.js",
+    "sha256": "81278f70f47d891eb771e60a97199c248dfdcdef96841597b23e7745fe30e94f",
+    "bytes": 121872
+  },
+  {
+    "package": "prettier",
+    "version": "3.3.3",
+    "file": "plugins/graphql.js",
+    "url": "https://cdn.jsdelivr.net/npm/prettier@3.3.3/plugins/graphql.js",
+    "sha256": "0fd218f7d88df81fd40070ad7b4b5655bcbf6026049354b3ce4939802f49edb1",
+    "bytes": 43633
+  },
+  {
+    "package": "@prettier/plugin-php",
+    "version": "0.22.2",
+    "file": "standalone.js",
+    "url": "https://cdn.jsdelivr.net/npm/@prettier/plugin-php@0.22.2/standalone.js",
+    "sha256": "7e3d51260c1f2beecab204228224cf53c5032a4fe3f5f471377d3e5f5c7ddef1",
+    "bytes": 168517
+  },
+  {
+    "package": "sql-formatter",
+    "version": "15.4.2",
+    "file": "dist/sql-formatter.min.js",
+    "url": "https://cdn.jsdelivr.net/npm/sql-formatter@15.4.2/dist/sql-formatter.min.js",
+    "sha256": "e5d730be1c718b339f87fb1826d36415592767ea3202be5064313c008bacc090",
+    "bytes": 236400
+  },
+  {
+    "package": "terser",
+    "version": "5.43.1",
+    "file": "dist/bundle.min.js",
+    "url": "https://cdn.jsdelivr.net/npm/terser@5.43.1/dist/bundle.min.js",
+    "sha256": "66281950d473e2c64bde4a2cc2141d4a61909029380a7751df6314b1bed81912",
+    "bytes": 1051511
+  },
+  {
+    "package": "csso",
+    "version": "5.0.5",
+    "file": "dist/csso.js",
+    "url": "https://cdn.jsdelivr.net/npm/csso@5.0.5/dist/csso.js",
+    "sha256": "c1bb545b0b93d166c0feeb8c5d720eee90e62bea7220f4a7c4386d3a69b135d3",
+    "bytes": 198886
+  },
+  {
+    "package": "mathjs",
+    "version": "13.2.3",
+    "file": "lib/browser/math.js",
+    "url": "https://cdn.jsdelivr.net/npm/mathjs@13.2.3/lib/browser/math.js",
+    "sha256": "36d0ee2f33c9251b20d098b4e0a3cbb70f12f50fab56c71e80ffc65bccaa75a6",
+    "bytes": 676949
+  },
+  {
+    "package": "cronstrue",
+    "version": "2.50.0",
+    "file": "dist/cronstrue-i18n.min.js",
+    "url": "https://cdn.jsdelivr.net/npm/cronstrue@2.50.0/dist/cronstrue-i18n.min.js",
+    "sha256": "1d350633e624e1544213d48f5633229caf706cf9d6bd8bdfad7f8683892b68ef",
+    "bytes": 170969
+  },
+  {
+    "package": "nzh",
+    "version": "1.0.13",
+    "file": "dist/nzh.min.js",
+    "url": "https://cdn.jsdelivr.net/npm/nzh@1.0.13/dist/nzh.min.js",
+    "sha256": "d44a7a1bbf964538d48d5d74b03e14759c3de9ad2362fffeee4cbdb8afbcf32e",
+    "bytes": 5612
+  },
+  {
+    "package": "punycode",
+    "version": "2.3.1",
+    "file": "punycode.es6.js",
+    "url": "https://cdn.jsdelivr.net/npm/punycode@2.3.1/punycode.es6.js",
+    "sha256": "8969ae1b78644a33574be197d1a7a9c85b031092f1c1a657d865b7b3c1edd77e",
+    "bytes": 12780
+  },
+  {
+    "package": "diff",
+    "version": "5.2.0",
+    "file": "dist/diff.js",
+    "url": "https://cdn.jsdelivr.net/npm/diff@5.2.0/dist/diff.js",
+    "sha256": "43decd0ad71f8e4b312d1c95ee5b1ea446cebb006c6fcb718dd81d0a7bfc8278",
+    "bytes": 53658
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/index.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/index.js",
+    "sha256": "3fcfb30fda030d2a9fa2e0cd04b58a4ef0b980d1297ae3fb0ecf0c2e292778a4",
+    "bytes": 635
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/max.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/max.js",
+    "sha256": "b53052142590e9eb064d7eed8978a29c22cc1bd276125afd541b47033cdda777",
+    "bytes": 54
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/md5.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/md5.js",
+    "sha256": "0342333edc743c4c658dd5d0e1abf485f6a637dcab632208bf07ce99674319f1",
+    "bytes": 6831
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/native.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/native.js",
+    "sha256": "16b1202949bb83398d2f1a9d6a52d9ba16fa09677e1aec6e006f65f36cc8f0da",
+    "bytes": 135
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/nil.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/nil.js",
+    "sha256": "40036d4ffe78154827eedb9c1b3f59f660722907389725842bbc178ba28d2241",
+    "bytes": 54
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/parse.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/parse.js",
+    "sha256": "833f71f28c5e343c61b51efeb4c58466740f20ef5a24440f9ae9344f5c08b905",
+    "bytes": 1111
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/regex.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/regex.js",
+    "sha256": "07034425d526e45b8566de7b4fee97642f3577e676bd6a2f40e0d4514e8207dd",
+    "bytes": 170
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/rng.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/rng.js",
+    "sha256": "611375a709f09a5d4d91a35cbdbac31231105be3e8ae30ab190149bb9b39e6bf",
+    "bytes": 835
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/sha1.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/sha1.js",
+    "sha256": "6db914a1ac01325ae7ef9a91e8eed5f6ee17d4b332bb05ac681eabc4f3bcfc56",
+    "bytes": 2468
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/stringify.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/stringify.js",
+    "sha256": "032236574b7fe54f4b90f4e682b810ae37a342bf02cb86beabe9088ebd7113b3",
+    "bytes": 1629
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/v1.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/v1.js",
+    "sha256": "f228eb88e93069177de719ad5686bc5135b9738e4b3159819d50728f65131548",
+    "bytes": 3665
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/v1ToV6.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/v1ToV6.js",
+    "sha256": "89acd5bff63eb35f3464417827b9ec08232495f309ceb183b82f0b7ec51e17f0",
+    "bytes": 1089
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/v3.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/v3.js",
+    "sha256": "337d2b9ef80229c44c240e4218aa324b129d792701432061946ee4154e30080a",
+    "bytes": 105
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/v4.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/v4.js",
+    "sha256": "b6b63e296714ef2ae0e5e3c789505de73ae8df499ca4d09994e0b1933ed04d74",
+    "bytes": 676
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/v5.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/v5.js",
+    "sha256": "07e6d11989b44edbe92ccb697febb65225ebad32fb2f9c91c5b571a6f5a3c4df",
+    "bytes": 108
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/v6.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/v6.js",
+    "sha256": "63413aa211167ac8c09c4a83b5b924bf0ff6ad3172edce3d6e3dcd6a1d655bb0",
+    "bytes": 2146
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/v6ToV1.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/v6ToV1.js",
+    "sha256": "cc152d4b3e60611f329b299db3ff1a185f7d4b2ea9f2c4acfbe2dc968f225240",
+    "bytes": 1070
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/v7.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/v7.js",
+    "sha256": "ede1f9b3fbff7e9d805f6a6e672293ff35953b4217cc16e0f1cb1835afc08cc8",
+    "bytes": 4714
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/v35.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/v35.js",
+    "sha256": "b7783ad24948fa0fd00a46f38dc41b35274e88f5f2deef5feed94de57b31ef8b",
+    "bytes": 1727
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/validate.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/validate.js",
+    "sha256": "5422220fe0e9333ed765f86c3f43bbce4df2f1a2728f9832d992fdacf2b817f1",
+    "bytes": 139
+  },
+  {
+    "package": "uuid",
+    "version": "10.0.0",
+    "file": "dist/esm-browser/version.js",
+    "url": "https://cdn.jsdelivr.net/npm/uuid@10.0.0/dist/esm-browser/version.js",
+    "sha256": "5bc3ae6322e800c63e728c02a4593125ea1b483b75ac28dfc9d2ab87501e3a52",
+    "bytes": 197
+  },
+  {
+    "package": "jsonrepair",
+    "version": "3.13.0",
+    "file": "lib/umd/jsonrepair.js",
+    "url": "https://cdn.jsdelivr.net/npm/jsonrepair@3.13.0/lib/umd/jsonrepair.js",
+    "sha256": "c5bed06a292ca616814ee6c1c8c7fd11a59c5157b31fcf7b7581ee082b0c68cd",
+    "bytes": 30155
+  },
+  {
+    "package": "he",
+    "version": "1.2.0",
+    "file": "he.js",
+    "url": "https://cdn.jsdelivr.net/npm/he@1.2.0/he.js",
+    "sha256": "76c554d5bbfd032fe620595076a50abea5124b9cbd4e9ffe6ac94a4f855aeceb",
+    "bytes": 100899
+  }
+]

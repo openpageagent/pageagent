@@ -17,6 +17,7 @@
     builtinsModule = builtinsModule || require('./knowledge-builtins.js');
     toolDefinitionsModule = toolDefinitionsModule || require('../resources/protocol');
     if (!nodeTypesModule) {
+      if (!root.OfflineToolCatalog) require('../utilities/catalog.js');
       require('../flows/node-types.js');
       nodeTypesModule = root && root.NodeTypes;
     }

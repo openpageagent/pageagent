@@ -23,7 +23,11 @@
 
     function add(cleanup) {
       if (typeof cleanup !== 'function') return function () {};
-      var dispose = once(cleanup);
+      var dispose = once(function () {
+        var index = cleanups.indexOf(dispose);
+        if (index !== -1) cleanups.splice(index, 1);
+        cleanup();
+      });
       if (destroyed) dispose();
       else cleanups.push(dispose);
       return dispose;

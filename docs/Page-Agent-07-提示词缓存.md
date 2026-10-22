@@ -1,81 +1,59 @@
 # Page Agent 提示词缓存
 
-提示词缓存只优化请求成本和延迟，不改变消息的权威关系、工具能力或用户目标。当前请求分为可缓存前缀和每轮更新的运行时尾部。
+模型请求由稳定前缀和每轮更新的运行时尾部组成。缓存影响重复输入的计算成本和延迟，缓存内容仍占用上下文窗口。
 
-## 两部分请求
+## 请求结构
 
 ```text
-cacheable_prefix
-  = System Core + Provider 工具定义 + Journal 全序消息
-  + profile/request guidance 的追加更新
-
-runtime_tail
-  = 当前资源、时间、摘要、Recording、MCP、预算和恢复事实
+稳定前缀 = System Core + 工具定义 + 按顺序展开的对话消息
+         + profile/request guidance 更新
+运行时尾部 = 当前资源、时间、摘要、Recording、预算和恢复事实
 ```
 
-`runtime_tail` 每轮重新生成，始终是最后一条 user/data-only 消息。它不写入持久的 `promptMessages`、历史或 profile guidance，也不能携带权限声明。Knowledge 不会自动注入，需要时由模型显式读取。
+运行时尾部是最后一条 user 层数据消息，每轮重新生成，不写入持久消息历史。Knowledge 按需显式读取。
 
-Journal 按 sequence 全序展开，不能先按“历史/当前”分组再拼接。首次进入某个缓存时期时，profile guidance 放在首个用户内容之前。
+缓存周期建立时，profile guidance 位于用户消息序列之前。
 
-## Cache epoch
+同一缓存周期内，guidance 变化通过追加消息更新，撤销时追加空更新；未变化的内容按 hash 复用。
 
-Cache epoch 是可以执行前缀比较的稳定时期。以下内容变化时开启新的 epoch：
+Journal 消息按 sequence 全序展开，guidance 更新追加到前缀末尾，不插回已有消息之间。
+System Core 保持系统规则的权威，guidance 是 user 层方法，运行时尾部是事实数据；缓存位置不授予额外权限。
+
+## 缓存周期
+
+以下变化会开启新的 cache epoch：
 
 - System Core 或提示词行为版本；
-- Provider 可见工具集合或 schema；
-- 目标服务、协议兼容层、实际 endpoint 或模型；
-- Journal checkpoint 或明确的上下文替换边界。
+- 模型可见的工具集合或 schema；
+- 服务、协议适配、请求地址或模型；
+- Journal checkpoint 或上下文替换边界。
 
-单次请求参数（reasoning/thinking、采样、惩罚、输出上限和本地预算）不属于 epoch。它们在请求构造时按模型协议校验，不应造成无意义的前缀分裂。
-
-## Guidance 更新
-
-同一 epoch 内不要改写旧前缀或把新 guidance 插回历史。内容变化时在前缀末尾追加替换消息：
-
-```text
-旧 guidance
-+ 当前 profile/request guidance，声明替换此前同类版本
-+ 当前 runtime_tail
-```
-
-撤销 guidance 也追加明确的空更新。内容未变化时只根据 hash 复用，不能每轮重复大段文本。
-
-缓存命中不等于 guidance 获得更高权威。System Core 仍是系统规则，guidance 仍是 user 层方法，runtime 仍是 data-only 事实，工具能力仍由代码注册表和 RouteContract 决定。
+思考级别、采样、惩罚、输出上限和本地预算属于单次请求参数，不计入缓存周期标识。
 
 ## 持久状态
 
-`promptState` 至少记录：
+[`agent/context-builder.js`](../agent/context-builder.js) 在 `promptState` 中记录：
 
-```text
-contextEpoch
-cacheEpochHash
-前缀 messageCount / messagesHash
-systemPromptHash / toolSchemaHash
-profileGuidanceHash / prefixProfileGuidanceText
-requestGuidanceHash
-```
+| 字段 | 用途 |
+| --- | --- |
+| `contextEpoch`、`cacheEpochHash` | 上下文和缓存周期标识 |
+| `messageCount`、`messagesHash` | 已保存前缀的消息数量和内容 hash |
+| `systemPromptHash`、`toolSchemaHash` | 系统提示词和工具 schema 标识 |
+| `profileGuidanceHash`、`prefixProfileGuidanceText` | 当前 profile guidance 标识及前缀中的文本 |
+| `requestGuidanceHash` | 当前请求 guidance 标识 |
 
-下一轮重建同一 epoch 的前缀并校验数量和 hash。校验失败时报告前缀已改变或开启新的 epoch，不能静默重排、删除旧消息或覆盖旧 guidance。
-
-## Provider 缓存字段
-
-本地 `cacheEpochHash` 和 `promptCacheKey` 只表示本地状态或缓存分组意图，不能证明服务端已接受或命中。Provider 是否支持客户端 key、字段如何映射，由 [Page-Agent-08-模型服务兼容性](./Page-Agent-08-模型服务兼容性.md) 和对应适配器决定。
-
-支持客户端 key 的服务：key 只能由稳定 epoch 派生，不得包含当前页面、动态 guidance 或单次输出。未传入 key 时省略该字段，不能回退为 session ID 或 conversation ID。
-
-自动管理前缀缓存的服务：保持前缀稳定即可，实际命中以 Provider usage 中的缓存输入 token 为准。没有客户端 key 不代表没有缓存。
-
-输入 token 归一化为不重复的三部分：
-
-```text
-measured_input = inputTokens + cacheReadTokens + cacheWriteTokens
-```
-
-缓存 token 仍占用上下文窗口，不能从预算中扣除。UI 不展示专用缓存指标，但 trace、事件和 Provider usage 保留原始字段。
+后续组装按数量和 hash 校验已有前缀。同一周期内前缀被改写时返回 `PROMPT_PREFIX_CHANGED`，不能通过重排或覆盖已保存消息掩盖差异。
 
 ## 工具变化与上下文预算
 
-同一 generation 内，Provider 可见工具 schema 必须稳定。工具集合、schema 或权限 ceiling 变化时重新计算 hash 并开启 epoch；当前资源、路由合同或 request guidance 变化而工具 schema 不变时，只追加 guidance 更新。
+同一 generation 内，Provider 可见的工具集合和 schema 必须稳定。
+工具定义在 generation 建立时确定，不随剩余调用预算逐轮增删；执行预算在调用分发时检查。
+
+权限 ceiling 参与确定可用工具。新 generation 按其权限重新确定工具集合；工具集合或 schema 变化时，重新计算 `toolSchemaHash` 并开启新的 cache epoch。
+权限 ceiling 本身不单独计入缓存 hash；实际工具集合和 schema 未变化时，不因 ceiling 变化而单独开启 cache epoch。
+
+工具 schema 不变时，当前资源或路由合同引起的 guidance 变化，以及 request guidance 的其他变化，只追加 guidance 更新。
+页面、时间、预算等事实按轮更新运行时尾部。
 
 预算按完整 Provider 投影计算：
 
@@ -83,4 +61,19 @@ measured_input = inputTokens + cacheReadTokens + cacheWriteTokens
 System + tools + cacheable_prefix + runtime_tail + Provider envelope
 ```
 
-缓存只影响重复计算，不减少模型上下文占用。
+其中 `cacheable_prefix` 指持久消息前缀，System 和 tools 已单独计入，不重复计算。
+缓存命中的输入仍占用上下文窗口；预算还需为模型输出和安全余量预留空间。
+
+## 服务端缓存与统计
+
+`cacheEpochHash` 标识本地缓存周期，`promptCacheKey` 从该周期派生。
+
+客户端 key 是否发送由协议和兼容适配器决定，详见[模型服务兼容性](./Page-Agent-08-模型服务兼容性.md)。
+
+本地 key 不表示服务端已命中缓存；实际命中以服务返回的 usage 为准。输入 token 归一化为互不重复的三部分：
+
+```text
+measured_input = inputTokens + cacheReadTokens + cacheWriteTokens
+```
+
+trace、事件和 Provider usage 保留缓存字段，界面不单独展示缓存指标。

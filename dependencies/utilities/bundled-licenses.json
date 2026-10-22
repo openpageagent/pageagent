@@ -1,0 +1,514 @@
+[
+  {
+    "package": "@babel/runtime",
+    "version": "7.26.0",
+    "versionEvidence": "mathjs published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/@babel__runtime@7.26.0/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/@babel/runtime@7.26.0/LICENSE",
+        "sha256": "117da2af0d4ce0fe1c8e19b5cff9dcd806adf973d328d27b11d4448c4ff24f76"
+      }
+    ],
+    "license": "MIT",
+    "author": "The Babel Team (https://babel.dev/team)",
+    "gitHead": null,
+    "repository": {
+      "url": "https://github.com/babel/babel.git",
+      "type": "git",
+      "directory": "packages/babel-runtime"
+    }
+  },
+  {
+    "package": "complex.js",
+    "version": "2.4.2",
+    "versionEvidence": "mathjs published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/complex.js@2.4.2/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/complex.js@2.4.2/LICENSE",
+        "sha256": "87965240f584971c7d5f5e1b85bb6b08d619c8b88de180e7010d949a1d6cf1b2"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "url": "https://raw.org/",
+      "name": "Robert Eisele",
+      "email": "robert@raw.org"
+    },
+    "gitHead": "59b17a863cfc9b544dedfd6d0f9327b394ba5ee6",
+    "repository": {
+      "url": "git+ssh://git@github.com/rawify/Complex.js.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "core-js",
+    "version": "3.39.0",
+    "versionEvidence": "mathjs published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/core-js@3.39.0/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/core-js@3.39.0/LICENSE",
+        "sha256": "51aff0fa92ac49e01ce6ba0fed992b0a34f8afe15203dd5f38c43f9e88b0167b"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "url": "http://zloirock.ru",
+      "name": "Denis Pushkarev",
+      "email": "zloirock@zloirock.ru"
+    },
+    "gitHead": "fe6d2d6910f460630dd016163d0d5c8e4c2eaa22",
+    "repository": {
+      "url": "git+https://github.com/zloirock/core-js.git",
+      "type": "git",
+      "directory": "packages/core-js"
+    }
+  },
+  {
+    "package": "decimal.js",
+    "version": "10.4.3",
+    "versionEvidence": "mathjs published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/decimal.js@10.4.3/LICENCE.md",
+        "url": "https://cdn.jsdelivr.net/npm/decimal.js@10.4.3/LICENCE.md",
+        "sha256": "30630e75bcda7cbd1c2dee4c959d0c4551756e81796b4ddab8cc7449e03be820"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "name": "Michael Mclaughlin",
+      "email": "M8ch88l@gmail.com"
+    },
+    "gitHead": "77a72453c6669084ca776e11a8611129c2d8e78e",
+    "repository": {
+      "url": "git+https://github.com/MikeMcl/decimal.js.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "escape-latex",
+    "version": "1.2.0",
+    "versionEvidence": "mathjs published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/escape-latex@1.2.0/LICENSE.md",
+        "url": "https://cdn.jsdelivr.net/npm/escape-latex@1.2.0/LICENSE.md",
+        "sha256": "8672a18c18ded3d723172d9af1b6b99fce4882b4518dfbb80c9a97da9abb7ccb"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "name": "Dang Mai"
+    },
+    "gitHead": "15cc5ef8572ba0fe7e0d96ec4339ceec549c8d6b",
+    "repository": {
+      "url": "git+https://github.com/dangmai/escape-latex.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "fraction.js",
+    "version": "4.3.7",
+    "versionEvidence": "mathjs published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/fraction.js@4.3.7/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/fraction.js@4.3.7/LICENSE",
+        "sha256": "ff20ef9f4a15b351e2708410108383a84e9c0ac715da852961b6f7a6299651fb"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "url": "https://raw.org/",
+      "name": "Robert Eisele",
+      "email": "robert@raw.org"
+    },
+    "gitHead": "8c41c1da7739c4cace893d95fe78a9d35b3877c9",
+    "repository": {
+      "url": "git://github.com/rawify/Fraction.js.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "javascript-natural-sort",
+    "version": "0.7.1",
+    "versionEvidence": "mathjs published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/javascript-natural-sort@0.7.1/NOTICE.txt",
+        "url": "https://cdn.jsdelivr.net/npm/javascript-natural-sort@0.7.1/naturalSort.js",
+        "sha256": "e6bf9516b5fb74a86c017edce52af6ebec9d97f234847c7eb1acd1c885d83c7c",
+        "note": "Original attribution with standard MIT terms supplied from the declared license."
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "url": "based on chunking idea from Dave Koelle, packaged by @khous of Bill4Time",
+      "name": "Jim Palmer"
+    },
+    "gitHead": null,
+    "repository": {
+      "url": "https://github.com/Bill4Time/javascript-natural-sort.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "regenerator-runtime",
+    "version": "0.14.1",
+    "versionEvidence": "mathjs published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/regenerator-runtime@0.14.1/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/regenerator-runtime@0.14.1/LICENSE",
+        "sha256": "51887a3d47051ac2fce1210562e5b9fe0830a8a8fabeb272c2d586eeb18a05fd"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "name": "Ben Newman",
+      "email": "bn@cs.stanford.edu"
+    },
+    "gitHead": "6be1e6295ce1577142c44863175d5180d91f8f00",
+    "repository": {
+      "url": "git+https://github.com/facebook/regenerator.git#main",
+      "type": "git"
+    }
+  },
+  {
+    "package": "seedrandom",
+    "version": "3.0.5",
+    "versionEvidence": "mathjs published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/seedrandom@3.0.5/LICENSE.header.txt",
+        "url": "https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.js",
+        "sha256": "35239de2e7f05b0ae7dd0f521f21cfb4045898973091b9331e1a044a3cf01e3b",
+        "note": "Original license header, without algorithm source."
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "name": "David Bau"
+    },
+    "gitHead": "4460ad325a0a15273a211e509f03ae0beb99511a",
+    "repository": {
+      "url": "git://github.com/davidbau/seedrandom.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "tiny-emitter",
+    "version": "2.1.0",
+    "versionEvidence": "mathjs published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/tiny-emitter@2.1.0/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/tiny-emitter@2.1.0/LICENSE",
+        "sha256": "aada4c7da6a5be46beadf9d4f40d7dba9e222e57180d46289b2bb9112e65daae"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "name": "Scott Corgan"
+    },
+    "gitHead": "a6026cc94da5d2d164104dd30586eee6bb4fb29c",
+    "repository": {
+      "url": "git+https://github.com/scottcorgan/tiny-emitter.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "typed-function",
+    "version": "4.2.1",
+    "versionEvidence": "mathjs published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/typed-function@4.2.1/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/typed-function@4.2.1/LICENSE",
+        "sha256": "0efa8c81fc2a1e8c668d49cdc60e48e9f2affdb3ee736462ace669ffe44a5dcf"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "url": "https://github.com/josdejong",
+      "name": "Jos de Jong",
+      "email": "wjosdejong@gmail.com"
+    },
+    "gitHead": "fc6529fc75899aa2b55c7216ad3bf6464257e9cb",
+    "repository": {
+      "url": "git+https://github.com/josdejong/typed-function.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "css-tree",
+    "version": "2.2.0",
+    "versionEvidence": "csso published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/css-tree@2.2.0/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/css-tree@2.2.0/LICENSE",
+        "sha256": "be1fdbf86bfd2c72d8bce3b46fb28b24dd5e147b7d299c810c599509ddc0a66e"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "url": "https://github.com/lahmatiy",
+      "name": "Roman Dvornov",
+      "email": "rdvornov@gmail.com"
+    },
+    "gitHead": "efdd3e73346f2971eac1dc33e922e949e297e52a",
+    "repository": {
+      "url": "git+https://github.com/csstree/csstree.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "mdn-data",
+    "version": "2.0.28",
+    "versionEvidence": "csso published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/mdn-data@2.0.28/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/mdn-data@2.0.28/LICENSE",
+        "sha256": "36ffd9dc085d529a7e60e1276d73ae5a030b020313e6c5408593a6ae2af39673"
+      }
+    ],
+    "license": "CC0-1.0",
+    "author": {
+      "name": "Mozilla Developer Network"
+    },
+    "gitHead": "45cdeb5a1a8f28b5801c3eba96b1d65a9fc188bc",
+    "repository": {
+      "url": "git+https://github.com/mdn/data.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "source-map-js",
+    "version": "1.0.1",
+    "versionEvidence": "csso published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/source-map-js@1.0.1/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/source-map-js@1.0.1/LICENSE",
+        "sha256": "6cb0631f71c7749763fd3dd1d5bee52dd1070ec17f2edc1710079ad070bd2fbd"
+      }
+    ],
+    "license": "BSD-3-Clause",
+    "author": {
+      "name": "Valentin 7rulnik Semirulnik",
+      "email": "v7rulnik@gmail.com"
+    },
+    "gitHead": null,
+    "repository": {
+      "url": "git+https://github.com/7rulnik/source-map.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "strnum",
+    "version": "2.1.0",
+    "versionEvidence": "fast-xml-parser published gitHead lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/strnum@2.1.0/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/strnum@2.1.0/LICENSE",
+        "sha256": "2aa16be0f4fad003a352a955a43314e9d1d8deef7034060a82ac9c49f32b81e2"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "url": "https://amitkumargupta.work/",
+      "name": "Amit Gupta"
+    },
+    "gitHead": "5716fe8c93293838a8f7e1cff97ba1253b75be04",
+    "repository": {
+      "url": "git+https://github.com/NaturalIntelligence/strnum.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "jsbn",
+    "version": "1.1.0",
+    "versionEvidence": "sm-crypto dependency declaration",
+    "files": [
+      {
+        "file": "bundled-licenses/jsbn@1.1.0/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/jsbn@1.1.0/LICENSE",
+        "sha256": "e0e396530fd1624126e9a7e0df94811e4062e03baeccb07bc33c934b0fd93a85"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "name": "Tom Wu"
+    },
+    "gitHead": "038459dc74668bfb43b45d78b33ffc9c8e7bf34a",
+    "repository": {
+      "url": "git+https://github.com/andyperlitch/jsbn.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "jsep",
+    "version": "1.4.0",
+    "versionEvidence": "jsonpath-plus pnpm lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/jsep@1.4.0/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/jsep@1.4.0/LICENSE",
+        "sha256": "4a4cffde4afd302689cd6aad9b05463a798d3dbe4cb2488bda45af1977affe33"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "url": "http://from.so/",
+      "name": "Stephen Oney",
+      "email": "swloney@gmail.com"
+    },
+    "gitHead": "6d5a74ba53cb1e55767f26d9bf7b6fb47fc4ed06",
+    "repository": {
+      "url": "git+https://github.com/EricSmekens/jsep.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "@jsep-plugin/assignment",
+    "version": "1.3.0",
+    "versionEvidence": "jsonpath-plus pnpm lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/@jsep-plugin__assignment@1.3.0/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/@jsep-plugin/assignment@1.3.0/LICENSE",
+        "sha256": "4a4cffde4afd302689cd6aad9b05463a798d3dbe4cb2488bda45af1977affe33"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "url": "https://github.com/6utt3rfly",
+      "name": "Shelly"
+    },
+    "gitHead": "15dfe585645c20114341324c3ae8a80fbfbe988f",
+    "repository": {
+      "url": "git+https://github.com/EricSmekens/jsep.git",
+      "directory": "packages/assignment"
+    }
+  },
+  {
+    "package": "@jsep-plugin/regex",
+    "version": "1.0.4",
+    "versionEvidence": "jsonpath-plus pnpm lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/@jsep-plugin__regex@1.0.4/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/@jsep-plugin/regex@1.0.4/LICENSE",
+        "sha256": "4a4cffde4afd302689cd6aad9b05463a798d3dbe4cb2488bda45af1977affe33"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "url": "https://github.com/6utt3rfly",
+      "name": "Shelly"
+    },
+    "gitHead": "dc78802287d4a6409e4d92deb09eb593ca858dad",
+    "repository": {
+      "url": "git+https://github.com/EricSmekens/jsep.git",
+      "directory": "packages/regex"
+    }
+  },
+  {
+    "package": "php-parser",
+    "version": "3.1.5",
+    "versionEvidence": "prettier PHP yarn lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/php-parser@3.1.5/dist/php-parser.min.js.LICENSE.txt",
+        "url": "https://cdn.jsdelivr.net/npm/php-parser@3.1.5/dist/php-parser.min.js.LICENSE.txt",
+        "sha256": "fb11de9b2239fb14b06d47f832fea5f0478527dd601f66a7497d00b86dbc9a69"
+      },
+      {
+        "file": "bundled-licenses/php-parser@3.1.5/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/php-parser@3.1.5/LICENSE",
+        "sha256": "aacf2abdcacccb8510ab39d89586c24c2fa9f2c3824a43b6c34c76e9a7f3f650"
+      }
+    ],
+    "license": "BSD-3-Clause",
+    "author": {
+      "name": "Ioan CHIRIAC"
+    },
+    "gitHead": "b809dc16521838f7c79a2d2e36d60f75378db1f2",
+    "repository": {
+      "url": "git+https://github.com/glayzzle/php-parser.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "linguist-languages",
+    "version": "7.27.0",
+    "versionEvidence": "prettier PHP yarn lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/linguist-languages@7.27.0/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/linguist-languages@7.27.0/LICENSE",
+        "sha256": "bc3c60953044b4ec92a85e49516b03da0ac7f0dde879f5359de700aeab4de0b7"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "url": "https://github.com/ikatyang",
+      "name": "Ika",
+      "email": "ikatyang@gmail.com"
+    },
+    "gitHead": null,
+    "repository": {
+      "url": "git+https://github.com/ikatyang/linguist-languages.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "nearley",
+    "version": "2.20.1",
+    "versionEvidence": "sql-formatter yarn lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/nearley@2.20.1/LICENSE.txt",
+        "url": "https://cdn.jsdelivr.net/npm/nearley@2.20.1/LICENSE.txt",
+        "sha256": "f0fcba18e7d0bc4c22f58a33566f27a0f26184d4e02827371a0ed84ea56a26e9"
+      }
+    ],
+    "license": "MIT",
+    "author": {
+      "name": "Hardmath123"
+    },
+    "gitHead": "b3e8f3ef4b68b5be8b1ea8ff6afc9d2875b103c2",
+    "repository": {
+      "url": "git+https://github.com/hardmath123/nearley.git",
+      "type": "git"
+    }
+  },
+  {
+    "package": "moo",
+    "version": "0.5.1",
+    "versionEvidence": "sql-formatter yarn lockfile",
+    "files": [
+      {
+        "file": "bundled-licenses/moo@0.5.1/LICENSE",
+        "url": "https://cdn.jsdelivr.net/npm/moo@0.5.1/LICENSE",
+        "sha256": "db0b57e1acff55e7283e4de70069ef7c92524ce055bebb9a9795ebb9e97e6cb1"
+      }
+    ],
+    "license": "BSD-3-Clause",
+    "author": {
+      "name": "Tim Radvan",
+      "email": "tim@tjvr.org"
+    },
+    "gitHead": "cf9b14f2c45964b3eddcbe1024476e8410e7f14c",
+    "repository": {
+      "url": "git+https://github.com/tjvr/moo.git",
+      "type": "git"
+    }
+  }
+]

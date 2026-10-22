@@ -27,10 +27,10 @@ usage() {
   dist/page-agent-extension-<version>-no-minify.zip  （--no-minify）
 
 说明：
-  - ZIP 文件名包含版本号，但 ZIP 内的顶层目录不包含版本号（例如解压后得到 page-agent-extension/）。
+  - ZIP 文件名包含版本号，但 ZIP 内的顶层目录不包含版本号。
   - 本脚本实际创建的是 ZIP 包，而不是 .crx 文件。
   - 生成的 ZIP 用于内部发布，作为未打包的扩展程序包使用。
-  - 默认会压缩 JS/CSS，但不会混淆代码。
+  - 默认会压缩 JS/CSS，但不会混淆代码；builtin-apps/ 和应用默认主题保留可读源码。
   - 需要可读且未压缩的程序包时，使用 --no-minify。
   - JS 属性名、全局导出名、文件名和目录结构都会保留。
 EOF
@@ -172,6 +172,10 @@ stage_start "同步内置流程索引"
 sync_builtin_flow_index
 stage_done
 
+stage_start "同步内置应用索引"
+node "$ROOT_DIR/scripts/sync-builtin-app-index.js"
+stage_done
+
 stage_start "准备 Turndown 运行时"
 npm run build:turndown-runtime
 [[ -f "$ROOT_DIR/dependencies/turndown/turndown.browser.umd.js" ]] || fail "未生成 Turndown 运行时"
@@ -228,7 +232,12 @@ if [[ "$MINIFY" -eq 1 ]]; then
   export TERSER_BIN
   find "$STAGING_DIR" -type f -name "*.js" \
     ! -path "$STAGING_DIR/dependencies/turndown/*.js" \
+    ! -path "$STAGING_DIR/dependencies/marked/*.js" \
+    ! -path "$STAGING_DIR/dependencies/dompurify/*.js" \
+    ! -path "$STAGING_DIR/dependencies/monaco/*" \
+    ! -path "$STAGING_DIR/dependencies/utilities/*" \
     ! -path "$STAGING_DIR/builtin-skills/*" \
+    ! -path "$STAGING_DIR/builtin-apps/*" \
     -print0 | xargs -0 -P "$MINIFY_JOBS" -n 1 bash -c '
       file="$1"
       tmp="${file}.tmp.$$"
@@ -239,7 +248,8 @@ if [[ "$MINIFY" -eq 1 ]]; then
 
   stage_start "压缩 CSS（$MINIFY_JOBS 个并行任务）"
   export CLEANCSS_BIN
-  find "$STAGING_DIR" -type f -name "*.css" ! -path "$STAGING_DIR/builtin-skills/*" -print0 | xargs -0 -P "$MINIFY_JOBS" -n 1 bash -c '
+  # Built-in application sources and their editable default theme retain readable originals.
+  find "$STAGING_DIR" -type f -name "*.css" ! -path "$STAGING_DIR/builtin-skills/*" ! -path "$STAGING_DIR/builtin-apps/*" ! -path "$STAGING_DIR/apps/default-theme.css" ! -path "$STAGING_DIR/dependencies/monaco/*" -print0 | xargs -0 -P "$MINIFY_JOBS" -n 1 bash -c '
     file="$1"
     tmp="${file}.tmp.$$"
     "$CLEANCSS_BIN" -o "$tmp" "$file" >/dev/null

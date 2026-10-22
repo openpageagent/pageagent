@@ -277,7 +277,7 @@
         '<h3>' + (readonly ? '查看内置页面' : (page.id ? '编辑页面' : '新建页面')) + (readonly ? ' <span class="badge builtin">内置</span>' : '') + '</h3>'
         + (readonly ? '<div class="readonly-banner">内置页面来自扩展包，不能直接修改，请先复制为用户页面后编辑。</div>' : '')
         + '<div class="form-grid">'
-        + '<div class="form-row"><label>名称</label><input type="text" id="page-label" value="' + esc(page.label) + '" placeholder="如：ERP 报表页"' + (readonly ? ' disabled' : '') + '></div>'
+        + '<div class="form-row"><label>名称</label><input type="text" id="page-label" value="' + esc(page.label) + '" placeholder="ERP 报表页"' + (readonly ? ' disabled' : '') + '></div>'
         + '<div class="form-row"><label>页面 URL（打开页面时使用）</label><input type="text" id="page-url" value="' + esc(page.url) + '" placeholder="https://erp.internal.company.com/report"' + (readonly ? ' disabled' : '') + '></div>'
         + '</div>'
         + '<div class="form-grid">'
@@ -298,9 +298,9 @@
         + '</select></div>'
         + '<div class="form-row"><label>请求超时（毫秒）</label><input type="number" id="page-heartbeat-timeout" min="1000" max="60000" value="' + esc(heartbeat.requestTimeoutMs || 15000) + '"' + (readonly ? ' disabled' : '') + '></div>'
         + '</div>'
-        + '<div class="form-row"><label>请求头（JSON 或每行 Key: Value）</label><textarea id="page-heartbeat-headers" rows="2"' + (readonly ? ' disabled' : '') + '>' + esc(heartbeat.headers || '') + '</textarea></div>'
-        + '<div class="form-row"><label>请求体（仅 POST）</label><textarea id="page-heartbeat-body" rows="2"' + (readonly ? ' disabled' : '') + '>' + esc(heartbeat.body || '') + '</textarea></div>'
-        + '<div class="form-row"><label>期望 HTTP 状态码（例如 200-299,304）</label><input type="text" id="page-heartbeat-status" value="' + esc(heartbeat.expectedStatus || '200-399') + '"' + (readonly ? ' disabled' : '') + '></div>'
+        + '<div class="form-row"><label>请求头（JSON 或每行 Key: Value）</label><page-code-editor id="page-heartbeat-headers" language="auto" rows="3"' + (readonly ? ' disabled' : '') + '>' + esc(heartbeat.headers || '') + '</page-code-editor></div>'
+        + '<div class="form-row"><label>请求体（仅 POST）</label><page-code-editor id="page-heartbeat-body" language="auto" rows="3"' + (readonly ? ' disabled' : '') + '>' + esc(heartbeat.body || '') + '</page-code-editor></div>'
+        + '<div class="form-row"><label>期望 HTTP 状态码（逗号分隔，支持范围）</label><input type="text" id="page-heartbeat-status" value="' + esc(heartbeat.expectedStatus || '200-399') + '"' + (readonly ? ' disabled' : '') + '></div>'
         + '</details>'
         + '<div class="editor-actions">'
         + (readonly

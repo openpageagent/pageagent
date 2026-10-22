@@ -89,6 +89,9 @@
       }
       var session = createSession(snapshot.flowId, {
         runId: snapshot.runId || fallbackRunId,
+        appAuthorization: snapshot.appAuthorization || null,
+        appNodes: snapshot.appNodes || null,
+        appConfig: snapshot.appConfig || null,
         entry: snapshot.entry,
         assistantInvocationKind: snapshot.assistantInvocationKind || '',
         parentRunId: snapshot.parentRunId || '',
@@ -118,7 +121,8 @@
     function startSessionRun(flowId, options) {
       var runOptions = options || {};
       return Promise.resolve().then(getConfigReady).then(function () {
-        if (!hasRegisteredFlow(flowId)) throw new Error('流程不存在: ' + flowId);
+        var capturedNodes = runOptions.appAuthorization && runOptions.appConfig && (runOptions.appNodes || runOptions.appNodeSets && runOptions.appNodeSets[flowId]);
+        if (!Array.isArray(capturedNodes) && !hasRegisteredFlow(flowId)) throw new Error('流程不存在: ' + flowId);
 
         // Register and reserve before asynchronous tab inspection so concurrent
         // starts can observe this run and avoid claiming the same tab.
@@ -254,7 +258,7 @@
         var session = getSession(runId);
         if (!session) throw new Error('会话不存在或已过期: ' + runId);
         if (session.status === 'running') throw new Error('该会话正在运行中');
-        if (!hasRegisteredFlow(session.flowId)) {
+        if (!(session.appAuthorization && Array.isArray(session.appNodes)) && !hasRegisteredFlow(session.flowId)) {
           throw new Error('流程已被删除，无法续跑: ' + session.flowLabel);
         }
         requireSessionMethod(session, 'restart')('resume:' + nodeId, {
@@ -295,7 +299,8 @@
         if (session && session.status === 'running') throw new Error('该会话正在运行中');
 
         var flowId = session ? session.flowId : snapshot.flowId;
-        if (!hasRegisteredFlow(flowId)) {
+        var captured = session || snapshot;
+        if (!(captured.appAuthorization && Array.isArray(captured.appNodes)) && !hasRegisteredFlow(flowId)) {
           throw new Error('流程已被删除，无法继续: '
             + (session ? session.flowLabel : snapshot.flowLabel));
         }

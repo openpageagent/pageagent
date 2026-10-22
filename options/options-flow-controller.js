@@ -395,16 +395,16 @@
           + '<span class="item-title">' + esc(ownDataValue(flow, 'label') || '(未命名)') + '</span>'
           + '<span class="item-sub">' + nodeCount + ' 个节点' + (ownDataValue(flow, 'dataset') ? ' · 数据驱动' : '') + (usageSummary ? ' · ' + esc(usageSummary) : '') + (ownDataValue(flow, 'description') ? ' · ' + esc(ownDataValue(flow, 'description')) : '') + '</span>'
           + (builtin ? '<span class="badge builtin">内置</span>' : '')
-          + '<button class="btn-small" data-action="run-flow" data-id="' + esc(id) + '">运行</button>'
-          + (builtin
-            ? '<button class="btn-small" disabled title="内置流程不支持导出，请先复制为用户流程">导出</button>'
-            : '<button class="btn-small" data-action="export-flow" data-id="' + esc(id) + '">导出</button>')
+          + itemIdHtml(id)
           + (builtin
             ? '<button class="btn-small" disabled title="内置流程不能直接修改，请先复制">修改</button>'
               + '<button class="btn-small btn-danger-outline" disabled title="内置流程不能删除">删除</button>'
               + '<button class="btn-small" data-action="copy-flow" data-id="' + esc(id) + '">复制</button>'
             : '')
-          + itemIdHtml(id)
+          + '<button class="btn-small" data-action="run-flow" data-id="' + esc(id) + '">运行</button>'
+          + (builtin
+            ? '<button class="btn-small" disabled title="内置流程不支持导出，请先复制为用户流程">导出</button>'
+            : '<button class="btn-small" data-action="export-flow" data-id="' + esc(id) + '">导出</button>')
           + '</div>';
       });
       renderEditor();
@@ -432,26 +432,26 @@
         '<h3>' + (readonly ? '查看内置流程' : (id ? '编辑流程' : '新建流程')) + (readonly ? ' <span class="badge builtin">内置</span>' : '') + '</h3>'
         + (readonly ? '<div class="readonly-banner">内置流程来自扩展包，只能运行或复制为用户流程后编辑。</div>' : '')
         + '<div class="flow-editor-header">'
-        + '<div class="form-row"><label>流程名称</label><input type="text" id="flow-label" value="' + esc(ownDataValue(flow, 'label')) + '" placeholder="如：每日报表推送"' + (readonly ? ' disabled' : '') + '></div>'
+        + '<div class="form-row"><label>流程名称</label><input type="text" id="flow-label" value="' + esc(ownDataValue(flow, 'label')) + '" placeholder="每日报表推送"' + (readonly ? ' disabled' : '') + '></div>'
         + (readonly ? '' : '<button class="btn-primary" data-action="open-add-node-drawer">添加节点</button>')
         + '</div>'
         + '<div class="form-row form-row-spaced"><label>使用说明</label>'
         + '<textarea id="flow-description" rows="3" placeholder="说明这个流程做什么、运行前需要什么页面状态，以及调用示例。"' + (readonly ? ' disabled' : '') + '>' + esc(ownDataValue(flow, 'description') || '') + '</textarea></div>'
         + '<div class="form-grid io-editor-grid">'
         + '<div class="form-row"><label>入参说明</label>'
-        + '<textarea id="flow-input-description" rows="4" placeholder="写给使用者看的入参说明，例如运行 JSON 可以传哪些字段、字段含义、可选值。这里不生成入参表单，不做校验。"' + (readonly ? ' disabled' : '') + '>' + esc(ownDataValue(flow, 'inputDescription') || '') + '</textarea></div>'
+        + '<textarea id="flow-input-description" rows="4" placeholder="说明入参字段、含义和可选值"' + (readonly ? ' disabled' : '') + '>' + esc(ownDataValue(flow, 'inputDescription') || '') + '</textarea></div>'
         + '<div class="form-row"><label>出参说明</label>'
-        + '<textarea id="flow-output-description" rows="4" placeholder="写给使用者看的出参说明，例如 result.answer 是最终回答，result 是完整对象。这里不配置出参路径。"' + (readonly ? ' disabled' : '') + '>' + esc(ownDataValue(flow, 'outputDescription') || '') + '</textarea></div>'
+        + '<textarea id="flow-output-description" rows="4" placeholder="说明返回数据的结构和字段含义"' + (readonly ? ' disabled' : '') + '>' + esc(ownDataValue(flow, 'outputDescription') || '') + '</textarea></div>'
         + '</div>'
         + '<div class="form-row form-row-spaced"><label>运行入参示例（可选 JSON）</label>'
-        + '<textarea id="flow-input-example" rows="4" placeholder=\'{"question":"你是谁，当前是什么时间","mode":"quick","deepThink":"false","webSearch":"true"}\'' + (readonly ? ' disabled' : '') + '>' + esc(ownDataValue(flow, 'inputExample') || '') + '</textarea>'
+        + '<page-code-editor id="flow-input-example" language="json" rows="4" placeholder=\'{"question":"你是谁，当前是什么时间","mode":"quick","deepThink":"false","webSearch":"true"}\'' + (readonly ? ' disabled' : '') + '>' + esc(ownDataValue(flow, 'inputExample') || '') + '</page-code-editor>'
         + '<div class="form-help">仅作为运行界面的预填示例。运行入参仍是可选 JSON，不会生成字段表单或强制校验。</div></div>'
         + renderFlowUsageSummary(flow, '填写后，运行界面会展示说明和输入示例。')
         + '<div class="form-row form-row-spaced"><label>运行标签策略</label>'
         + runTabModeSelectHtml('flow-run-tab-mode', ownDataValue(flow, 'runTabMode') || 'reuseOpenTab', readonly, false)
         + '<div class="form-help">控制本流程打开页面时使用哪个标签。流程组步骤可单独覆盖该设置。</div></div>'
         + '<div class="form-row form-row-spaced"><label>数据集（可选，JSON 数组；每组数据跑一遍流程，节点参数用 {{data.字段}} 引用）</label>'
-        + '<textarea id="flow-dataset" rows="3" placeholder=\'[{"user":"alice","pwd":"123"},{"user":"bob","pwd":"456"}]\'' + (readonly ? ' disabled' : '') + '>' + esc(ownDataValue(flow, 'dataset') || '') + '</textarea></div>'
+        + '<page-code-editor id="flow-dataset" language="json" rows="3" placeholder=\'[{"user":"alice","pwd":"123"},{"user":"bob","pwd":"456"}]\'' + (readonly ? ' disabled' : '') + '>' + esc(ownDataValue(flow, 'dataset') || '') + '</page-code-editor></div>'
         + '<div class="node-list" id="node-list-container">'
         + (nodes.length ? nodes.map(function (node, index) {
           return nodeCardHtml(node, index, nodes.length, nodes, readonly);
@@ -506,7 +506,7 @@
         + '<input type="text" id="flow-mail-subject" maxlength="998" value="' + esc(mailNotification.subject === undefined ? MailSettings.FLOW_NOTIFICATION_DEFAULTS.subject : mailNotification.subject) + '"' + (readonly ? ' disabled' : '') + '>'
         + '<div class="form-help">可修改默认主题，支持流程变量，如 {{input.名称}}、{{notification.flowLabel}}（流程名称）、{{notification.statusLabel}}（成功／失败）。</div></div>'
         + '<div class="form-row form-row-spaced"><label for="flow-mail-body">邮件正文（纯文本）</label>'
-        + '<textarea id="flow-mail-body" rows="10" maxlength="1048576"' + (readonly ? ' disabled' : '') + '>' + esc(mailNotification.body === undefined ? MailSettings.FLOW_NOTIFICATION_DEFAULTS.body : mailNotification.body) + '</textarea>'
+        + '<page-code-editor id="flow-mail-body" language="html" template rows="10"' + (readonly ? ' disabled' : '') + '>' + esc(mailNotification.body === undefined ? MailSettings.FLOW_NOTIFICATION_DEFAULTS.body : mailNotification.body) + '</page-code-editor>'
         + '<div class="form-help">可直接修改默认正文。用 {{input.字段}} 引用入参、{{变量名}} 引用节点输出、{{json 变量名}} 插入 JSON；{{notification.error}} 为失败原因。变量取流程结束时的值，多轮运行取最后一轮，未生成的变量为空。notification 为通知专用变量。</div></div>'
         + (readonly ? '<p class="form-help">内置流程需复制为用户流程后修改。</p>' : '')
         + '</form>';

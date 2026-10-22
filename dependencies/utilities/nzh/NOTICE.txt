@@ -1,0 +1,10 @@
+nzh 1.0.13
+Author: cnwhy
+Homepage: http://cnwhy.github.io/nzh
+Source: https://github.com/cnwhy/nzh
+
+The distributed dist/nzh.min.js header and npm package metadata declare
+BSD-2-Clause. That release does not include a separate license file or a
+copyright year. The original header is preserved. The standard license
+terms are supplied in LICENSE.BSD-2-Clause.txt; no copyright year has been
+invented for the author.

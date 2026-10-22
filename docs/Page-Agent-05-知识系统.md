@@ -1,65 +1,61 @@
 # Page Agent 知识系统
 
-Knowledge 为对话提供可跨任务复用的产品知识、方法和外部工具说明。实时页面、运行报告、资源路径和节点参数不放在 Knowledge 中，它们分别由页面资源、运行资源、ARP RouteContract 和节点定义提供。
+Knowledge 保存可跨任务复用的产品知识、方法和外部工具说明。页面状态、运行结果和接口参数分别从页面资源、运行资源和当前资源契约获取。
 
-## 数据层次
+## 来源
 
-| 层 | 来源 | 用途 |
+| 层 | 来源 | 内容 |
 | --- | --- | --- |
-| P1 builtin | 仓库内置稳定知识 | 产品概念和通用方法 |
-| P2 auto | 用户或 Agent 保存 | 已验证、可复用的经验 |
-| P3 mcp | 外部 MCP 的工具目录 | 外部服务说明 |
-| P4 skill | 内置或用户导入的 Skill | 完整方法与参考资料 |
+| P1 builtin | 仓库内置知识 | 产品概念和通用方法 |
+| P2 auto | 用户或 Agent 保存 | 可复用知识与经验 |
+| P3 mcp | 外部 MCP 工具目录 | 外部服务说明 |
+| P4 skill | 内置或导入的 Skill | 方法正文与参考资料 |
 
-层次只用于相关性接近时排序；当前页面和运行证据始终优先。
+来源层次用于相关性接近时的排序。
 
-## 条目结构
+## 查询与维护
 
-小型条目使用默认 GET 结构，读取 `/knowledge/{knowledgeId}` 得到完整正文。大型文档可以声明 `retrieval: "grep"`：列表和普通 GET 只返回说明与带行号目录，再通过 grep 按节读取正文，避免一次占满上下文。存储上限为单条 1,000,000 字符，正常条目不会被截断。
-
-grep 查询示例：
+对话按需显式读取知识：先查询候选条目，再按 ID 读取正文。
 
 ```text
+GET /knowledge
+GET /knowledge?mode=relevance&q=登录
 GET /knowledge?mode=grep&q=登录&context=2
-GET /knowledge?mode=grep&q=timeout&after=20
+GET /knowledge/{knowledgeId}
 ```
 
-对话不会自动检索 Knowledge。模型根据当前任务需要，先用 `/knowledge` 的列表、grep 或 relevance 查询找到 `knowledgeId`，再读取条目；已知 Skill ID 可直接读取 `/skills/{skillId}`。
+普通条目的 GET 返回正文；声明 `retrieval: "grep"` 的大条目返回说明与带行号目录，正文通过集合的 grep 查询读取。
+
+用户可在配置中心维护知识，Agent 可通过 `POST /knowledge` 保存已验证、可跨任务复用的内容。
+
+运行时不会在每轮对话结束后自动发起知识保存请求。
 
 ## Skill
 
-一个 Skill 对应一条 Knowledge 记录，正文和可读文本资源完整内嵌在主记录中：
+每个 Skill 对应一条知识记录，包含 `SKILL.md` 正文和可读文本资源。
 
-```text
-builtin-skills/<slug>/SKILL.md
-  -> skillInstructions
-  -> skillResources[{id, path, kind, type, size, text}]
-```
+内置 Skill 在启动时同步为只读 P4；用户可在配置中心导入 Skill。
 
-内置 Skill 由 `builtin-skills/index.json` 声明，扩展启动时同步为只读 P4；用户可以在配置中心导入 Skill。二进制文件不导入，脚本和资源只作为参考文本，扩展不会执行 Skill 中的脚本。
+二进制文件不导入，脚本仅作为参考文本保存。已知 ID 时可直接读取 `/skills/{skillId}`。
+
+知识库、Skill 列表和导入预览默认每页 50 项，可选 25、50 或 100 项。导入目录的勾选包含未展开或未显示在本页的子项。
 
 ## MCP 知识
 
-外部 MCP 服务器由 `/connections` 或 `/mcp-servers` 管理。服务器的 `tools/list` 结果保存为 P3 知识，实际调用仍走：
+外部 MCP 服务器通过 `/connections` 或 `/mcp-servers` 管理，`tools/list` 结果保存为 P3。调用工具使用：
 
 ```text
 POST /mcp-servers/{serverId}/tools/{toolName}/calls
 ```
 
-远端工具名不会变成本地模型工具。用户编辑 P3 内容时会生成 P2 副本。
+编辑 P3 内容会生成 P2 副本。
 
-## 自动沉淀
+## 应用生成知识
 
-当前运行时不会在每轮对话结束后自动发起沉淀请求。写入 Knowledge 的入口是 Agent 明确调用 `POST /knowledge` 或用户在知识面板中维护。适合保存的内容应已验证、可以脱离当前页面复用，不能是一次性结果、瞬时状态、敏感信息或未经验证的猜测。
+`builtin_app_generation_guide` 是受保护的内置知识。
 
-## 代码位置
+Agent 创建或修改应用前，先读取 `/apps` 或目标应用，再完整读取 `/knowledge/builtin_app_generation_guide`；摘要和 grep 片段不满足读取要求。
 
-- `knowledge/knowledge.js`：知识域 API；
-- `knowledge/knowledge-search.js`：list、search、grep 和 compact 投影；
-- `knowledge/knowledge-store.js`：存储与归一化；
-- `knowledge/skill-knowledge.js`：Skill 导入；
-- `background/builtin-skill-loader.js`：内置 Skill 启动同步；
-- `resources/modules/knowledge-resource.js`：ARP `/knowledge` 路由；
-- `options/knowledge-panel.js`：知识面板。
+普通对话不自动注入该正文。SDK、权限和依赖以当前应用资源契约及工具结果为准，应用使用说明见[应用](./Page-Agent-13-应用.md)。
 
-工具和节点合同的权威来源是当前 RouteContract、`/node-types/{nodeType}` 和响应 links，不要再复制成固定工具手册。
+该知识也包含 `/utilities` 离线计算能力的使用说明，支持对话、应用、流程和脚本调用，接口见 [ARP 工具调用](./Page-Agent-09-ARP工具调用.md#离线计算)。

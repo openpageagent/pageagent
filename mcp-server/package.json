@@ -1,6 +1,6 @@
 {
   "name": "@page-agent/mcp-server",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "ARP/1 MCP transport for the Page Agent Extension",
   "main": "index.js",
   "bin": {
@@ -26,6 +26,9 @@
     "@modelcontextprotocol/sdk": "^0.5.0",
     "nodemailer": "8.0.11",
     "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "robotjs": "0.9.1"
   },
   "devDependencies": {
     "esbuild": "^0.19.12"

@@ -113,6 +113,8 @@
     var getModelClient = requireFunction(deps.getModelClient, 'getModelClient');
     var httpFetch = requireFunction(deps.httpFetch, 'httpFetch');
     var execSaveFile = requireFunction(deps.execSaveFile, 'execSaveFile');
+    var listUtilities = requireFunction(deps.listUtilities, 'listUtilities');
+    var executeUtility = requireFunction(deps.executeUtility, 'executeUtility');
     var logForExecution = requireFunction(deps.logForExecution, 'logForExecution');
     var addLog = requireFunction(deps.addLog, 'addLog');
 
@@ -395,6 +397,10 @@
         }
         case 'file.save':
           return execSaveFile(normalizeFileSaveArgs(args), execution);
+        case 'utilities.list':
+          return listUtilities();
+        case 'utilities.execute':
+          return executeUtility(args[0], args[1], execution);
         case 'ctx.get': {
           var runCtx = getRunCtx();
           return Promise.resolve(args[0] === undefined ? copyOwnData(runCtx) : resolveOwnPath(runCtx, args[0]));

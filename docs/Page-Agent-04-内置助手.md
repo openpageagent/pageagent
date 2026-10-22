@@ -1,35 +1,36 @@
 # Page Agent 内置助手
 
-内置助手是预先配置的 Assistant profile。用户选择助手后，profile 的提示词决定任务方法，`resourcePolicy` 决定实际可访问的资源和方法。
+内置助手提供预设的任务提示词和资源权限。用户可按模板创建助手，并编辑名称、提示词、模型配置和权限。
 
-## 当前组成
+## 模板
 
-助手行为由三层组成：
+| 助手 | 用途 |
+| --- | --- |
+| 默认助手 | 通用页面操作与任务处理 |
+| 应用开发助手 | 创建、修改和修复应用 |
+| 网络搜索写作助手 | 搜索资料并完成写作 |
+| 读取页面写作助手 | 基于页面内容写作 |
+| 流程生成助手 | 将任务整理为可复用 Flow |
+| 流程修复助手 | 排查并修复 Flow |
+| 流程审查助手 | 检查 Flow 的结构和运行风险 |
+| 流程运行助手 | 执行 Flow 并查看结果 |
 
-1. `agent/agent-prompt.js`：所有助手共用的身份、事实来源、信任边界、失败处理和停止条件。
-2. Assistant `prompt`：该助手的任务范围、执行步骤、交付物和完成条件。
-3. `resourcePolicy`：允许访问的 ARP 路径、HTTP 方法和 semantic permission，是能力上限。
+## 提示词与权限
 
-Assistant prompt 不能覆盖系统提示词、用户当前要求、资源合同或运行时事实。公共规则已经由 System Core 提供时，不在每个助手中重复。
+所有助手共用 System Core；各自的 `prompt` 提供任务方法，`resourcePolicy` 限定可访问的资源、方法和权限。
+提示词不能授予权限，入口和运行环境还会进一步限制实际能力。
 
-## 基础能力
+系统默认运行权限由 `shared/system-runtime-permissions.js` 定义，对话、应用与执行层共用。
 
-所有助手默认可以完成 Page Agent 的基本闭环：读取页面、执行页面动作、读写 Flow 和 FlowGroup、运行并查看报告、读写页面配置和脚本、读写定时与 URL 触发器、读取节点类型、读取 Recording、读取 Knowledge/Skill 和读取助手定义。
+默认包含页面和浏览器操作、Flow／FlowGroup／Script 运行、应用创建与执行、知识读写、触发器、系统设置、邮件设置及本地操作等权限；本地操作和邮件仍需满足连接与功能开关条件。
 
-这些能力对应的资源包括：
+默认权限不包含 `apps.delete`，`/apps` 的默认方法也不含 `DELETE`。
 
-```text
-/page       /browser       /flows       /flow-groups
-/runs       /recordings    /pages       /scripts
-/schedules  /url-triggers  /node-types  /knowledge
-/skills     /assistants
-```
-
-创建或修改助手、写入 Skill、修改模型服务、管理 Connection/MCP Server、删除资源和直接执行外部调用，都不属于默认任务能力。只有职责明确需要时，才作为专用增量加入。入口和运行时仍可进一步收窄 profile 的权限。
+专用模板可调整权限，已有助手保留保存的策略；实际可用接口以当前资源目录和 `OPTIONS` 为准。
 
 ## 设计一个助手
 
-先定义交付物，再反推闭环：
+先定义交付物，再确定所需的证据和操作：
 
 ```text
 交付物 -> 必要证据 -> 必要动作 -> 验证 -> 结果回执
@@ -44,17 +45,35 @@ Prompt 至少说明：
 - 完成判据、验证方式和无法继续时的报告内容；
 - 明确不处理的相邻任务。
 
-用可观察行为描述要求，例如“读取页面后再点击”“提交前检查运行报告”。“可靠”“聪明”等人格形容词不能替代执行条件。
+用可观察行为描述要求，例如“读取页面后再点击”“提交前检查运行报告”。
+“可靠”“聪明”等人格形容词不能替代执行条件。
 
-Prompt 中的每个外部动作必须有对应的 route method 和 permission。权限不能因为“可能有用”而加入；删除、配置修改、外部连接和高风险执行应单独评估。
+Prompt 中的每个外部动作必须有对应的资源路径、方法和权限。
+权限按任务需要配置；删除、配置修改、外部连接和高风险执行分别评估。
 
-## 新增位置
+## 模板定义与修改
 
-内置助手模板定义在 `options/conversation-profile-schema.js` 的 `assistantTemplates()` 和 `buildTemplatePrompt()`。新增或修改助手时同步更新：
+内置助手模板定义在 [`options/conversation-profile-schema.js`](../options/conversation-profile-schema.js)：
+
+- `assistantTemplates()`：模板名称、描述、默认配置和 `resourcePolicy`；
+- `buildTemplatePrompt()`：任务方法、Knowledge/Skill 引用、交付物和完成条件。
+
+新增或修改模板时，同步维护：
 
 1. 模板名称、描述、prompt 和默认配置；
-2. `resourcePolicy` 的路径、方法和 semantic permission；
+2. `resourcePolicy` 的资源路径、方法和权限；
 3. 需要的 Knowledge/Skill 引用；
 4. 交付物和完成条件。
 
-运行时会在资源 Router 之前检查权限，因此只隐藏界面控件不能替代权限配置。助手拥有某项邻接权限，也不能据此扩大用户目标。
+执行资源操作前，运行时检查权限；隐藏界面控件不能替代权限配置。
+助手拥有某项权限，也不能据此扩大用户目标。
+
+## 应用开发助手
+
+从应用的「对话调整」进入时使用应用开发助手。
+系统按记录的助手 ID 复用已有实例，保留用户配置。
+未记录助手 ID 或对应助手已删除时，按 `tpl_app_developer` 模板创建。
+
+创建或修改应用前，助手读取应用资源及完整的 `/knowledge/builtin_app_generation_guide`。
+
+从应用进入对话时的话题复用和取消关联，见[应用的对话调整](./Page-Agent-13-应用.md#对话调整)。

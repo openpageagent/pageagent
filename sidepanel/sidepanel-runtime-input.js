@@ -92,9 +92,10 @@
         formatButton.title = conversationTarget ? '转为或格式化 JSON' : '格式化 JSON';
       }
       if (field) {
+        field.setAttribute('language', conversationTarget ? 'auto' : 'json');
         field.placeholder = conversationTarget
-          ? (target.inputPlaceholder || '直接输入对话内容，例如：请帮我检查当前页面并给出建议')
-          : '{"input":{"keyword":"订单"}} 或 {"keyword":"订单"}';
+          ? (target.inputPlaceholder || '输入任务内容')
+          : '输入 JSON';
       }
     }
 
@@ -234,7 +235,7 @@
       }
     }
 
-    function formatInput(event) {
+    async function formatInput(event) {
       if (event && event.preventDefault) event.preventDefault();
       if (event && event.stopPropagation) event.stopPropagation();
       var field = getInputField();
@@ -243,26 +244,21 @@
       var target = getSelectedRunTarget();
       if (!result.ok) return;
       if (result.empty) {
-        if (!isConversationRunTarget(target)) return;
-        field.value = JSON.stringify({
-          message: '请帮我检查当前页面并给出建议',
-          label: '',
-          modelServiceId: '',
-        }, null, 2);
+        field.value = '{}';
       } else if (isConversationRunTarget(target) && result.mode !== 'json') {
         field.value = JSON.stringify({ message: result.raw || '' }, null, 2);
-      } else {
-        field.value = JSON.stringify(result.parsed, null, 2);
       }
-      field.scrollTop = 0;
+      field.setAttribute('language', 'json');
+      try { await field.format(); }
+      catch (error) { setInputError('格式化失败: ' + error.message); return; }
       inputTargetValue = (getSelectedRunTarget() || {}).value || inputTargetValue;
       inputDirty = true;
       clearInputError();
     }
 
     function sessionInputToJson(input) {
-      if (input === undefined || input === null) return '';
-      try { return JSON.stringify(input, null, 2); } catch (_) { return ''; }
+      if (input === undefined || input === null) return '{}';
+      try { return JSON.stringify(input, null, 2); } catch (_) { return '{}'; }
     }
 
     function readTextField(source, keys) {
@@ -315,13 +311,14 @@
       var field = getInputField();
       var formatButton = getFormatButton();
       var target = getSelectedRunTarget();
+      var defaultInput = isConversationRunTarget(target) ? '' : '{}';
       updateInputChrome(target);
       if (!target) {
         hideHelpPopover();
         if (inputSourceKey.indexOf('session:') !== 0) {
           container.classList.add('is-disabled');
           if (field) {
-            field.value = '';
+            field.value = defaultInput;
             field.disabled = true;
           }
           if (formatButton) formatButton.disabled = true;
@@ -337,13 +334,13 @@
       if (formatButton) formatButton.disabled = false;
       var sameTarget = inputTargetValue === target.value;
       if (sameTarget && !renderOptions.forceTargetInput) {
-        if (field && inputSourceKey === 'target:' + target.value && !inputDirty && !field.value && target.inputExample) {
+        if (field && inputSourceKey === 'target:' + target.value && !inputDirty && (!field.value || field.value === defaultInput) && target.inputExample) {
           field.value = target.inputExample;
         }
         updateHelpButton(target, true);
         return;
       }
-      if (field) field.value = target.inputExample || '';
+      if (field) field.value = target.inputExample || defaultInput;
       inputTargetValue = target.value;
       inputSourceKey = 'target:' + target.value;
       inputDirty = false;
@@ -448,7 +445,7 @@
     }
 
     function setDisabled(disabled) {
-      var fields = container.querySelectorAll('input, textarea, select, button');
+      var fields = container.querySelectorAll('input, textarea, page-code-editor, select, button');
       for (var i = 0; i < fields.length; i++) fields[i].disabled = !!disabled;
     }
 
@@ -460,7 +457,7 @@
 
     function clear() {
       var field = getInputField();
-      if (field) field.value = '';
+      if (field) field.value = isConversationRunTarget(getSelectedRunTarget()) ? '' : '{}';
       inputDirty = false;
       clearInputError();
     }

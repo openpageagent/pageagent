@@ -275,6 +275,9 @@
 
     function runChildAndWait(flowId, context, trigger, options, parentSession) {
       var childOptions = {
+        appAuthorization: options.appAuthorization || null,
+        appConfig: options.appConfig || null,
+        appNodeSets: options.appNodeSets || null,
         trigger: trigger || 'flowGroup',
         entry: options.entry || 'flowGroup',
         assistantInvocationKind: options.assistantInvocationKind === 'runAssistant'
@@ -357,7 +360,7 @@
     function runFlowGroup(flowGroupId, options) {
       options = options || {};
       return invokePromise(getConfigReady).then(function () {
-        var config = getConfig() || {};
+        var config = options.appConfig || getConfig() || {};
         flowGroupId = String(flowGroupId || '');
         var flowGroup = safeMapValue(ownDataValue(config, 'flowGroups'), flowGroupId);
         if (!flowGroup || typeof flowGroup !== 'object' || Array.isArray(flowGroup)) {
@@ -374,6 +377,7 @@
 
         var session = {
           runId: runId,
+          appAuthorization: options.appAuthorization || null,
           kind: 'flowGroup',
           flowGroupId: flowGroupId,
           flowId: sessionFlowId,
@@ -627,7 +631,7 @@
           try {
             stepInput = buildStepInput(step, parentCtx);
             childContext = buildChildContext(stepInput, parentCtx);
-            runTabMode = getStepRunTabMode(step, step.flowId);
+            runTabMode = options.appAuthorization ? 'fixedNewTab' : getStepRunTabMode(step, step.flowId);
           } catch (error) {
             try {
               mergeStepError(step, stepIndex, flowLabel, stepLabel, childContext || {}, runTabMode || '', error);
@@ -681,6 +685,7 @@
           startedAt: startedAt,
           input: groupInput,
         });
+        if (options.appAuthorization) runRecord.application = { appId: options.appAuthorization.appId, outputSchema: reportClone(options.appAuthorization.outputSchema) };
         safeInvoke(rememberRunInput, [runRecord]);
 
         var runRecordReady = invokePromise(appendRun, [runRecord]).then(function () {

@@ -27,14 +27,16 @@
     </div>
     <div id="runtime-inputs" class="runtime-inputs is-disabled">
       <div class="runtime-input-title">
-        <span data-runtime-input-label>入参</span>
         <span class="runtime-input-meta">
+          <label for="runtime-input-json" data-runtime-input-label>入参</label>
           <span data-runtime-required>可选</span>
+        </span>
+        <span class="runtime-input-actions">
           <button type="button" class="runtime-help-link" data-runtime-format title="格式化 JSON" disabled>格式化</button>
           <button type="button" class="runtime-help-link" data-runtime-help title="运行说明" aria-label="运行说明" aria-expanded="false" hidden disabled>说明</button>
         </span>
       </div>
-      <textarea id="runtime-input-json" rows="3" placeholder='{"input":{"keyword":"订单"}} 或 {"keyword":"订单"}' disabled></textarea>
+      <page-code-editor id="runtime-input-json" language="json" rows="4" placeholder="输入 JSON" disabled>{}</page-code-editor>
       <div id="runtime-input-error" class="runtime-input-error" hidden></div>
     </div>
   </section>
@@ -81,23 +83,23 @@
 
           <!-- Variables Tab -->
           <div class="debug-tab-panel active" data-panel="variables">
-            <div id="variables-tree" class="tree-viewer"></div>
+            <page-code-editor id="variables-tree" readonly language="json" rows="18" aria-label="变量"></page-code-editor>
           </div>
 
           <!-- ctx Tab -->
           <div class="debug-tab-panel" data-panel="ctx">
-            <div id="ctx-viewer" class="code-viewer"></div>
+            <page-code-editor id="ctx-viewer" readonly language="json" rows="18" aria-label="运行上下文"></page-code-editor>
           </div>
 
           <!-- FlowData Tab -->
           <div class="debug-tab-panel" data-panel="flowdata">
             <div class="flowdata-section">
               <h4>Attributes</h4>
-              <div id="attributes-viewer" class="code-viewer"></div>
+              <page-code-editor id="attributes-viewer" readonly language="json" aria-label="数据属性"></page-code-editor>
             </div>
             <div class="flowdata-section">
               <h4>Content</h4>
-              <div id="content-viewer" class="code-viewer"></div>
+              <page-code-editor id="content-viewer" readonly language="json" aria-label="数据内容"></page-code-editor>
             </div>
           </div>
 
@@ -122,6 +124,7 @@
 
   <script src="../ui/runtime-client.js"></script>
   <script src="../ui/resource-client.js"></script>
+  <script src="../ui/code-editor.js"></script>
   <script src="../ui/session-floating-message-contract.js"></script>
   <script src="../ui/lifecycle.js"></script>
   <script src="../shared/sync-event-stream.js"></script>

@@ -30,6 +30,7 @@
   var OWNED_ACTIONS = Object.create(null);
   [
     'open-add-node-drawer',
+    'add-node-from-json',
     'select-node-type',
     'toggle-node-type-group',
     'edit-node',
@@ -597,7 +598,13 @@
       var html = '<div class="form-row"><label>' + esc(label) + (ownDataValue(param, 'required') ? ' *' : '') + '</label>';
 
       if (kind === 'textarea') {
-        html += '<textarea rows="3"' + attrs + ' placeholder="' + esc(placeholder || '') + '">' + esc(formatted) + '</textarea>';
+        var language = ownDataValue(param, 'editorLanguage');
+        if (!language && ownDataValue(param, 'valueFormat') === 'json') language = 'json';
+        if (language) {
+          html += '<page-code-editor language="' + esc(language) + '" template rows="5" aria-label="' + esc(label) + '"' + attrs + ' placeholder="' + esc(placeholder || '') + '">' + esc(formatted) + '</page-code-editor>';
+        } else html += '<textarea rows="3"' + attrs + ' placeholder="' + esc(placeholder || '') + '">' + esc(formatted) + '</textarea>';
+      } else if (kind === 'password') {
+        html += '<input type="password" autocomplete="new-password"' + attrs + ' value="' + esc(formatted) + '" placeholder="' + esc(placeholder || '') + '">';
       } else if (kind === 'number') {
         var defaultValue = ownDataValue(param, 'default');
         html += numericControlHtml(key, formatted, 'param', defaultValue !== undefined ? String(defaultValue) : '');
@@ -752,10 +759,6 @@
           + '<li>注意动态 class（如 <code>css-1q2w3e</code> 这类构建哈希）刷新就变，别用它定位</li>'
           + '</ul></details>';
       }
-      if (type === 'setProxy') {
-        body += '<p class="form-help">chrome.proxy 是浏览器配置级代理，不是单标签页代理；同一 profile 中其他标签页访问匹配 Host 时也会走该代理。</p>';
-      }
-
       if (typeDef && (ownDataValue(typeDef, 'needsPage') || ownDataValue(typeDef, 'optionalPage'))) {
         body += '<div class="form-row"><label>目标页面' + (ownDataValue(typeDef, 'needsPage') ? ' *' : '（可选）')
           + '</label><select id="node-pageId"><option value="">— 选择页面 —</option>';
@@ -814,7 +817,7 @@
           + '" data-node-index="' + match.index + '">保存</button>'
           + '<button class="btn-secondary" data-action="cancel-node-edit">取消</button>';
       if (readonly) {
-        queryAll('input, select, textarea, button', $('#drawer-content')).forEach(function (element) {
+        queryAll('input, select, textarea, page-code-editor, button', $('#drawer-content')).forEach(function (element) {
           element.disabled = true;
         });
       }
@@ -1115,8 +1118,12 @@
           + '<span class="type-label">' + esc(label) + '</span></div>';
       }
 
-      var html = '<div class="form-row"><input type="text" id="node-type-search"'
-        + ' placeholder="搜索节点（名称/功能，如：断言、滚动、cookie）" autocomplete="off"></div>';
+      var html = '<details class="form-row"><summary>粘贴节点 JSON</summary>'
+        + '<div class="form-row"><page-code-editor id="node-import-json" language="json" rows="8"'
+        + ' aria-label="节点 JSON" placeholder="粘贴从开发者工具箱复制的节点 JSON"></page-code-editor></div>'
+        + '<div><button type="button" class="btn-primary" data-action="add-node-from-json">添加节点</button></div>'
+        + '</details><div class="form-row"><input type="text" id="node-type-search"'
+        + ' placeholder="搜索节点名称或功能" autocomplete="off"></div>';
       categories.forEach(function (category) {
         var categoryTypes = ownDataValue(category, 'types');
         var items = (Array.isArray(categoryTypes) ? categoryTypes : [])
@@ -1142,7 +1149,7 @@
       selectedNode = null;
       editorToken++;
       revision++;
-      $('#drawer-title').textContent = '选择节点类型';
+      $('#drawer-title').textContent = '添加节点';
       $('#drawer-content').innerHTML = html;
       $('#drawer-actions').innerHTML = '<button class="btn-secondary" data-action="cancel-drawer">取消</button>';
       openDrawer();
@@ -1166,6 +1173,62 @@
         });
         group.style.display = visible ? '' : 'none';
       });
+    }
+
+    function addNodeFromJson() {
+      if (drawerMode !== 'add-node' || !ensureEditable()) return false;
+      var input = $('#node-import-json');
+      var source = String(input && input.value || '').trim();
+      if (!source) {
+        toast('请先粘贴节点 JSON', true);
+        if (input) input.focus();
+        return false;
+      }
+      var draft;
+      try {
+        var node = JSON.parse(source);
+        if (!node || typeof node !== 'object' || Array.isArray(node)) {
+          throw new Error('请填入单个节点对象');
+        }
+        node = stripRuntimeMetadata(node);
+        var type = node.type;
+        var typeDef = typeof type === 'string' && isSafeKey(type) && nodeTypes.getType(type);
+        if (!typeDef) throw new Error('未知节点类型: ' + String(type || ''));
+        if (['loopStart', 'loopEnd', 'ifStart', 'ifEnd', 'elseBlock'].indexOf(type) !== -1) {
+          throw new Error('循环和分支请通过节点类型添加，以保留配对结构');
+        }
+        ['title', 'pageId', 'outputVar'].forEach(function (key) {
+          if (node[key] !== undefined && typeof node[key] !== 'string') {
+            throw new Error(key + ' 必须是字符串');
+          }
+        });
+        if (node.params !== undefined && (!node.params || typeof node.params !== 'object' || Array.isArray(node.params))) {
+          throw new Error('params 必须是对象');
+        }
+        node.title = node.title || ownDataValue(typeDef, 'label') || type;
+        node.pageId = node.pageId || '';
+        node.outputVar = node.outputVar || '';
+        node.params = node.params || Object.create(null);
+        var errors = nodeTypes.validateNodeInstance(node);
+        if (errors.length) throw new Error(errors[0]);
+        draft = snapshotDraft(true);
+        if (!draft) return false;
+        var nodes = nodesOf(draft);
+        node.nodeId = generateNodeId(reservedNodeIds(nodes));
+        delete node.id;
+        delete node.order;
+        delete node.displayOrder;
+        nodes.push(node);
+        draft.nodes = nodes;
+      } catch (error) {
+        toast('无法添加节点: ' + errorText(error, 'JSON 或节点配置无效'), true);
+        return false;
+      }
+      if (!replaceDraft(draft)) return false;
+      handleDrawerClosed();
+      closeDrawer();
+      toast('节点已添加，请保存流程');
+      return true;
     }
 
     function addFlowNode(type) {
@@ -1584,7 +1647,7 @@
       });
     }
 
-    function runSingleNode(id, indexHint) {
+    async function runSingleNode(id, indexHint) {
       var draft;
       try { draft = snapshotDraft(true); } catch (error) {
         toast('无法读取节点: ' + errorText(error, '节点数据无效'), true);
@@ -1608,8 +1671,8 @@
         return;
       }
       var title = ownDataValue(match.node, 'title') || ownDataValue(match.node, 'type') || id;
-      var context = buildRuntimeContextFromInputs(draft, '单步运行节点「' + title + '」');
-      if (context === null) return;
+      var context = await buildRuntimeContextFromInputs(draft, '单步运行节点「' + title + '」');
+      if (context === null || destroyed) return;
       var messageNode;
       try { messageNode = cloneData(match.node); } catch (error) {
         toast('无法执行节点: ' + errorText(error, '节点数据无效'), true);
@@ -1808,6 +1871,7 @@
       var id = String(actionElement && actionElement.dataset.id || '');
       var index = actionNodeIndex(actionElement);
       if (action === 'open-add-node-drawer') openAddNodeDrawer();
+      else if (action === 'add-node-from-json') addNodeFromJson();
       else if (action === 'select-node-type') {
         var newId = addFlowNode(actionElement && actionElement.dataset.type);
         if (newId) openNodeEditor(newId, -1);

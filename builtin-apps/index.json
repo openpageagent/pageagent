@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "apps": [
+    {
+      "file": "developer-tools.json",
+      "ids": [
+        "app_developer_tools"
+      ],
+      "hash": "sha256:e1c0265012df4d7090733ddc28dec2cc8e1aa65c69d7c1d2090f2881b72ad5c7"
+    },
+    {
+      "file": "developer-utils.json",
+      "ids": [
+        "app_developer_utils"
+      ],
+      "hash": "sha256:40f5d416ea26de42e2b996a1b3dfc70e169009ef164633e973d6c40f6d8b18f3"
+    },
+    {
+      "file": "gitlab-tools.json",
+      "ids": [
+        "app_gitlab_tools"
+      ],
+      "hash": "sha256:6aa656fe8c56fb11a04ebb15c5beb27ebf385999456f3fbf112de0956347df92"
+    }
+  ]
+}

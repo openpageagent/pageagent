@@ -162,6 +162,7 @@
 
     var logForExecution = requireMethod(callbacks, 'logForExecution', 'callbacks');
     var execSendEmail = requireMethod(callbacks, 'execSendEmail', 'callbacks');
+    var execLocalOperation = requireMethod(callbacks, 'execLocalOperation', 'callbacks');
     var execForEachParallel = requireMethod(callbacks, 'execForEachParallel', 'callbacks');
     var execExportTestReport = requireMethod(callbacks, 'execExportTestReport', 'callbacks');
     var execAttachArtifact = requireMethod(callbacks, 'execAttachArtifact', 'callbacks');
@@ -187,6 +188,11 @@
     var execJsonExtract = requireMethod(callbacks, 'execJsonExtract', 'callbacks');
 
     var routes = Object.create(null);
+    (deps.utilityTools || []).forEach(function (tool) {
+      addRoute(routes, tool.nodeType, function (_node, params, _state, execution) {
+        return deps.executeUtility(tool, params, execution);
+      });
+    });
 
     function perception(command) {
       return function (node, params, _state, execution) {
@@ -204,6 +210,18 @@
       return function (node, params, _state, execution) {
         return verify(node.pageId, command, params, execution);
       };
+    }
+
+    function local(operation, action, inputForParams) {
+      return function (_node, params, _state, execution) {
+        var input = inputForParams ? inputForParams(params) : params;
+        if (action) input = Object.assign({}, input, { action: action });
+        return execLocalOperation(operation, input, execution);
+      };
+    }
+
+    function desktopCaptureInput(params) {
+      return params.useRegion ? { region: { x: params.x, y: params.y, width: params.width, height: params.height } } : {};
     }
 
     addRoute(routes, 'openPage', callPageParamsExecution(openPage));
@@ -326,6 +344,44 @@
     addRoute(routes, 'turndownToMarkdown', callParamsExecution(execTurndownToMarkdown));
     addRoute(routes, 'webhook', callParamsExecution(execWebhook));
     addRoute(routes, 'sendEmail', callParamsExecution(execSendEmail));
+    addRoute(routes, 'localRead', local('read'));
+    addRoute(routes, 'localWrite', local('write'));
+    addRoute(routes, 'localDelete', local('delete'));
+    addRoute(routes, 'localGrep', local('grep'));
+    addRoute(routes, 'localBash', local('bash'));
+    addRoute(routes, 'localDesktopCapabilities', local('desktop'));
+    addRoute(routes, 'localMousePosition', local('mouse', 'position'));
+    addRoute(routes, 'localMouseMove', local('mouse', 'move'));
+    addRoute(routes, 'localMouseClick', local('mouse', 'click'));
+    addRoute(routes, 'localMouseDrag', local('mouse', 'drag'));
+    addRoute(routes, 'localMouseScroll', local('mouse', 'scroll'));
+    addRoute(routes, 'localKeyPress', local('keyboard', 'press'));
+    addRoute(routes, 'localHotkey', local('keyboard', 'hotkey', function (params) {
+      return { key: params.key, modifiers: ['primary', 'ctrl', 'alt', 'shift'].filter(function (key) { return params[key] === true; }) };
+    }));
+    addRoute(routes, 'localTypeText', local('keyboard', 'type'));
+    addRoute(routes, 'localClipboardRead', local('clipboard', 'read'));
+    addRoute(routes, 'localClipboardWrite', local('clipboard', 'write'));
+    addRoute(routes, 'localClipboardClear', local('clipboard', 'clear'));
+    addRoute(routes, 'localScreenshot', local('screenshot', null, desktopCaptureInput));
+    addRoute(routes, 'localLocate', local('locate', null, function (params) {
+      return Object.assign(desktopCaptureInput(params), { templatePath: params.templatePath, tolerance: params.tolerance });
+    }));
+    addRoute(routes, 'localApplicationOpen', local('application', 'open', function (params) {
+      if (typeof params.args !== 'string') throw new Error('启动参数必须为每行一个参数的文本');
+      return { application: params.application, args: params.args === '' ? [] : params.args.split(/\r?\n/) };
+    }));
+    addRoute(routes, 'localApplicationClose', local('application', 'close'));
+    addRoute(routes, 'localApplicationPrint', local('application', 'print'));
+    addRoute(routes, 'localWindowList', local('window', 'list', function (params) {
+      var input = { title: params.title };
+      if (params.pid !== 0) input.pid = params.pid;
+      return input;
+    }));
+    addRoute(routes, 'localWindowActivate', local('window', 'activate'));
+    addRoute(routes, 'localWindowBounds', local('window', 'bounds'));
+    addRoute(routes, 'localWindowMove', local('window', 'move'));
+    addRoute(routes, 'localWindowResize', local('window', 'resize'));
     addRoute(routes, 'loopStart', callParams(execLoopStart));
     addRoute(routes, 'loopEnd', function () { return { loopEnd: true }; });
     addRoute(routes, 'loopBreak', callParamsExecution(execLoopBreak));

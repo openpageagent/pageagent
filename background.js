@@ -14,6 +14,15 @@
     'shared/config-migration.js',
     'shared/schedule-utils.js',
     'shared/sync-event-stream.js',
+    'shared/system-runtime-permissions.js',
+    'shared/app-contract.js',
+    'shared/app-ui-contract.js',
+    'apps/app-store.js',
+    'apps/app-package.js',
+    'background/builtin-app-loader.js',
+    'apps/app-service.js',
+    'apps/app-bridge.js',
+    'apps/navigation.js',
     'shared/page-data-contract.js',
     'shared/page-fact-contract.js',
     'shared/page-javascript-contract.js',
@@ -44,6 +53,7 @@
     'agent/providers/openai-responses-provider.js',
     'agent/providers/anthropic-messages-provider.js',
     'flows/logging-status.js',
+    'utilities/catalog.js',
     'flows/node-types.js',
     'resources/mcp-tool-contract.js',
     'resources/protocol/index.js',
@@ -119,6 +129,7 @@
     'background/node-dispatcher.js',
     'background/node-executor.js',
     'background/sandbox-engine.js',
+    'background/utility-service.js',
     'background/dynamic-flow-builder.js',
     'background/scheduler.js',
     'background/config-runtime-coordinator.js',
@@ -137,8 +148,10 @@
     'resources/services/mcp-resource-service.js',
     'resources/resource-module-adapter.js',
     'resources/resource-module-support.js',
+    'resources/modules/app-resource.js',
     'resources/modules/flow-resource.js',
     'resources/modules/node-type-resource.js',
+    'resources/modules/utility-resource.js',
     'resources/modules/flow-group-resource.js',
     'resources/modules/conversation-resource.js',
     'resources/modules/recording-resource.js',
@@ -152,6 +165,8 @@
     'resources/modules/knowledge-resource.js',
     'resources/modules/agent-configuration-resource.js',
     'resources/modules/connection-resource.js',
+    'resources/modules/system-settings-resource.js',
+    'resources/modules/mail-settings-resource.js',
     'resources/modules/local-resource.js',
     'resources/modules/mcp-resource.js',
     'resources/adapters/page-resource-adapter.js',
@@ -175,7 +190,9 @@
     'agent/agent-bootstrap.js',
     'flows/index.js'
   );
-  globalThis.PageAutomationUserAgent = globalThis.UserAgentRuntime.create(chrome);
+  globalThis.PageAutomationUserAgent = globalThis.UserAgentRuntime.create(chrome, {
+    prepareRequest: function () { return proxyManager.sync(); },
+  });
   var mailClient = globalThis.MailClient.create(chrome, function () {
     return mcpRuntime && mcpRuntime.getClient();
   });
@@ -228,8 +245,13 @@
     try {
       var rt = RuntimeState.createRuntimeState();
       var persistent = rt.buildPersistentPatch(state);
-      chrome.storage.session.set({ [STORAGE_KEY]: persistent });
-    } catch (_) {}
+      chrome.storage.session.set({ [STORAGE_KEY]: persistent }).catch(function (error) {
+        // LoggingStatus writes state too; use the console to avoid another storage write.
+        console.error(LOG_PREFIX, '保存运行状态失败:', error);
+      });
+    } catch (error) {
+      console.error(LOG_PREFIX, '保存运行状态失败:', error);
+    }
   }
 
   function broadcastState(state) {
@@ -239,6 +261,7 @@
   }
 
   function broadcast(msg) {
+    if (globalThis.PageAgentAppBridge) globalThis.PageAgentAppBridge.runEvent(msg);
     try {
       chrome.runtime.sendMessage(msg).catch(function () {});
     } catch (_) {}
@@ -365,6 +388,11 @@
   // --- 恢复持久化状态 ---
   function restoreState() {
     chrome.storage.session.get(STORAGE_KEY, function (result) {
+      var error = chrome.runtime.lastError;
+      if (error || !result) {
+        console.error(LOG_PREFIX, '恢复运行状态失败:', error ? error.message : '存储未返回结果');
+        return;
+      }
       var persisted = result[STORAGE_KEY] || {};
       var rt = RuntimeState.createRuntimeState();
       stateCache = rt.ensureState(persisted);
@@ -510,12 +538,21 @@
     runReport: RunReport,
     incognito: INCOGNITO_CONTEXT,
   });
+  // 先收尾旧报告，再允许本轮后台创建运行记录，避免误处理新启动的任务。
+  var runReportsReady = configStore.recoverInterruptedRuns().then(function (count) {
+    if (!count) return;
+    loggingStatus.addLog('已将 ' + count + ' 条后台重启前未结束的运行报告标记为停止', { level: 'warn' });
+    broadcast({ type: 'RUN_HISTORY_UPDATED' });
+  }).catch(function (error) {
+    loggingStatus.addLog('恢复运行报告失败: ' + (error && error.message || error), { level: 'error' });
+  });
   var configCache = { version: 1, pages: {}, flows: {}, flowGroups: {}, scripts: {}, schedules: {}, urlTriggers: [] };
   var runInputCache = {};
   var builtinFlowLoader = BuiltinFlowLoader.createBuiltinFlowLoader({
     chrome: chrome,
     addLog: loggingStatus.addLog,
   });
+  var builtinAppLoader = BuiltinAppLoader.create({ addLog: loggingStatus.addLog });
 
   function cloneConfigValue(value) {
     return JSON.parse(JSON.stringify(value === undefined ? null : value));
@@ -578,12 +615,14 @@
     chrome: chrome,
     addLog: loggingStatus.addLog,
     incognito: INCOGNITO_CONTEXT,
+    saveSettings: function (value) { return globalThis.PageAutomationUserAgent.save(value); },
   });
 
   // Node Executor — 声明式节点的通用执行器，兼任脚本 API 桥后端
   var nodeExecutor = NodeExecutor.createNodeExecutor({
     chrome: chrome,
     mailClient: mailClient,
+    executeLocalOperation: executeLocalOperation,
     tabRuntime: tabRuntime,
     pageAutomation: pageAutomation,
     addLog: loggingStatus.addLog,
@@ -1300,7 +1339,7 @@
   }
 
   var configRuntimeCoordinator = ConfigRuntimeCoordinator.createConfigRuntimeCoordinator({
-    prepareConfig: function (config) { return builtinFlowLoader.applyToConfig(config); },
+    prepareConfig: function (config) { return builtinFlowLoader.applyToConfig(config).then(builtinAppLoader.applyToConfig); },
     publishConfig: function (runtimeConfig) { configCache = runtimeConfig; },
     reloadDynamic: function (runtimeConfig) { return dynamicFlowBuilder.reload(runtimeConfig); },
     syncAlarms: function (runtimeConfig) { return scheduler.syncAlarms(runtimeConfig); },
@@ -1716,6 +1755,11 @@
   var MCP_LOCAL_DIRECTORY_STORAGE_KEY = INCOGNITO_CONTEXT ? 'mcpLocalWorkingDirectoryIncognito' : 'mcpLocalWorkingDirectory';
   var mcpRunTabMode = DEFAULT_RUN_TAB_MODE;
   chrome.storage.local.get([MCP_RUN_TAB_MODE_STORAGE_KEY], function (res) {
+    var error = chrome.runtime.lastError;
+    if (error) {
+      console.error(LOG_PREFIX, '读取 MCP 页面模式失败:', error.message);
+      return;
+    }
     mcpRunTabMode = normalizeRunTabMode(res && res[MCP_RUN_TAB_MODE_STORAGE_KEY], DEFAULT_RUN_TAB_MODE);
   });
   var mcpTabAccessManager = McpTabAccess.createMcpTabAccessManager({
@@ -1767,6 +1811,7 @@
   }
 
   function publishConfigSyncEvents(change) {
+    if (globalThis.PageAgentApps) globalThis.PageAgentApps.changed({ change: 'dependencies' }).catch(function (error) { console.error(error); });
     var oldConfig = change && change.oldValue || {};
     var nextConfig = change && change.newValue || {};
     CONFIG_SYNC_SECTIONS.forEach(function (section) {
@@ -1868,6 +1913,9 @@
   }
 
   chrome.storage.onChanged.addListener(function (changes, area) {
+    if (area === 'local' && globalThis.PageAgentApps && (changes[globalThis.ModelSettings.SETTINGS_KEY] || changes[globalThis.ConversationState.ASSISTANTS_STORAGE_KEY])) {
+      globalThis.PageAgentApps.changed({ change: 'dependencies' }).catch(function (error) { console.error(error); });
+    }
     if (area === 'local' && changes[configStore.CONFIG_KEY]) {
       var storedConfig = changes[configStore.CONFIG_KEY].newValue;
       configRuntimeCoordinator.update(function () {
@@ -2192,7 +2240,9 @@
     if (!node || !node.pageId) return Promise.resolve('');
     var tabId = session.tabs['page:' + node.pageId];
     if (!tabId) return Promise.resolve('');
-    return captureTabScreenshot(tabId, 55).catch(function () { return ''; });
+    return Promise.resolve().then(function () {
+      return session.appAuthorization ? globalThis.PageAgentApps.authorize(session.appAuthorization, { kind: 'page', command: 'screenshot', pageId: node.pageId, tabId: tabId }) : null;
+    }).then(function () { return captureTabScreenshot(tabId, 55); }).catch(function () { return ''; });
   }
 
   function broadcastSessions() {
@@ -2298,6 +2348,7 @@
     modelClient: ModelClient,
     nodeExecutor: NodeExecutor,
     mailClient: mailClient,
+    executeLocalOperation: executeLocalOperation,
     autoRunController: AutoRunController,
     runReport: RunReport,
     sourceRegistry: sourceRegistry,
@@ -2601,7 +2652,20 @@
     options = options || {};
     node = node || {};
     if (!node.type) return Promise.reject(new Error('单步节点缺少 type'));
-    var isolatedTabAccess = mcpTabAccessManager.createTabAccess(options.runTabMode);
+    var applicationSession = options.appAuthorization ? {
+      runId: options.runId, flowId: 'script:' + options.scriptId, status: 'running',
+      appAuthorization: options.appAuthorization, appConfig: options.appConfig,
+      runTabMode: options.runTabMode || RUN_TAB_MODE_FIXED_NEW, incognito: !!options.incognito,
+      tabs: {}, tabUsage: {}, tabEvents: [], waitingTabs: {}, keepAliveTabs: {}, createdTabs: {},
+      _runAbortController: { signal: options.signal }, addLog: addResourceStepLog,
+    } : null;
+    // Application scripts must not share the MCP manager's fixed tab or its
+    // live configuration. Reuse the existing per-run tab and lease lifecycle.
+    var isolatedTabAccess = applicationSession
+      ? createSessionTabAccess(applicationSession, tabRuntime)
+      : mcpTabAccessManager.createTabAccess(options.runTabMode);
+    function stopApplicationSession() { applicationSession.status = 'stopped'; }
+    if (applicationSession && options.signal) options.signal.addEventListener('abort', stopApplicationSession, { once: true });
     var isolatedExecutor;
     function addResourceStepLog(message, logOptions) {
       logOptions = Object.assign({}, logOptions || {});
@@ -2609,21 +2673,27 @@
       return loggingStatus.addLog(message, logOptions);
     }
     isolatedExecutor = NodeExecutor.createNodeExecutor({
+      authorizeApplication: options.appAuthorization ? function (operation) { return globalThis.PageAgentApps.authorize(options.appAuthorization, operation); } : null,
+      getAbortSignal: function () { return options.signal || null; },
+      throwIfStopped: function () { if (options.signal && options.signal.aborted) throw options.signal.reason || new Error('操作已停止'); },
       chrome: chrome,
       mailClient: mailClient,
+      executeLocalOperation: executeLocalOperation,
       tabRuntime: isolatedTabAccess,
       addLog: addResourceStepLog,
-      getConfig: function () { return configCache; },
+      getConfig: function () { return options.appConfig || configCache; },
+      getSession: function () { return applicationSession; },
       pageAutomation: pageAutomation,
       pageHostMatchesTab: pageHostMatchesTab,
       getRunHistory: function () { return configStore.getRuns(); },
       getSandboxEngine: function () {
         return {
           turndownHtmlToMarkdown: sandboxEngine.turndownHtmlToMarkdown,
+          utilities: sandboxEngine.utilities,
           runScript: function (code, scriptOptions) {
             return sandboxEngine.runScript(code, Object.assign({}, scriptOptions || {}, {
               apiCall: isolatedExecutor.executeApiCall,
-              tag: 'resource-node-step',
+              tag: options.runId || 'resource-node-step',
               addLog: addResourceStepLog,
             }));
           },
@@ -2654,6 +2724,12 @@
         ctx: cloneJsonSafe(isolatedExecutor.getCtx()),
         debugTrace: cloneJsonSafe(isolatedExecutor.getDebugTrace ? isolatedExecutor.getDebugTrace() : []),
       };
+    }).finally(async function () {
+      if (!applicationSession) return;
+      if (options.signal) options.signal.removeEventListener('abort', stopApplicationSession);
+      await applicationSession.closeCreatedTabs();
+      applicationSession.status = 'stopped';
+      await applicationSession.detachKeepAlive();
     });
   }
 
@@ -2725,6 +2801,14 @@
     },
   });
 
+  function executeLocalOperation(operation, input, options) {
+    var validation = AgentResourceProtocol.validateJsonSchema(LocalResource.OPERATIONS[operation].inputSchema, input);
+    if (!validation.valid) {
+      throw AgentResourceProtocol.arpError('SCHEMA_VALIDATION_FAILED', '本地操作参数无效: ' + validation.errors.join('; '), { performed: 'no' });
+    }
+    return localOperations.execute(operation, input, options);
+  }
+
   function createCanonicalResourceRuntime() {
     var resourceRouter = globalThis.AgentResourceRouter;
     var conversationRuntime = globalThis.ConversationRuntime;
@@ -2757,6 +2841,7 @@
     }
 
     var resourceOptions = {
+      utilityService: sandboxEngine.utilities,
       chrome: chrome,
       root: globalThis,
       storageArea: chrome.storage.local,
@@ -2777,6 +2862,8 @@
       modelSettings: globalThis.ModelSettings,
       agentProvider: globalThis.AgentProvider,
       systemSettings: globalThis.PageAutomationSystemSettings,
+      saveSystemSettings: function (value) { return proxyManager.saveSystemSettings(value); },
+      mailClient: mailClient,
       fetch: globalThis.fetch.bind(globalThis),
       knowledge: globalThis.Knowledge,
       nodeTypes: globalThis.NodeTypes,
@@ -2803,12 +2890,16 @@
       saveConfig: configReplace,
       runCommands: requireRunCommandService(),
       runQueries: requireRunQueryService(),
+      onApplicationRunChanged: function () { broadcast({ type: 'RUN_HISTORY_UPDATED' }); },
       flowGroupController: flowGroupController,
       scheduler: scheduler,
       executeNodeInstance: function (node, options) {
         return executeResourceNodeInstance(node, options || {});
       },
       runScript: function (code, options) {
+        if (options && options.appAuthorization) {
+          return executeResourceNodeInstance({ nodeId: 'app-script', type: 'runScript', params: { inlineCode: code, runScriptJustification: '执行应用已绑定且已授权的脚本动作' } }, options).then(function (result) { return result.result; });
+        }
         return sandboxEngine.runScript(code, options || {});
       },
       httpMcpManager: httpMcpManager,
@@ -2822,11 +2913,67 @@
     resourceOptions.recordingService = globalThis.RecordingResourceService.create(resourceOptions);
     resourceOptions.agentConfigurationService = globalThis.AgentConfigurationResourceService.create(resourceOptions);
     resourceOptions.mcpService = globalThis.McpResourceService.create(resourceOptions);
+    var appBridge;
+    var appViewTabs = new Map();
+    chrome.tabs.onRemoved.addListener(function (tabId) { appViewTabs.delete(tabId); });
+    chrome.tabs.onUpdated.addListener(function (tabId, change) { if (change.url) appViewTabs.delete(tabId); });
+    var appStoreOptions = {
+      incognito: INCOGNITO_CONTEXT,
+      notify: function (event) {
+        if (appBridge) appBridge.changed(event);
+        if (globalThis.PageAgentApps) globalThis.PageAgentApps.changed(event).catch(function (error) { console.error('Application task cancellation failed', error); });
+        broadcast(event);
+        appViewTabs.forEach(function (ids, tabId) { if (ids.has(event.appId)) chrome.tabs.sendMessage(tabId, event).catch(function () { appViewTabs.delete(tabId); }); });
+      },
+    };
+    var builtinAppStore = globalThis.AppStore.create(appStoreOptions);
+    var appStore = globalThis.AppStore.create(Object.assign({}, appStoreOptions, {
+      beforeAccess: function () { return builtinAppLoader.install(builtinAppStore); },
+    }));
+    resourceOptions.appService = globalThis.AppService.create({
+      store: appStore, resourceService: resourceOptions.resourceService, incognito: INCOGNITO_CONTEXT,
+      resourceRoutes: function () { return runtime.registry.listRoutes(); },
+      buildNodes: function (flow, config) { return dynamicFlowBuilder.buildWorkflowNodes(flow, config).map(function (node) { var snapshot = Object.assign({}, node); delete snapshot.execute; return snapshot; }); },
+      readResource: async function (uri) {
+        var envelope = await runtime.dispatch('GET', { uri: uri }, {
+          actorId: 'ui:apps', permissionScope: ['assistants.read', 'model-services.read', 'connections.read'],
+        });
+        if (envelope.error) throw Object.assign(new Error(envelope.error.message), { code: envelope.error.code });
+        return envelope.primary.data;
+      },
+    });
+    globalThis.PageAgentApps = resourceOptions.appService;
+    globalThis.PageAgentApps.watchTab = function (tabId, appId) {
+      var ids = appViewTabs.get(tabId) || new Set(); ids.add(appId); appViewTabs.set(tabId, ids);
+    };
+    appBridge = globalThis.AppBridge.install(resourceOptions.appService, {
+      incognito: INCOGNITO_CONTEXT,
+      dispatchResource: function (method, request, auth, scope, signal) {
+        return runtime.dispatch(method, request, {
+          actorId: 'app:' + auth.appId + ':' + auth.slot + ':' + auth.revision,
+          permissionScope: scope, appResourceSession: auth, incognito: INCOGNITO_CONTEXT,
+          abortSignal: signal,
+        });
+      },
+      dispatchAction: async function (appId, name, input, auth, key) {
+        var envelope = await runtime.dispatch('POST', {
+          uri: '/apps/' + appId + '/actions/' + encodeURIComponent(name) + '/runs', body: { input: input }, idempotencyKey: key,
+        }, { actorId: 'app:' + appId + ':' + auth.slot + ':' + auth.revision, permissionScope: ['apps.execute'], appSession: auth });
+        if (envelope.error) throw Object.assign(new Error(envelope.error.message), { code: envelope.error.code });
+        return envelope.primary.data;
+      },
+    });
+    globalThis.PageAgentAppBridge = appBridge;
 
     var runtime = resourceRouter.createAgentResourceRouter({
       authorize: function (input) {
         if (input.route && input.route.root === 'local' && !localOperations.isAvailable()) {
           return { allowed: false, message: '本地文件与命令操作未启用或服务端不可用' };
+        }
+        if (input.context && input.context.appResourceSession) {
+          return resourceOptions.appService.authorizeResources(input.context.appResourceSession, input.descriptor.requiredPermissions).then(function () {
+            return { allowed: true };
+          }, function (error) { return { allowed: false, code: error.code, message: error.message }; });
         }
         return conversationRuntime.authorizeResourceRequest(input);
       },
@@ -3773,8 +3920,74 @@
   // --- Chrome API 事件绑定 ---
 
   chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+    if (message && message.type === 'APP_CONVERSATION_CONTEXT' && sender.id === chrome.runtime.id) {
+      globalThis.PageAgentApps.conversationContext(message.conversationId).then(function (result) {
+        if (result && sender.tab) globalThis.PageAgentApps.watchTab(sender.tab.id, result.appId);
+        sendResponse({ result: result });
+      }, function (error) { sendResponse({ error: { code: error.code || 'APP_ERROR', message: error.message } }); });
+      return true;
+    }
+    if (message && message.type === 'APP_SUMMARY' && sender.id === chrome.runtime.id) {
+      globalThis.PageAgentApps.summary(message.appId).then(function (result) {
+        if (sender.tab) globalThis.PageAgentApps.watchTab(sender.tab.id, message.appId);
+        sendResponse({ result: result });
+      }, function (error) { sendResponse({ error: { code: error.code || 'APP_ERROR', message: error.message } }); });
+      return true;
+    }
+    if (message && message.type === 'APP_OPEN' && sender.id === chrome.runtime.id) {
+      var appOpening = ['edit', 'permissions'].includes(message.destination)
+        ? Promise.resolve().then(function () { return chrome.tabs.create({ url: globalThis.PageAgentApps.links(message.appId)[message.destination] }); })
+        : globalThis.PageAgentApps.open(message.appId, ['draft', 'published'].includes(message.slot) ? message.slot : undefined);
+      appOpening.then(function (result) { sendResponse({ result: result }); }, function (error) { sendResponse({ error: { code: error.code || 'APP_ERROR', message: error.message } }); });
+      return true;
+    }
+    if (message && message.type === 'APP_MANAGE') {
+      var managerUrl = chrome.runtime.getURL('options/options.html');
+      if (sender.id !== chrome.runtime.id || String(sender.url || '').split(/[?#]/)[0] !== managerUrl) {
+        sendResponse({ error: { code: 'PERMISSION_DENIED', message: '应用管理仅允许配置中心调用' } });
+        return false;
+      }
+      Promise.resolve().then(async function () {
+        var service = globalThis.PageAgentApps;
+        var input = message.input || {};
+        if (message.operation === 'permissions') return service.updatePermissions(input.appId, input);
+        if (message.operation === 'copy') return service.store.copy(input.appId, input.revision);
+        if (message.operation === 'dependencies') return service.collect(input.dependencies || []);
+        if (message.operation === 'bind-conversation') return service.bindConversation(input.conversationId, input.appId);
+        if (message.operation === 'preflight-import') return service.preflightImport(input.item, input.modules, input.scope, input.plan);
+        if (message.operation === 'remap-import') return service.remapImported(input.item, input.idMap, input.modules, input.committedApps);
+        if (message.operation === 'check-import-dependencies') return service.collect(Object.values(input.item.slots).flatMap(service.codeDependencies));
+        if (message.operation === 'imported') { service.store.emit(input.appId, 'imported', null, input.revision); return { ok: true }; }
+        if (message.operation === 'content-committed') { service.store.emit(input.appId, 'saved', 'draft', input.revision); return { ok: true }; }
+        if (message.operation === 'verify-export') {
+          for (var stamp of input.stamps) {
+            var meta = await service.store.get('app_meta', stamp.appId);
+            var permission = await service.store.get('app_permissions', stamp.appId);
+            if (!meta || !permission || meta.revision !== stamp.stamp.revision || stamp.stamp.dataIncluded !== false && (meta.dataRevision || null) !== stamp.stamp.dataRevision || AppContract.json(permission.generationScope) !== AppContract.json(stamp.stamp.generationScope)) throw AppContract.error('REVISION_CONFLICT', '导出期间应用或生成范围已变化，请重试');
+          }
+          await service.collect(input.dependencies); return { ok: true };
+        }
+        if (message.operation === 'open') return service.open(input.appId, input.slot);
+        if (message.operation === 'cancel-runs') return service.cancelRuns(input.appId);
+        if (message.operation === 'stop') {
+          var tabs = await chrome.tabs.query({});
+          var app = await service.summary(input.appId), legacyLinks = service.links(input.appId);
+          var urls = [app.links.open, app.links.preview, legacyLinks.open, legacyLinks.preview];
+          var sessionTabs = globalThis.PageAgentAppBridge.tabIds(input.appId), connectedTabs = globalThis.PageAgentAppBridge.tabIds();
+          var ids = tabs.filter(function (tab) {
+            if (!!tab.incognito !== INCOGNITO_CONTEXT) return false;
+            if (!tab.pendingUrl && connectedTabs.includes(tab.id)) return sessionTabs.includes(tab.id);
+            return urls.includes(String(tab.pendingUrl || tab.url || '').split(/[?#]/)[0]);
+          }).map(function (tab) { return tab.id; });
+          if (ids.length) await chrome.tabs.remove(ids);
+          return { closed: ids.length };
+        }
+        throw AppContract.error('UNSUPPORTED_CAPABILITY', '未知应用管理操作');
+      }).then(function (result) { sendResponse({ result: result }); }, function (error) { sendResponse({ error: { code: error.code || 'APP_ERROR', message: error.message } }); });
+      return true;
+    }
     // offscreen 中继消息：发往 offscreen 的消息由 offscreen.js 处理，background 忽略
-    if (message && message.target === 'offscreen') return undefined;
+    if (message && (message.target === 'offscreen' || message.target === 'utility-workers')) return undefined;
 
     if (message && /^(?:MAIL_SETTINGS_GET|MAIL_SETTINGS_SAVE|MAIL_ENABLED_SET|MAIL_TEST_SEND|MAIL_STATUS)$/.test(message.type)) {
       if (!trustedExtensionSender(sender)) {
@@ -3796,13 +4009,14 @@
       return true;
     }
 
-    if (message && (message.type === 'SYSTEM_SETTINGS_SAVE' || message.type === 'SYSTEM_HTTP_TEXT')) {
+    if (message && /^(?:SYSTEM_SETTINGS_SAVE|SYSTEM_PROXY_STATUS|SYSTEM_HTTP_TEXT)$/.test(message.type)) {
       if (!trustedExtensionSender(sender)) {
-        sendResponse({ ok: false, error: '仅扩展页面可以操作系统 HTTP 配置' });
+        sendResponse({ ok: false, error: '仅扩展页面可以操作系统网络配置' });
         return undefined;
       }
       var systemOperation = Promise.resolve().then(async function () {
-        if (message.type === 'SYSTEM_SETTINGS_SAVE') return globalThis.PageAutomationUserAgent.save(message.payload);
+        if (message.type === 'SYSTEM_SETTINGS_SAVE') return proxyManager.saveSystemSettings(message.payload);
+        if (message.type === 'SYSTEM_PROXY_STATUS') return proxyManager.getStatus();
         var url = new URL(String(message.payload && message.payload.url || ''));
         if (!/^https?:$/.test(url.protocol)) throw new Error('仅支持 HTTP/HTTPS URL');
         var controller = new AbortController();
@@ -3993,8 +4207,15 @@
   // MV3 仍可能终止 SW；运行中快照负责恢复，alarm 只降低长时间空闲带来的影响。
   function ensureSwKeepAlive() {
     chrome.alarms.get(SW_KEEPALIVE_ALARM_NAME, function (alarm) {
+      var error = chrome.runtime.lastError;
+      if (error) {
+        console.error(LOG_PREFIX, '读取后台心跳失败:', error.message);
+        return;
+      }
       if (!alarm) {
-        chrome.alarms.create(SW_KEEPALIVE_ALARM_NAME, { periodInMinutes: 0.5 });
+        chrome.alarms.create(SW_KEEPALIVE_ALARM_NAME, { periodInMinutes: 0.5 }).catch(function (error) {
+          console.error(LOG_PREFIX, '创建后台心跳失败:', error);
+        });
       }
     });
   }
@@ -4043,7 +4264,6 @@
   chrome.runtime.onStartup.addListener(function () {
     restoreState();
     loggingStatus.addLog('Service Worker 启动');
-    recoverRunningSessionsIfAny();
   });
 
   chrome.runtime.onInstalled.addListener(function () {
@@ -4324,9 +4544,10 @@
   // --- 初始化 ---
   restoreState();
   buildStepRegistry();
-  var configReady = Promise.all([loadAndApplyConfig(), builtinSkillsReady]).then(function (parts) {
+  var configReady = Promise.all([loadAndApplyConfig(), builtinSkillsReady, runReportsReady]).then(function (parts) {
     return parts[0];
   });
+  configReady.then(recoverRunningSessionsIfAny);
   pageReadiness = PageReadiness.createPageReadiness({
     chrome: chrome,
     pageAutomation: pageAutomation,
@@ -4368,6 +4589,10 @@
   var mcpRuntime = McpRuntime.createMcpRuntime({
     chrome: chrome,
     addLog: loggingStatus.addLog,
+    prepareNetwork: async function () {
+      await proxyManager.sync();
+      return globalThis.PageAutomationUserAgent.sync();
+    },
     dispatchResource: function (method, request, context) {
       return canonicalResourceRuntime.dispatch(method, request, context);
     },
@@ -4378,8 +4603,27 @@
     return mcpRuntime.initClient();
   }
 
+  var mcpNetworkReconnectTimer = null;
+  chrome.storage.onChanged.addListener(function (changes, area) {
+    var change = area === 'local' && changes[globalThis.PageAutomationSystemSettings.SETTINGS_KEY];
+    if (!change) return;
+    var previous = globalThis.PageAutomationSystemSettings.normalize(change.oldValue);
+    var next = globalThis.PageAutomationSystemSettings.normalize(change.newValue);
+    if (previous.userAgent === next.userAgent && globalThis.PageAutomationSystemSettings.PROXY_FIELDS.every(function (key) {
+      return previous[key] === next[key];
+    })) return;
+    clearTimeout(mcpNetworkReconnectTimer);
+    // Debounce edits and allow the settings response to leave the old MCP socket.
+    mcpNetworkReconnectTimer = setTimeout(function () {
+      mcpRuntime.initClient({ reconnect: true }).catch(function (error) {
+        loggingStatus.addLog('应用系统网络配置后重连 MCP 失败: ' + error.message, { level: 'error', scope: 'mcp' });
+      });
+    }, 500);
+  });
 
-  configReady.then(initMCPClient);
+  configReady.then(initMCPClient).catch(function (error) {
+    loggingStatus.addLog('初始化 MCP 连接失败: ' + error.message, { level: 'error', scope: 'mcp' });
+  });
   Promise.all([configReady, conversationModelSettingsReady]).then(function () {
     return conversationAgentRuntime.migrationReady.then(function () {
       return conversationRecordingAttachmentsRuntime.reconcile();

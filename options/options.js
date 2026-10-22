@@ -34,7 +34,8 @@
 
   // --- 状态 ---
   var config = { pages: {}, flows: {}, flowGroups: {}, scripts: {}, schedules: {}, urlTriggers: [] };
-  var currentSection = 'conversation';
+  var currentSection = 'apps';
+  var runtimeInputDialog = null;
   var pendingConversationTarget = (function () {
     try {
       var params = new URLSearchParams(window.location.search || '');
@@ -54,6 +55,15 @@
   var syncConfigRefreshTimer = 0;
   var systemSettings = globalThis.PageAutomationSystemSettings.normalize();
   var systemSettingsSaving = false;
+  var systemProxyDirty = false;
+  var systemProxyControls = {
+    proxyServer: '#system-proxy-server',
+    proxyUsername: '#system-proxy-username',
+    proxyPassword: '#system-proxy-password',
+    proxyHostPatterns: '#system-proxy-host-patterns',
+    proxyBypassList: '#system-proxy-bypass-list',
+  };
+  var systemProxyStatusRequestId = 0;
 
   // 有未保存修改时确认丢弃；返回 false 表示用户取消操作
   function confirmDiscardFlowDraft() {
@@ -67,6 +77,7 @@
   var configListPages = {};
   var scheduleController = null;
   var backupController = null;
+  var appController = null;
   var lifecycle = globalThis.PageAutomationLifecycle.create(window);
   var syncEventStream = globalThis.PageAutomationSyncEventStream
     && globalThis.PageAutomationSyncEventStream.create
@@ -112,7 +123,7 @@
       var el = typeof selector === 'string' ? $(selector) : selector;
       if (!el || el.classList.contains('hidden')) return;
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      var focusEl = el.querySelector('input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled])');
+      var focusEl = el.querySelector('input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), page-code-editor:not([disabled]), select:not([disabled]), button:not([disabled])');
       if (!focusEl) return;
       try {
         focusEl.focus({ preventScroll: true });
@@ -501,13 +512,9 @@
     });
   }
 
-  var toastTimer = null;
+  var feedback = globalThis.PageAgentFeedback.create({ duration: 2600, replace: true });
   function toast(message, isError) {
-    var el = $('#toast');
-    el.textContent = message;
-    el.className = isError ? 'error' : '';
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { el.className = 'hidden'; }, 2600);
+    feedback.toast(message, { kind: isError ? 'error' : 'info' });
   }
 
   function genConfigId(prefix) {
@@ -556,9 +563,10 @@
     return parts.join(' · ');
   }
 
-  function renderUsageBlock(title, text) {
+  function renderUsageBlock(title, text, language) {
     if (!String(text || '').trim()) return '';
-    return '<div class="io-usage-block"><strong>' + esc(title) + '</strong><p>' + esc(text) + '</p></div>';
+    return '<div class="io-usage-block"><strong>' + esc(title) + '</strong>'
+      + (language ? PageAgentCodeEditor.html(text, language) : '<p>' + esc(text) + '</p>') + '</div>';
   }
 
   function renderFlowUsageSummary(item, emptyText) {
@@ -572,7 +580,7 @@
       + renderUsageBlock('用途', item.description || '')
       + renderUsageBlock('入参', item.inputDescription || '')
       + renderUsageBlock('出参', item.outputDescription || '')
-      + renderUsageBlock('运行入参示例', item.inputExample || '')
+      + renderUsageBlock('运行入参示例', item.inputExample || '', 'json')
       + '</div>'
       + '</div>';
   }
@@ -584,21 +592,40 @@
   }
 
   function buildRuntimeContextFromInputs(runnable, title) {
+    if (runtimeInputDialog) return Promise.resolve(null);
     var initial = (runnable && runnable.inputExample) ? String(runnable.inputExample) : '';
-    var hint = (title || '运行') + ' 入参 JSON（可选）'
-      + '\n可使用 {"input": {...}}，也可以直接填写入参对象。留空表示无入参。';
-    var raw = prompt(hint, initial);
-    if (raw === null) return null;
-    raw = String(raw || '').trim();
-    if (!raw) return {};
-    try {
-      var parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('必须是 JSON 对象');
-      return normalizeRuntimeInputPayload(parsed);
-    } catch (err) {
-      toast('入参 JSON 无效: ' + err.message, true);
-      return null;
-    }
+    return new Promise(function (resolve) {
+      var dialog = document.createElement('dialog'), previous = document.activeElement, settled = false;
+      dialog.className = 'conversation-confirm-dialog code-input-dialog';
+      dialog.setAttribute('aria-labelledby', 'runtime-input-dialog-title');
+      dialog.innerHTML = '<form><header class="conversation-confirm-header"><h3 id="runtime-input-dialog-title">' + esc(title || '运行') + '</h3></header>'
+        + '<div class="conversation-confirm-body"><p>入参 JSON 可留空。可使用 {"input": {...}}，也可以直接填写入参对象。</p>'
+        + '<page-code-editor language="json" rows="10" aria-label="运行入参">' + esc(initial) + '</page-code-editor>'
+        + '<p class="code-input-error" role="alert" hidden></p></div>'
+        + '<footer class="conversation-confirm-actions"><button type="button" class="btn-secondary">取消</button><button type="submit" class="btn-primary">运行</button></footer></form>';
+      function finish(value) {
+        if (settled) return;
+        settled = true; runtimeInputDialog = null; dialog.close(); dialog.remove();
+        if (previous && previous.isConnected) previous.focus();
+        resolve(value);
+      }
+      runtimeInputDialog = { cancel: function () { finish(null); } };
+      dialog.querySelector('button[type="button"]').onclick = function () { finish(null); };
+      dialog.addEventListener('cancel', function (event) { event.preventDefault(); finish(null); });
+      dialog.querySelector('form').onsubmit = function (event) {
+        event.preventDefault();
+        var raw = dialog.querySelector('page-code-editor').value.trim();
+        try {
+          if (!raw) { finish({}); return; }
+          var parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('必须是 JSON 对象');
+          finish(normalizeRuntimeInputPayload(parsed));
+        } catch (error) {
+          var notice = dialog.querySelector('[role="alert"]'); notice.hidden = false; notice.textContent = '入参 JSON 无效: ' + error.message;
+        }
+      };
+      document.body.append(dialog); dialog.showModal(); dialog.querySelector('page-code-editor').focus();
+    });
   }
 
   function sortedValues(map) {
@@ -881,6 +908,11 @@
 
   function switchSection(section) {
     if (currentSection === 'flows' && section !== 'flows' && !confirmDiscardFlowDraft()) return;
+    // Entry targets are captured before the initial navigation and used only once.
+    var url = new URL(location.href);
+    ['section', 'appId', 'action', 'assistantId', 'topicId'].forEach(function (key) { url.searchParams.delete(key); });
+    if (url.href !== location.href) history.replaceState(history.state, '', url.href);
+    if (section !== 'conversation') pendingConversationTarget = null;
     currentSection = section;
     var main = $('#main');
     if (main) main.classList.toggle('conversation-main', section === 'conversation');
@@ -899,6 +931,7 @@
 
   function renderCurrentSection() {
     switch (currentSection) {
+      case 'apps': if (appController) appController.render().catch(function (error) { toast(error.message, true); }); break;
       case 'pages': if (pageController) pageController.render(); break;
       case 'flows': if (flowController) flowController.render(); break;
       case 'flowGroups': if (flowGroupController) flowGroupController.render(); break;
@@ -931,10 +964,10 @@
     return flowController ? flowController.render() : null;
   }
 
-  function runFlow(flowId) {
+  async function runFlow(flowId) {
     var flow = config.flows && config.flows[flowId];
-    var context = buildRuntimeContextFromInputs(flow, '运行流程「' + ((flow && flow.label) || flowId) + '」');
-    if (context === null) return;
+    var context = await buildRuntimeContextFromInputs(flow, '运行流程「' + ((flow && flow.label) || flowId) + '」');
+    if (context === null || tornDown) return;
     var uri = '/flows/' + resourceSegment(flowId) + '/runs';
     resourceClient.authorizedPost(uri, {
       trigger: 'manual',
@@ -955,10 +988,10 @@
   // 流程组
   // ============================================================
 
-  function runFlowGroup(flowGroupId) {
+  async function runFlowGroup(flowGroupId) {
     var group = config.flowGroups && config.flowGroups[flowGroupId];
-    var context = buildRuntimeContextFromInputs(group, '运行流程组「' + ((group && (group.label || group.name)) || flowGroupId) + '」');
-    if (context === null) return;
+    var context = await buildRuntimeContextFromInputs(group, '运行流程组「' + ((group && (group.label || group.name)) || flowGroupId) + '」');
+    if (context === null || tornDown) return;
     var uri = '/flow-groups/' + resourceSegment(flowGroupId) + '/runs';
     resourceClient.authorizedPost(uri, {
       trigger: 'manual',
@@ -1330,6 +1363,59 @@
     if (floatingEntry) floatingEntry.disabled = !!disabled;
     var userAgent = $('#system-user-agent');
     if (userAgent) userAgent.disabled = !!disabled;
+    Object.keys(systemProxyControls).forEach(function (key) {
+      var input = $(systemProxyControls[key]);
+      if (input) input.disabled = !!disabled;
+    });
+    var saveProxy = $('#btn-save-system-proxy');
+    if (saveProxy) saveProxy.disabled = !!disabled;
+  }
+
+  function refreshSystemProxyStatus(manual) {
+    var element = $('#system-proxy-status');
+    if (!element) return;
+    var requestId = ++systemProxyStatusRequestId;
+    var button = $('#btn-refresh-system-proxy-status');
+    if (button) {
+      button.disabled = true;
+      button.textContent = '刷新中…';
+    }
+    element.textContent = '正在读取代理状态…';
+    element.setAttribute('aria-busy', 'true');
+    var timer;
+    return new Promise(function (resolve, reject) {
+      timer = setTimeout(function () {
+        reject(new Error('后台在 10 秒内未响应，请重新加载扩展并刷新当前设置页'));
+      }, 10000);
+      chrome.runtime.sendMessage({ type: 'SYSTEM_PROXY_STATUS' }).then(resolve, reject);
+    }).then(function (response) {
+      if (requestId !== systemProxyStatusRequestId) return;
+      if (!response || !response.ok || !response.payload) throw new Error(response && response.error || '未收到有效的代理状态');
+      var status = response.payload;
+      var labels = {
+        controlled_by_this_extension: '当前由本插件控制',
+        controllable_by_this_extension: '当前未由本插件控制，本插件可以接管',
+        controlled_by_other_extensions: '当前由其他插件控制，本插件的代理配置未生效',
+        not_controllable: '当前不允许本插件控制代理（可能受浏览器策略限制）',
+      };
+      element.textContent = (labels[status.levelOfControl] || '代理控制状态未知')
+        + '；' + (status.scope === 'regular' ? '普通浏览器配置' : '无痕浏览器配置')
+        + '；当前模式：' + status.mode + '；流程规则：' + status.activeRules + ' 条'
+        + '；刷新时间：' + new Date().toLocaleTimeString();
+      if (manual === true) toast('代理状态已刷新');
+    }).catch(function (error) {
+      if (requestId !== systemProxyStatusRequestId) return;
+      element.textContent = '代理状态读取失败：' + error.message;
+      if (manual === true) toast(element.textContent, true);
+    }).finally(function () {
+      clearTimeout(timer);
+      if (requestId !== systemProxyStatusRequestId) return;
+      element.removeAttribute('aria-busy');
+      if (button) {
+        button.disabled = false;
+        button.textContent = '刷新状态';
+      }
+    });
   }
 
   function renderSystemSettings() {
@@ -1337,6 +1423,13 @@
     if (floatingEntry) floatingEntry.checked = systemSettings.floatingEntryDisabled === true;
     var userAgent = $('#system-user-agent');
     if (userAgent) userAgent.value = systemSettings.userAgent;
+    if (!systemProxyDirty) {
+      Object.keys(systemProxyControls).forEach(function (key) {
+        var input = $(systemProxyControls[key]);
+        if (input) input.value = systemSettings[key];
+      });
+    }
+    refreshSystemProxyStatus();
   }
 
   function loadSystemSettings() {
@@ -1347,7 +1440,7 @@
     });
   }
 
-  function saveSystemSettingsFromControls() {
+  function saveSystemSettingsFromControls(saveProxy) {
     if (systemSettingsSaving) return;
     var floatingEntry = $('#system-floating-entry-disabled');
     var previous = systemSettings;
@@ -1356,17 +1449,24 @@
     var configuredUserAgent = userAgent ? userAgent.value : previous.userAgent;
     systemSettingsSaving = true;
     setSystemSettingsControlsDisabled(true);
-    var next = globalThis.PageAutomationSystemSettings.normalize({
+    var next = globalThis.PageAutomationSystemSettings.normalize(Object.assign({}, previous, {
       floatingEntryDisabled: floatingEntryDisabled,
       userAgent: configuredUserAgent,
-    });
+    }));
+    if (saveProxy === true) {
+      Object.keys(systemProxyControls).forEach(function (key) {
+        var input = $(systemProxyControls[key]);
+        if (input) next[key] = input.value;
+      });
+    }
     chrome.runtime.sendMessage({ type: 'SYSTEM_SETTINGS_SAVE', payload: next }).then(function (response) {
       if (!response || !response.ok) throw new Error(response && response.error || '系统配置保存失败');
       return response.payload;
     }).then(function (saved) {
       systemSettings = saved;
+      if (saveProxy === true) systemProxyDirty = false;
       renderSystemSettings();
-      toast('系统配置已更新');
+      toast(saveProxy === true ? '代理设置已保存' : '系统配置已更新');
     }).catch(function (error) {
       systemSettings = previous;
       renderSystemSettings();
@@ -1440,6 +1540,17 @@
   if (floatingEntryToggle) floatingEntryToggle.addEventListener('change', saveSystemSettingsFromControls);
   var systemUserAgentInput = $('#system-user-agent');
   if (systemUserAgentInput) systemUserAgentInput.addEventListener('change', saveSystemSettingsFromControls);
+  Object.keys(systemProxyControls).forEach(function (key) {
+    var input = $(systemProxyControls[key]);
+    if (input) input.addEventListener('input', function () { systemProxyDirty = true; });
+  });
+  var saveProxyButton = $('#btn-save-system-proxy');
+  if (saveProxyButton) saveProxyButton.addEventListener('click', function () { saveSystemSettingsFromControls(true); });
+  var refreshProxyButton = $('#btn-refresh-system-proxy-status');
+  if (refreshProxyButton) refreshProxyButton.addEventListener('click', function () { refreshSystemProxyStatus(true); });
+  if (chrome.proxy && chrome.proxy.settings) {
+    lifecycle.subscribe(chrome.proxy.settings.onChange, refreshSystemProxyStatus);
+  }
   loadSystemSettings().catch(function (error) {
     toast('系统配置加载失败: ' + (error && error.message || error), true);
   });
@@ -2086,38 +2197,6 @@
     updateMcpConfigSnippets();
   });
 
-  $('#btn-copy-mcp-command').addEventListener('click', function () {
-    copyText(buildMcpStartCommand()).then(function () {
-      toast('已复制启动命令');
-    }).catch(function () {
-      toast('复制失败，请手动选中复制', true);
-    });
-  });
-
-  $('#btn-copy-cherry-config').addEventListener('click', function () {
-    copyText(buildCherryStudioConfig()).then(function () {
-      toast('已复制 Cherry Studio 配置');
-    }).catch(function () {
-      toast('复制失败，请手动选中复制', true);
-    });
-  });
-
-  $('#btn-copy-codex-config').addEventListener('click', function () {
-    copyText(buildCodexMcpGuide()).then(function () {
-      toast('已复制 Codex 命令');
-    }).catch(function () {
-      toast('复制失败，请手动选中复制', true);
-    });
-  });
-
-  $('#btn-copy-claude-config').addEventListener('click', function () {
-    copyText(buildClaudeCodeMcpGuide()).then(function () {
-      toast('已复制 Claude Code 命令');
-    }).catch(function () {
-      toast('复制失败，请手动选中复制', true);
-    });
-  });
-
   $('#btn-mcp-reconnect').addEventListener('click', function () {
     startMcpConnectionAttempt();
   });
@@ -2152,8 +2231,10 @@
     $('#drawer').classList.add('active');
   }
   function closeDrawer() {
+    if (appController && !appController.confirmDrawerClose()) return false;
     $('#drawer-overlay').classList.remove('active');
     $('#drawer').classList.remove('active');
+    return true;
   }
   function handleDrawerCancel(event) {
     if (event) {
@@ -2183,12 +2264,13 @@
     if (event && event.persisted) return;
     if (tornDown) return;
     tornDown = true;
-    clearTimeout(toastTimer);
+    if (runtimeInputDialog) runtimeInputDialog.cancel();
+    feedback.destroy();
     if (syncConfigRefreshTimer) window.clearTimeout(syncConfigRefreshTimer);
-    toastTimer = null;
     syncConfigRefreshTimer = 0;
     [
       backupController,
+      appController,
       runReportController,
       urlTriggerController,
       scheduleController,
@@ -2430,7 +2512,6 @@
     renderPagination: renderConfigListPagination,
     nodeTypes: globalThis.NodeTypes,
     toast: toast,
-    copyText: copyText,
     confirm: function (message) { return confirm(message); },
     openDrawer: openDrawer,
     closeDrawer: closeDrawer,
@@ -2476,6 +2557,27 @@
     getCurrentSection: function () { return currentSection; },
   });
   backupController.init();
+  appController = globalThis.OptionsAppController.create({
+    resourceClient: resourceClient,
+    toast: toast,
+    openDrawer: openDrawer,
+    closeDrawer: closeDrawer,
+    isActive: function () { return currentSection === 'apps'; },
+    exportApp: function (appId) { return backupController.exportApp(appId); },
+    showRuns: function () { switchSection('logs'); },
+    converse: async function (appId) {
+      switchSection('conversation');
+      await globalThis.Conversation.openApp(appId);
+    },
+  });
+  var appTarget = new URLSearchParams(location.search);
+  switchSection(appTarget.get('section') === 'conversation' || pendingConversationTarget ? 'conversation' : 'apps');
+  if (appTarget.get('section') === 'apps') {
+    if (appTarget.get('appId')) {
+      var appAction = appTarget.get('action');
+      if (appAction === 'edit' || appAction === 'permissions') appController[appAction](appTarget.get('appId')).catch(function (error) { toast(error.message, true); });
+    }
+  }
 
   loadConfig();
 })();

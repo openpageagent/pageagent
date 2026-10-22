@@ -6,6 +6,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const arp = require('../resources/protocol/index.js');
 const { OPERATIONS } = require('../resources/modules/local-resource.js');
+const { executeDesktop } = require('./desktop-operations.js');
 
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 64 * 1024;
@@ -112,6 +113,7 @@ async function execute(name, input, signal, workingDirectory) {
   const directory = await fs.realpath(workingDirectory);
   if (!(await fs.stat(directory)).isDirectory()) throw new Error('工作目录不存在或不是目录');
   checkCancelled(signal);
+  if (OPERATIONS[name].desktop) return executeDesktop(name, input, signal, directory);
   if (name === 'bash') return bash(input, signal, directory);
   const file = localPath(input.path, directory);
   if (name === 'write') {

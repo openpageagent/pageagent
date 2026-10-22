@@ -38,6 +38,12 @@
     httpRequest: 'http-response',
     webhook: 'http-response',
     sendEmail: 'mail-delivery',
+    localRead: 'local-file',
+    localWrite: 'local-file',
+    localDelete: 'local-file',
+    localGrep: 'search-results',
+    localBash: 'local-command',
+    localScreenshot: 'screenshot',
     httpLoadTest: 'performance-load-test',
     saveFile: 'file-download',
     waitDownload: 'file-download',
@@ -326,6 +332,27 @@
     function resolveNodeParams(node, ctx) {
       assertNode(node);
       requireParamApis();
+      var typeDefinition = typeof NodeTypes.getType === 'function' && NodeTypes.getType(node.type);
+      if (/^local(?:Read|Write|Delete|Grep|Bash)$/.test(node.type) || typeDefinition && typeDefinition.utilityId) {
+        // File content and commands inserted from variables must not be interpolated again.
+        return normalizePreservingExtraParams(node.type, Template.interpolateParams(copyOwnDataParams(node), ctx));
+      }
+      if (typeDefinition && typeDefinition.desktopOperation) {
+        var rawDesktopParams = copyOwnDataParams(node);
+        var desktopParams = Template.interpolateParams(rawDesktopParams, ctx);
+        typeDefinition.params.forEach(function (param) {
+          var value = desktopParams[param.key];
+          if (param.required && param.default === undefined && (value === undefined || value === null || value === '')) {
+            throw contractError('LOCAL_DESKTOP_INPUT_INVALID', '桌面操作缺少参数: ' + param.label);
+          }
+          if (param.kind === 'number' && typeof value === 'string' && !value.trim()
+              && (param.required || String(rawDesktopParams[param.key] || '').indexOf('{{') !== -1)) {
+            throw contractError('LOCAL_DESKTOP_INPUT_INVALID', '桌面操作数值参数为空: ' + param.label);
+          }
+        });
+        // Resolve once, and reject missing coordinates before numeric defaults can turn them into zero.
+        return normalizePreservingExtraParams(node.type, desktopParams);
+      }
       if (node.type === 'sendEmail') {
         var mailParams = copyOwnDataParams(node);
         var attachments = mailParams.attachments || [];
@@ -396,11 +423,13 @@
     }
 
     function inferContentType(nodeType) {
-      return CONTENT_TYPES[nodeType] || 'unknown';
+      var definition = NodeTypes && typeof NodeTypes.getType === 'function' && NodeTypes.getType(nodeType);
+      return CONTENT_TYPES[nodeType] || (definition && definition.desktopOperation ? 'local-desktop' : 'unknown');
     }
 
     function inferMimeType(nodeType, content) {
       if (nodeType === 'screenshot') return 'image/jpeg';
+      if (nodeType === 'localScreenshot') return 'image/png';
       if (nodeType === 'cdp.screenshot') {
         var screenshotFormat = String(ownDataValue(content, 'format', 'png') || 'png').toLowerCase();
         return 'image/' + (screenshotFormat === 'jpg' ? 'jpeg' : screenshotFormat);

@@ -98,7 +98,6 @@
     var renderConfigListPagination = options.renderPagination || function () { return ''; };
     var NodeTypes = options.nodeTypes || { getTypeLabel: function (type) { return type || 'unknown'; } };
     var toast = options.toast || function () {};
-    var copyText = options.copyText;
     var confirmAction = options.confirm || function () { return true; };
     var openDrawer = options.openDrawer || function () {};
     var closeDrawer = options.closeDrawer || function () {};
@@ -930,14 +929,13 @@
     return NodeTypes.getTypeLabel(type);
   }
 
-  function safeJsonPreview(value, maxLen) {
+  function safeJsonPreview(value) {
     var text;
     try {
       text = JSON.stringify(value === undefined ? null : value, null, 2);
     } catch (_) {
       text = String(value === undefined || value === null ? '' : value);
     }
-    if (maxLen && text.length > maxLen) return text.slice(0, maxLen) + '\n... 已截断 ' + (text.length - maxLen) + ' 字符';
     return text;
   }
 
@@ -945,39 +943,10 @@
     return !!(value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, key));
   }
 
-  function renderReportIO(label, value, run, field, options, resultIndex) {
-    var copyButton = options.copy !== false && typeof copyText === 'function'
-      ? '<button type="button" class="btn-small" data-action="copy-run-io" data-id="' + esc(run.id || run.runId)
-        + '" data-io-field="' + field + '"'
-        + (resultIndex === undefined ? '' : ' data-result-index="' + resultIndex + '"')
-        + ' aria-label="复制' + label + '" title="复制报告中保存的完整' + label + '">复制' + label + '</button>'
-      : '';
+  function renderReportIO(label, value, options) {
     return '<details class="output-details"' + (options.openDetails ? ' open' : '') + '><summary>' + label + '</summary>'
-      + '<pre class="output-preview">' + esc(safeJsonPreview(value, options.fullOutput ? 0 : 8000)) + '</pre>'
-      + (copyButton ? '<div class="report-io-actions">' + copyButton + '</div>' : '') + '</details>';
-  }
-
-  function copyRunIO(target) {
-    var run = findRun(target.dataset.id);
-    var field = target.dataset.ioField;
-    var source = run;
-    if (run && target.hasAttribute('data-result-index')) {
-      source = run.flowGroupResults[Number(target.dataset.resultIndex)];
-    }
-    if (!source || (field !== 'input' && field !== 'output') || typeof copyText !== 'function') {
-      toast('复制失败，请刷新报告后重试', true);
-      return;
-    }
-    var value = field === 'output' && source === run && !hasReportField(run, 'output') ? run.result : source[field];
-    try {
-      Promise.resolve(copyText(safeJsonPreview(value))).then(function () {
-        toast('已复制' + (field === 'input' ? '输入' : '输出'));
-      }).catch(function () {
-        toast('复制失败，请手动选中复制', true);
-      });
-    } catch (_) {
-      toast('复制失败，请手动选中复制', true);
-    }
+      + globalThis.PageAgentCodeEditor.html(safeJsonPreview(value), 'json', { 'aria-label': label })
+      + '</details>';
   }
 
   function renderRunIO(run, options) {
@@ -989,10 +958,10 @@
     return '<h3 class="run-section-title">流程输入 / 输出</h3>'
       + '<div class="report-io-grid">'
       + (hasInput
-        ? renderReportIO('输入', run.input, run, 'input', options)
+        ? renderReportIO('输入', run.input, options)
         : '')
       + (hasOutput
-        ? renderReportIO('输出', output, run, 'output', options)
+        ? renderReportIO('输出', output, options)
         : '')
       + '</div>';
   }
@@ -1032,8 +1001,8 @@
           + '<td>' + esc(r.runId || '') + '</td>'
           + '<td><span class="badge ' + (ok ? 'step-passed' : 'step-failed') + '">' + (ok ? '通过' : esc(r.status)) + '</span></td>'
           + '<td>'
-          + (r.input === undefined ? '' : renderReportIO('输入', r.input, run, 'input', options, i))
-          + renderReportIO('输出', r.output, run, 'output', options, i)
+          + (r.input === undefined ? '' : renderReportIO('输入', r.input, options))
+          + renderReportIO('输出', r.output, options)
           + '</td></tr>';
       }).join('')
       + '</tbody></table></div>';
@@ -1285,10 +1254,10 @@
       + '</div>'
       + '<div class="report-charts">' + renderRunStatusDistributionChart(statusCount, 1) + renderRunTrendChart(lastRuns.length ? lastRuns : [run]) + renderHistoricalTrendChart(lastRuns.length ? lastRuns : [run]) + renderTopNodeChart(steps) + renderStepDistributionChart(stats) + '</div>'
       + renderReportInsights([run], buildFailureReasonGroups([run]), buildFlakyAnalysis(lastRuns.length ? lastRuns : [run]))
-      + renderRunIO(run, { fullOutput: true, openDetails: true, copy: false })
+      + renderRunIO(run, { fullOutput: true, openDetails: true })
       + renderRunTabUsage(run)
       + renderDataRows(run)
-      + renderFlowGroupResults(run, { fullOutput: true, openDetails: true, copy: false })
+      + renderFlowGroupResults(run, { fullOutput: true, openDetails: true })
       + renderNodeStatsTable(steps)
       + renderFailureSamples(steps)
       + renderWarnErrorEvents(run)
@@ -1317,9 +1286,9 @@
         + '<div class="card c-fail"><b>' + stats.failed + '</b>失败</div>'
         + '<div class="card c-skip"><b>' + stats.skipped + '</b>跳过</div>'
         + '</div>'
-        + renderRunIO(run, { fullOutput: true, openDetails: false, copy: false })
+        + renderRunIO(run, { fullOutput: true, openDetails: false })
         + renderDataRows(run)
-        + renderFlowGroupResults(run, { fullOutput: true, openDetails: false, copy: false })
+        + renderFlowGroupResults(run, { fullOutput: true, openDetails: false })
         + renderNodeStatsTable(steps)
         + renderFailureSamples(steps)
         + renderWarnErrorEvents(run)
@@ -1480,12 +1449,6 @@
       if (!target) return;
       var action = target.dataset && target.dataset.action || '';
       var id = target.dataset && target.dataset.id || '';
-      if (action === 'copy-run-io') {
-        event.preventDefault();
-        event.stopPropagation();
-        copyRunIO(target);
-        return;
-      }
       if (action === 'toggle-run') {
         toggleRun(id);
         return;

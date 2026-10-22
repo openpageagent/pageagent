@@ -619,7 +619,7 @@
         inputDescription: '直接输入后台任务内容即可；只有需要自定义 label 或 modelServiceId 时，才需要改用 JSON。',
         outputDescription: '',
         inputExample: '',
-        inputPlaceholder: '直接输入对话内容，例如：请帮我检查当前页面并给出建议',
+        inputPlaceholder: '输入任务内容',
         inputRequired: true,
       };
     }
@@ -743,7 +743,7 @@
         inputDescription: '直接输入后台任务内容即可；只有需要自定义标签或模型服务时，才需要使用 JSON。message 为主输入，label 可作为任务标签，modelServiceId 可指定模型服务。',
         outputDescription: '',
         inputExample: '',
-        inputPlaceholder: '直接输入对话内容，例如：请帮我检查当前页面并给出建议',
+        inputPlaceholder: '输入任务内容',
         inputRequired: true,
       });
     }

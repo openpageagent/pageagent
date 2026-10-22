@@ -33,6 +33,8 @@
   }
 
   var state = null;
+  var appBindings = {};
+  var appBindingKey = 'app_conversation_bindings_' + (chrome.extension.inIncognitoContext ? 'incognito' : 'regular');
   var initialized = false;
   var renderQueued = false;
   var renderPending = false;
@@ -1540,15 +1542,7 @@
 
   function renderGeneratorServiceSelect(disabled, topic) {
     var selectedId = currentConversationServiceId(topic);
-    var traceTopicId = String(topic && topic.topicId || '');
-    var traceKnown = Object.prototype.hasOwnProperty.call(trajectoryEventsByTopic, traceTopicId);
-    var traceAvailable = !!(topic && topicTrajectoryItems(topic).length);
-    var traceButton = topic && topic.topicId
-      ? '<button class="conversation-chat-log-btn" data-conversation-action="open-topic-trajectory" title="'
-        + esc(traceAvailable ? '查看完整运行轨迹'
-          : (traceKnown ? '当前话题暂无已提交轨迹，点击后重新读取' : '读取当前话题的运行轨迹'))
-        + '">轨迹</button>'
-      : '';
+    var traceButton = renderTopicTrajectoryButton(topic);
     var services = modelServiceResources || [];
     var options = services.map(function (service) {
       var label = String(service.name || service.id || '模型服务');
@@ -1575,6 +1569,23 @@
     return Array.isArray(items) ? items.slice() : [];
   }
 
+  function topicTrajectoryIsEmpty(topic) {
+    if (!topic || !topic.topicId) return true;
+    if (topicIsRunning(topic) || topicTrajectoryItems(topic).length) return false;
+    var page = trajectoryPageByTopic[topic.topicId];
+    // 对话新增事件后，旧的空轨迹缓存不能继续禁用入口。
+    return topic.eventTotal === 0
+      || (Object.prototype.hasOwnProperty.call(trajectoryItemsByTopic, topic.topicId)
+        && page && (Number(topic.eventTotal) || 0) <= page.total);
+  }
+
+  function renderTopicTrajectoryButton(topic) {
+    if (!topic || !topic.topicId) return '';
+    var empty = topicTrajectoryIsEmpty(topic);
+    return '<button type="button" class="conversation-chat-log-btn" data-conversation-action="open-topic-trajectory" title="'
+      + (empty ? '暂无轨迹' : '查看完整运行轨迹') + '"' + (empty ? ' disabled' : '') + '>轨迹</button>';
+  }
+
   function topicTrajectoryPage(topic) {
     var topicId = String(topic && topic.topicId || '');
     var records = trajectoryItemsByTopic[topicId] || [];
@@ -1593,8 +1604,14 @@
     };
   }
 
+  function trajectoryStatusHtml(message) {
+    return '<div class="conversation-llm-log conversation-trace-viewer"><div class="conversation-trace-toolbar" role="toolbar" aria-label="Trajectory toolbar">'
+      + '<div class="conversation-trace-toolbar-actions"><button type="button" class="conversation-trace-back" data-conversation-action="close-topic-trajectory" aria-label="返回对话" title="返回对话"><span class="conversation-trace-toolbar-icon conversation-trace-icon-back" aria-hidden="true"></span></button></div></div>'
+      + '<div class="conversation-trace-empty conversation-trace-no-results" role="status">' + esc(message) + '</div></div>';
+  }
+
   function trajectoryLoadingHtml() {
-    return '<div class="conversation-llm-log"><div class="conversation-llm-log-meta"><b>…</b><span>正在加载运行轨迹…</span></div></div>';
+    return trajectoryStatusHtml('正在加载运行轨迹…');
   }
 
   function topicTrajectoryIsLoading(topic) {
@@ -1706,31 +1723,9 @@
   }
 
   function trajectoryPromptDiffHtml(previous, current) {
-    var beforeLines = trajectoryJson(previous || {}).split('\n');
-    var afterLines = trajectoryJson(current || {}).split('\n');
-    if (beforeLines.join('\n') === afterLines.join('\n')) return '<span class="conversation-trace-empty">没有变化</span>';
-    var context = 3;
-    var prefix = 0;
-    while (prefix < beforeLines.length && prefix < afterLines.length && beforeLines[prefix] === afterLines[prefix]) prefix += 1;
-    var suffix = 0;
-    while (suffix < beforeLines.length - prefix && suffix < afterLines.length - prefix
-        && beforeLines[beforeLines.length - 1 - suffix] === afterLines[afterLines.length - 1 - suffix]) suffix += 1;
-    var beforeChanged = beforeLines.slice(prefix, beforeLines.length - suffix);
-    var afterChanged = afterLines.slice(prefix, afterLines.length - suffix);
-    var entries = [];
-    beforeLines.slice(Math.max(0, prefix - context), prefix).forEach(function (line) {
-      entries.push({ kind: 'context', text: line });
-    });
-    beforeChanged.forEach(function (line) { entries.push({ kind: 'removed', text: line }); });
-    afterChanged.forEach(function (line) { entries.push({ kind: 'added', text: line }); });
-    if (suffix) afterLines.slice(afterLines.length - suffix, afterLines.length - suffix + context).forEach(function (line) {
-      entries.push({ kind: 'context', text: line });
-    });
-    return '<div class="conversation-trajectory-diff" role="list">' + entries.map(function (entry) {
-      var mark = entry.kind === 'added' ? '+' : entry.kind === 'removed' ? '-' : ' ';
-      return '<div class="' + entry.kind + '" role="listitem"><span aria-hidden="true">' + mark
-        + '</span><code>' + esc(entry.text) + '</code></div>';
-    }).join('') + '</div>';
+    var before = trajectoryJson(previous || {}), after = trajectoryJson(current || {});
+    if (before === after) return '<span class="conversation-trace-empty">没有变化</span>';
+    return PageAgentCodeEditor.html(after, 'json', { 'data-original': before, 'aria-label': '提示词差异', rows: 18 });
   }
 
   function trajectoryUsage(payload) {
@@ -2558,7 +2553,7 @@
     }))) content = String(text || '');
     var attachments = blocks.filter(function (block) { return block && block.attachment; })
       .map(function (block) { return block.attachment; });
-    var body = content ? (markdown ? renderMarkdown(content) : '<pre>' + esc(content) + '</pre>') : '';
+    var body = content ? (markdown ? renderMarkdown(content) : PageAgentCodeEditor.html(content, 'auto')) : '';
     if (attachments.length) body += '<div class="conversation-image-attachments">'
       + conversationEventView.renderAttachments(attachments, topicId || '') + '</div>';
     return body || '<span class="conversation-trace-empty">无内容</span>';
@@ -2621,7 +2616,7 @@
       section('系统提示词', cell.detail ? renderMarkdown(cell.detail) : '<span class="conversation-trace-empty">空 System prompt</span>');
     } else if (activeTab === 'tools') {
       section('工具', Array.isArray(cell.promptTools) && cell.promptTools.length
-        ? '<pre>' + esc(trajectoryJson(cell.promptTools)) + '</pre>' : '<span class="conversation-trace-empty">未暴露工具</span>');
+        ? PageAgentCodeEditor.html(trajectoryJson(cell.promptTools), 'json') : '<span class="conversation-trace-empty">未暴露工具</span>');
     } else if (activeTab === 'diff') {
       section('差异', trajectoryPromptDiffHtml(cell.previousPromptDetail, cell.promptDetail));
     } else if (activeTab === 'rendered') {
@@ -2636,9 +2631,9 @@
         }).join(''));
       }
     } else if (activeTab === 'raw') {
-      section('原始内容', '<pre>' + esc([cell.thinkingDetail, cell.outputDetail || cell.inputDetail || cell.detail].filter(Boolean).join('\n\n')) + '</pre>');
+      section('原始内容', PageAgentCodeEditor.html([cell.thinkingDetail, cell.outputDetail || cell.inputDetail || cell.detail].filter(Boolean).join('\n\n'), 'auto'));
     } else if (activeTab === 'source') {
-      section('来源', '<pre>' + esc(trajectoryJson(cell.messageSource !== undefined ? cell.messageSource : cell.sourceBlocks || [])) + '</pre>');
+      section('来源', PageAgentCodeEditor.html(trajectoryJson(cell.messageSource !== undefined ? cell.messageSource : cell.sourceBlocks || []), 'json'));
     } else if (activeTab === 'input') {
       section('参数', trajectoryBlocksHtml([], cell.inputDetail || cell.detail, false, cell.topicId));
     } else if (activeTab === 'output') {
@@ -2646,7 +2641,7 @@
         ? '<span class="conversation-trace-empty">等待工具结果</span>'
         : trajectoryBlocksHtml(cell.outputBlocks, cell.outputDetail, false, cell.topicId));
     } else if (activeTab === 'schema') {
-      section('Schema', cell.schemaDetail ? '<pre>' + esc(cell.schemaDetail) + '</pre>' : '<span class="conversation-trace-empty">Schema 不可用</span>');
+      section('Schema', cell.schemaDetail ? PageAgentCodeEditor.html(cell.schemaDetail, 'json') : '<span class="conversation-trace-empty">Schema 不可用</span>');
     } else if (activeTab === 'timing') {
       section('计时', '<dl class="conversation-trajectory-overview"><div><dt>开始</dt><dd>' + esc(cell.startedAt ? new Date(cell.startedAt).toLocaleString() : '—') + '</dd></div><div><dt>时长</dt><dd>' + esc(cell.durationMs ? cell.durationMs + ' ms' : '—') + '</dd></div></dl>');
     }
@@ -2654,7 +2649,8 @@
     var tabHtml = '<div class="conversation-trajectory-detail-tabs" role="tablist">' + tabs.map(function (tab) {
       return '<button type="button" role="tab" aria-selected="' + (tab.id === activeTab ? 'true' : 'false') + '" class="' + (tab.id === activeTab ? 'active' : '') + '" data-conversation-action="trajectory-inspector-tab" data-tab="' + esc(tab.id) + '">' + esc(tab.label) + '</button>';
     }).join('') + '</div>';
-    return '<div class="conversation-trajectory-detail"><div class="drawer-header"><div><h3 class="conversation-trace-detail-kind ' + esc(cell.kind) + '">' + esc(trajectoryCellLabel(cell.kind)) + '</h3><span>' + esc(meta) + '</span></div><div><i class="conversation-trace-status ' + status.className + '">' + esc(status.label) + '</i><button type="button" class="drawer-close conversation-trajectory-detail-close" data-conversation-action="trajectory-close-inspector" aria-label="关闭详情" title="关闭详情"><span class="conversation-trace-icon conversation-trace-icon-close" aria-hidden="true"></span></button></div></div>' + tabHtml + '<div class="conversation-trajectory-detail-body drawer-body">' + sections.join('') + '</div></div>';
+    var detailClass = 'conversation-trajectory-detail' + (['input', 'output', 'schema'].includes(activeTab) ? ' conversation-trajectory-code-tab' : '');
+    return '<div class="' + detailClass + '"><div class="drawer-header"><div><h3 class="conversation-trace-detail-kind ' + esc(cell.kind) + '">' + esc(trajectoryCellLabel(cell.kind)) + '</h3><span>' + esc(meta) + '</span></div><div><i class="conversation-trace-status ' + status.className + '">' + esc(status.label) + '</i><button type="button" class="drawer-close conversation-trajectory-detail-close" data-conversation-action="trajectory-close-inspector" aria-label="关闭详情" title="关闭详情"><span class="conversation-trace-icon conversation-trace-icon-close" aria-hidden="true"></span></button></div></div>' + tabHtml + '<div class="conversation-trajectory-detail-body drawer-body">' + sections.join('') + '</div></div>';
   }
 
   function renderTrajectoryRequestDetail(request, allCells) {
@@ -2706,7 +2702,7 @@
         + '</dl></section><section class="conversation-trajectory-detail-section"><h4>用量</h4>' + usageRows(usage)
         + '</section>';
     } else if (activeTab === 'options') {
-      body = '<section class="conversation-trajectory-detail-section"><pre>' + esc(trajectoryJson(options)) + '</pre></section>';
+      body = '<section class="conversation-trajectory-detail-section">' + PageAgentCodeEditor.html(trajectoryJson(options), 'json') + '</section>';
     } else if (activeTab === 'usage') {
       body = '<section class="conversation-trajectory-detail-section"><h4>本次请求</h4>' + usageRows(usage)
         + '<h4>会话累计</h4>' + usageRows(cumulative) + '</section>';
@@ -2952,15 +2948,14 @@
   }
 
   function renderTopicTrajectory(topic) {
-    var tracePage = topicTrajectoryPage(topic);
     var cells = topicTrajectoryItems(topic).slice().sort(function (a, b) {
       return Number(a.sequence || 0) - Number(b.sequence || 0) || Number(a.index || 0) - Number(b.index || 0);
     });
     if (!cells.length && topicTrajectoryIsLoading(topic)) {
       return trajectoryLoadingHtml();
     }
-    if (!cells.length && !tracePage.total) {
-      return '<div class="conversation-llm-log"><div class="conversation-llm-log-meta"><b>0</b><span>当前话题还没有轨迹记录。</span></div></div>';
+    if (!cells.length) {
+      return trajectoryStatusHtml('暂无轨迹');
     }
     var filtered = trajectoryFilteredCells(cells);
     var timelineMode = trajectoryTimelineMode();
@@ -3394,12 +3389,12 @@
           + '<div class="conversation-config-row"><b>已比较工具</b><span>' + esc((gap.referencedToolNames || []).join(', ') || '无匹配') + '</span></div>'
           + '<div class="conversation-config-row conversation-config-row-wide"><b>建议</b><div>' + esc(gap.suggestedChange || gap.summary || '暂无') + '</div></div>'
           + '<details><summary>证据和修改点</summary>'
-          + '<pre>' + esc([
+          + PageAgentCodeEditor.html([
             gap.evidence ? 'Evidence:\n' + gap.evidence : '',
             gap.impact ? 'Impact:\n' + gap.impact : '',
             gap.filesToChange && gap.filesToChange.length ? 'Files:\n' + gap.filesToChange.join('\n') : '',
             gap.nextSteps && gap.nextSteps.length ? 'Next:\n' + gap.nextSteps.join('\n') : '',
-          ].filter(Boolean).join('\n\n')) + '</pre>'
+          ].filter(Boolean).join('\n\n'), 'plaintext')
           + '</details>'
           + '</article>';
       }).join('')
@@ -3656,13 +3651,14 @@
     var stopping = topic && (topic.phase === 'stopping' || topic.status === 'cancelling');
     return 'composer:' + (running ? (stopping ? 'stopping' : 'running') : 'idle')
       + ':' + currentConversationServiceId(topic)
-      + ':' + (anyConversationRunning() ? 'locked' : 'unlocked');
+      + ':' + (anyConversationRunning() ? 'locked' : 'unlocked')
+      + ':' + (topicTrajectoryIsEmpty(topic) ? 'trace-empty' : 'trace-available');
   }
 
   function renderStream(topic, assistant, eventsHtml, controlledElsewhere) {
     var archived = !!(topic && topic.archived);
     var archivedLogAction = archived && topic && topic.topicId
-      ? '<button class="conversation-chat-log-btn" data-conversation-action="open-topic-trajectory" title="查看当前话题的运行轨迹">轨迹</button>'
+      ? renderTopicTrajectoryButton(topic)
       : '';
     var running = topicIsRunning(topic);
     var serviceSwitchLocked = running || anyConversationRunning();
@@ -3695,7 +3691,8 @@
       ? '<div class="conversation-archive-readonly"><span aria-hidden="true">&#xf187;</span><b>已归档</b><small>只读</small></div>'
       : (pendingUserInput ? renderPendingUserInput(topic) : (
       '<div class="conversation-composer">'
-      + '<textarea id="conversation-input" rows="4" placeholder="描述要创建或修复的流程。' + esc(sendShortcutLabel()) + ' 发送。">' + esc(draftValue) + '</textarea>'
+      + (topic && appBindings[topic.topicId] && appBindings[topic.topicId].active !== false ? '<div class="conversation-entry-status conversation-app-binding"><span class="conversation-entry-status-label">正在编辑应用</span><span class="conversation-entry-status-chip">' + esc(appBindings[topic.topicId].name) + '</span> <a href="' + esc(chrome.runtime.getURL('options/options.html?section=apps&appId=' + appBindings[topic.topicId].appId + '&action=permissions')) + '" target="_blank">权限</a><button type="button" class="conversation-chat-log-btn" data-conversation-action="unbind-app" data-topic-id="' + esc(topic.topicId) + '" title="解除当前话题与应用的绑定">取消</button></div>' : '')
+      + '<textarea id="conversation-input" rows="4" placeholder="描述要创建或修改的应用、流程，或直接提出任务。' + esc(sendShortcutLabel()) + ' 发送。">' + esc(draftValue) + '</textarea>'
       + '<div class="conversation-composer-actions">'
       + '<div class="conversation-composer-service">' + renderGeneratorServiceSelect(serviceSwitchLocked, topic) + '</div>'
       + '<div class="conversation-composer-submit">'
@@ -3751,7 +3748,7 @@
       + '</div>'
       + '<div class="conversation-config-card">'
       + '<h3>运行</h3>'
-      + '<div class="form-row"><label>运行入参 JSON</label><textarea id="conversation-run-input" rows="6">' + esc(runInputTextForTopic(topic)) + '</textarea></div>'
+      + '<div class="form-row"><label>运行入参 JSON</label><page-code-editor id="conversation-run-input" language="json" rows="6">' + esc(runInputTextForTopic(topic)) + '</page-code-editor></div>'
       + '<div class="conversation-panel-actions">'
       + '<button class="btn-secondary" data-conversation-action="validate-flow" ' + (flowId ? '' : 'disabled') + '>校验</button>'
       + '<button class="btn-primary" data-conversation-action="run-flow" ' + (flowId ? '' : 'disabled') + '>运行</button>'
@@ -3826,7 +3823,7 @@
       semanticStatus && semanticStatus.contextBudgetProfile || '',
       topic && topic.phase || '',
       topic && topic.pendingUserInput && topic.pendingUserInput.requestId || '',
-      topic && topicTrajectoryItems(topic).length ? 'trace-ready' : '',
+      topicTrajectoryIsEmpty(topic) ? 'trace-empty' : 'trace-available',
       topic ? openCapabilityGapPlans(topic).length : 0,
       topic ? currentConversationServiceId(topic) : currentConversationServiceId(null),
     ].join('\u001f');
@@ -3993,6 +3990,15 @@
     }
     var currentInteraction = $('#conversation-root .conversation-interaction-slot');
     var nextInteraction = staging.querySelector('.conversation-interaction-slot');
+    var currentAppBinding = currentInteraction && currentInteraction.querySelector('.conversation-app-binding');
+    var nextAppBinding = nextInteraction && nextInteraction.querySelector('.conversation-app-binding');
+    if (currentAppBinding && !nextAppBinding) currentAppBinding.remove();
+    else if (nextAppBinding) {
+      if (currentAppBinding && currentAppBinding.innerHTML !== nextAppBinding.innerHTML) currentAppBinding.replaceWith(nextAppBinding);
+      else if (!currentAppBinding && currentInteraction && currentInteraction.querySelector('.conversation-composer')) {
+        currentInteraction.querySelector('.conversation-composer').prepend(nextAppBinding);
+      }
+    }
     if (currentInteraction && nextInteraction
         && currentInteraction.getAttribute('data-interaction-key') !== nextInteraction.getAttribute('data-interaction-key')) {
       var currentComposer = currentInteraction.querySelector('.conversation-composer');
@@ -4067,8 +4073,7 @@
             if (conversationSectionVisible()) startTraceViewerAutoRefresh();
           }).catch(function (error) {
             var content = $('#trajectory-view-content');
-            if (trajectoryViewOpen && content) content.innerHTML = '<div class="conversation-llm-log"><div class="conversation-llm-log-meta"><b>!</b><span>'
-              + esc('加载运行轨迹失败: ' + (error && error.message || error)) + '</span></div></div>';
+            if (trajectoryViewOpen && content) content.innerHTML = trajectoryStatusHtml('加载运行轨迹失败: ' + (error && error.message || error));
           });
         }
         return;
@@ -4234,7 +4239,10 @@
       setTopicControlAccess(topicId, { control: 'owner', running: topic.active, canControl: true, ownedByOtherPage: false });
       return snapshot;
     }).catch(function (error) {
-      if (error && error.code === 'CONVERSATION_NOT_FOUND') return snapshot;
+      if (error && error.code === 'CONVERSATION_NOT_FOUND') {
+        topic.eventTotal = 0;
+        return snapshot;
+      }
       throw error;
     });
   }
@@ -4334,8 +4342,10 @@
         listAssistantResources(),
         listModelServiceResources(),
         getAgentSettingsResource(),
+        chrome.storage.local.get(appBindingKey),
       ]).then(function (resources) {
         agentSettingsResource = resources[3];
+        appBindings = resources[4][appBindingKey] || {};
         modelServiceResources = resources[2];
         next = projectConversationResources(next, resources[0]);
         return projectAssistantResources(next, resources[1], agentSettingsResource);
@@ -4376,8 +4386,7 @@
         && current.topicId === readonlySnapshotRefreshTopicId);
       readonlySnapshotControlRevalidatePending = false;
       return syncDisplayedTopicControl(revalidateControl);
-    }).then(function () {
-      renderQueued = false;
+    }).then(async function () {
       if (resolvedOpenTarget) sidebarTab = 'topics';
       renderLoaded();
       if (resolvedOpenTarget) {
@@ -4386,13 +4395,14 @@
             && assistantId !== String(agentSettingsResource && agentSettingsResource.defaultAssistantId || '')
           ? patchAgentSettingsResource({ defaultAssistantId: assistantId })
           : Promise.resolve(agentSettingsResource);
-        persistAssistant.then(function () {
+        await persistAssistant.then(function () {
           if (resolvedOpenTarget.topicId) return globalThis.ConversationState.setActiveTopic(resolvedOpenTarget.topicId);
           return null;
         }).catch(function (error) {
           toast('保存对话定位失败: ' + resourceErrorText(error), true);
         });
       }
+      renderQueued = false;
       if (renderPending) {
         renderPending = false;
         return refresh();
@@ -4522,6 +4532,96 @@
       topicId: String(target.topicId || '').trim(),
     };
     return render();
+  }
+
+  async function ensureAppDevelopmentAssistant() {
+    var key = 'app_development_assistant_id';
+    var stored = await chrome.storage.local.get(key);
+    var assistant = state.assistants[stored[key]];
+    if (assistant) return assistant;
+    var template = getAssistantTemplates().items.tpl_app_developer;
+    assistant = await createAssistantResource({
+      name: template.name,
+      description: template.description,
+      prompt: template.prompt,
+      resourcePolicy: template.resourcePolicy,
+      modelServiceId: template.modelServiceId,
+      settings: canonicalAssistantRunSettings(template.settings),
+    });
+    await chrome.storage.local.set({ [key]: assistant.id });
+    projectAssistantResource(assistant);
+    return assistant;
+  }
+
+  function openApp(appId) {
+    return navigator.locks.request('page-agent-app-conversation', async function () {
+      if (trajectoryViewOpen) closeTopicTrajectory();
+      await render();
+      var app = null;
+      if (appId) {
+        var response = await globalThis.PageAutomationResourceClient.create(chrome.runtime).get('/apps/' + encodeURIComponent(appId));
+        if (response.error) throw new Error(response.error.message);
+        app = response.primary.data;
+      }
+      var assistant = await ensureAppDevelopmentAssistant();
+      var topicId = app && state.topicOrder.filter(function (id) {
+        var topic = state.topics[id], binding = appBindings[id];
+        return topic && !topic.archived && topic.assistantId === assistant.id
+          && (binding ? binding.appId === appId : id === app.sourceConversationId);
+      }).sort(function (left, right) {
+        function boundAt(id) {
+          var binding = appBindings[id], topic = state.topics[id];
+          return Number(binding && binding.boundAt) || Number(topic.updatedAt) || Number(topic.createdAt) || 0;
+        }
+        return boundAt(right) - boundAt(left);
+      })[0];
+      var topic = topicId && state.topics[topicId];
+      if (!topic) {
+        newTopicModelServiceId = '';
+        topic = await createConversationResource({
+          assistantId: assistant.id,
+          objective: '',
+          name: '新话题',
+          modelServiceId: defaultModelServiceId(assistant),
+          maxIterations: assistant.settings && assistant.settings.maxIterations,
+          maxToolCalls: assistant.settings && assistant.settings.maxToolCalls,
+          makeActive: true,
+          assistantSnapshot: assistantSnapshotFrom(assistant),
+        });
+        projectConversationResource(topic);
+      }
+      await openTarget({ assistantId: assistant.id, topicId: topic.topicId });
+      var openedTopic = displayedTopic();
+      if (!openedTopic || openedTopic.archived || openedTopic.assistantId !== assistant.id || openedTopic.topicId !== topic.topicId) {
+        throw new Error('未能打开应用开发话题，请重试');
+      }
+      if (app) {
+        var result = await chrome.runtime.sendMessage({ type: 'APP_MANAGE', operation: 'bind-conversation', input: { appId: appId, conversationId: topic.topicId } });
+        if (!result || result.error) throw new Error(result && result.error && result.error.message || '绑定应用失败');
+        appBindings[topic.topicId] = result.result;
+      }
+      var prompt = app ? '继续修改应用“' + app.name + '”（/apps/' + appId + '）。请先读取最新草稿与权限。我的修改需求：' : '请帮我创建一个应用。我的需求：';
+      var draftKey = currentDraftKey(topic, assistant);
+      var existingDraft = composerDrafts[draftKey] || '';
+      if (existingDraft.indexOf(prompt) === -1) composerDrafts[draftKey] = existingDraft.trim() ? existingDraft + '\n\n' + prompt : prompt;
+      lastRenderKey = ''; renderLoaded();
+      var input = $('#conversation-input');
+      if (input) { input.value = composerDrafts[draftKey]; input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+    });
+  }
+
+  async function unbindApp(topicId) {
+    if (!topicId || !appBindings[topicId]) return;
+    try {
+      var result = await chrome.runtime.sendMessage({ type: 'APP_MANAGE', operation: 'bind-conversation', input: { appId: null, conversationId: topicId } });
+      if (!result || result.error) throw new Error(result && result.error && result.error.message || '取消编辑失败');
+      if (result.result) appBindings[topicId] = result.result;
+      else delete appBindings[topicId];
+      lastRenderKey = '';
+      renderLoaded();
+    } catch (error) {
+      toast('取消应用编辑失败: ' + resourceErrorText(error), true);
+    }
   }
 
   function createTopicFromPrompt() {
@@ -4813,7 +4913,7 @@
       var overlay = document.createElement('div');
       var danger = options.danger !== false;
       var detailHtml = options.detail !== undefined && options.detail !== null && options.detail !== ''
-        ? '<pre class="conversation-confirm-detail">' + esc(options.detail) + '</pre>'
+        ? PageAgentCodeEditor.html(options.detail, 'auto', { 'aria-label': '操作详情' })
         : '';
       var settled = false;
       confirmDialogEl = overlay;
@@ -5083,7 +5183,7 @@
       + '</select></div>'
       + '</div>'
       + '<div class="form-row"><label class="switch-label"><input type="checkbox" id="conversation-editor-stream-output"' + (assistantEditorDraft.settings && assistantEditorDraft.settings.streamOutput !== false ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">流式输出</span></label></div>'
-      + '<div class="form-row"><label>提示词</label><textarea id="conversation-editor-prompt" rows="12">' + esc(assistantEditorDraft.prompt || '') + '</textarea><div class="form-help">这个助手的身份、领域方法与交付偏好。作为用户选择的助手指令注入，权限与完成规则仍由 Runtime 决定。</div></div>'
+      + '<div class="form-row"><label>提示词</label><page-code-editor id="conversation-editor-prompt" language="markdown" rows="12">' + esc(assistantEditorDraft.prompt || '') + '</page-code-editor><div class="form-help">这个助手的身份、领域方法与交付偏好。作为用户选择的助手指令注入，权限与完成规则仍由 Runtime 决定。</div></div>'
       + '</section>'
       + '<section class="conversation-tab-panel' + (activeTab === 'resources' ? ' active' : '') + '" data-conversation-tab-panel-group="assistant-editor" data-conversation-tab-panel="resources">'
       + '<div class="conversation-selected-resources">'
@@ -5961,6 +6061,11 @@
       toast('当前没有话题', true);
       return;
     }
+    if (topicTrajectoryIsEmpty(topic)) {
+      toast('暂无轨迹');
+      renderLoaded();
+      return;
+    }
     var topicId = String(topic.topicId);
     closeConversationDrawer();
     stopTraceViewerAutoRefresh();
@@ -5988,8 +6093,7 @@
     }).catch(function (error) {
       var content = $('#trajectory-view-content');
       if (trajectoryViewOpen && content) {
-        content.innerHTML = '<div class="conversation-llm-log"><div class="conversation-llm-log-meta"><b>!</b><span>'
-          + esc('加载运行轨迹失败: ' + (error && error.message || error)) + '</span></div></div>';
+        content.innerHTML = trajectoryStatusHtml('加载运行轨迹失败: ' + (error && error.message || error));
       }
       toast('加载运行轨迹失败: ' + (error && error.message || error), true);
     });
@@ -6046,7 +6150,10 @@
       currentLedgerSummary.replaceWith(nextLedgerSummary);
       currentHistoryBoundary.replaceWith(nextHistoryBoundary);
       turns.replaceWith(nextTurns);
-      if (!preserveInteractiveMain && (force || selectedSignature !== traceViewerSelectedSignature)) main.replaceWith(nextMain);
+      if (!preserveInteractiveMain && (force || selectedSignature !== traceViewerSelectedSignature)) {
+        PageAgentCodeEditor.preserveViews(main, nextMain);
+        main.replaceWith(nextMain);
+      }
       else {
       }
     }
@@ -6137,6 +6244,12 @@
       return;
     }
     var action = target.dataset.conversationAction;
+    if (action === 'unbind-app') {
+      event.preventDefault();
+      event.stopPropagation();
+      unbindApp(target.dataset.topicId || '');
+      return;
+    }
     if (action === 'copy-event') {
       event.preventDefault();
       event.stopPropagation();
@@ -6824,6 +6937,7 @@
     if (initialized) return;
     initialized = true;
     conversationEventView.installStyles(document);
+    window.addEventListener('pagehide', conversationEventView.attachApplications(document), { once: true });
     var section = $('#section-conversation');
     if (section) {
       section.addEventListener('keydown', handleKeydown);
@@ -6894,6 +7008,7 @@
     }
     if (chrome.storage && chrome.storage.onChanged) {
       chrome.storage.onChanged.addListener(function (changes, area) {
+        if (area === 'local' && changes[appBindingKey]) { appBindings = changes[appBindingKey].newValue || {}; if (conversationSectionVisible()) { lastRenderKey = ''; renderLoaded(); } }
         if (area === 'local' && globalThis.PageAutomationSystemSettings
             && changes[globalThis.PageAutomationSystemSettings.SETTINGS_KEY]) {
           applyConversationSettings(globalThis.PageAutomationSystemSettings.normalize(
@@ -6919,5 +7034,6 @@
     render: render,
     refresh: refresh,
     openTarget: openTarget,
+    openApp: openApp,
   };
 });

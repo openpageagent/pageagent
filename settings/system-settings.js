@@ -8,9 +8,15 @@
   'use strict';
 
   var SETTINGS_KEY = 'system_settings';
+  var PROXY_FIELDS = Object.freeze(['proxyServer', 'proxyUsername', 'proxyPassword', 'proxyHostPatterns', 'proxyBypassList']);
   var DEFAULTS = Object.freeze({
     floatingEntryDisabled: false,
     userAgent: '',
+    proxyServer: '',
+    proxyUsername: '',
+    proxyPassword: '',
+    proxyHostPatterns: '',
+    proxyBypassList: '',
   });
 
   function normalize(raw) {
@@ -18,6 +24,11 @@
     return {
       floatingEntryDisabled: raw.floatingEntryDisabled === true,
       userAgent: String(raw.userAgent || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 512),
+      proxyServer: String(raw.proxyServer || '').trim(),
+      proxyUsername: String(raw.proxyUsername || ''),
+      proxyPassword: String(raw.proxyPassword || ''),
+      proxyHostPatterns: String(raw.proxyHostPatterns || '').trim(),
+      proxyBypassList: String(raw.proxyBypassList || '').trim(),
     };
   }
 
@@ -89,6 +100,7 @@
 
   return {
     SETTINGS_KEY: SETTINGS_KEY,
+    PROXY_FIELDS: PROXY_FIELDS,
     DEFAULTS: DEFAULTS,
     normalize: normalize,
     withUserAgent: withUserAgent,

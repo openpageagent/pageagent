@@ -502,7 +502,7 @@
       editor.innerHTML =
         '<h3>' + (schedule.id ? '编辑定时任务' : '新建定时任务') + '</h3>'
         + '<div class="form-grid">'
-        + '<div class="form-row"><label>任务名称</label><input type="text" id="sched-label" value="' + esc(schedule.label) + '" placeholder="如：每小时扫描报表"></div>'
+        + '<div class="form-row"><label>任务名称</label><input type="text" id="sched-label" value="' + esc(schedule.label) + '" placeholder="每小时扫描报表"></div>'
         + '<div class="form-row"><label>任务类型</label><select id="sched-task-kind">'
         + '<option value="flow"' + (taskKind === 'flow' ? ' selected' : '') + '>运行流程</option>'
         + '<option value="flowGroup"' + (taskKind === 'flowGroup' ? ' selected' : '') + '>运行流程组</option>'
@@ -515,7 +515,7 @@
         + '<div class="form-row" id="sched-conversation-assistant-row"' + (taskKind !== 'conversation' ? ' style="display:none"' : '') + '><label>绑定助手</label><select id="sched-assistant">' + assistantOptions + '</select></div>'
         + '</div>'
         + '<div class="form-row" id="sched-conversation-message-row"' + (taskKind !== 'conversation' ? ' style="display:none"' : '') + '><label>输入对话内容</label><textarea id="sched-message" rows="5" placeholder="定时发送给助手的内容">' + esc(selectedMessage) + '</textarea></div>'
-        + '<div class="form-row"><label for="sched-context">输入参数（JSON 对象，可留空）</label><textarea id="sched-context" rows="4" placeholder="' + esc('{"reportType":"daily"}') + '">' + esc(contextText) + '</textarea>'
+        + '<div class="form-row"><label for="sched-context">输入参数（JSON 对象，可留空）</label><page-code-editor id="sched-context" language="json" rows="4" placeholder="' + esc('{"reportType":"daily"}') + '">' + esc(contextText) + '</page-code-editor>'
         + '<p class="form-help">选择流程或流程组时自动带入其运行入参示例，可按需修改。可通过 {{reportType}} 等变量读取参数；对话会将参数附在输入内容之后。</p></div>'
         + '<div class="form-grid">'
         + '<div class="form-row"><label>触发方式</label><select id="sched-kind">'

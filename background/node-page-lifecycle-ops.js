@@ -304,7 +304,9 @@
       var forceReopen = ownValue(options, 'forceReopen', false) === true;
       var fixedNew = ownValue(options, 'openMode', '') === 'attach';
       logForExecution(execution, '准备页面: ' + pageId + ' → ' + preview(url, 120));
-      var adopted = fixedNew ? Promise.resolve(null) : adoptOrGetTabId(source);
+      var adopted = Promise.resolve().then(function () {
+        return deps.authorizeApplication ? deps.authorizeApplication({ kind: 'page', pageId: pageId, url: url, command: 'openPage' }) : null;
+      }).then(function () { return fixedNew ? null : adoptOrGetTabId(source); });
       return adopted.then(function () {
         if (fixedNew) logForExecution(execution, '打开方式为固定新开标签页: ' + pageId + '，不认领已有页面');
         return reuseOrCreateTab(source, url, {

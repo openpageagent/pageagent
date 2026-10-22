@@ -137,11 +137,16 @@
           try { controller.abort(new Error('模型调用超时')); } catch (_) { controller.abort(); }
         }, timeoutMs);
 
-        return globalThis.PageAutomationUserAgent.fetchModel(modelRequest.url, {
-          method: 'POST',
-          headers: modelRequest.headers,
-          body: JSON.stringify(body),
-          signal: controller.signal,
+        return Promise.resolve().then(function () {
+          return typeof opts.authorizeRequest === 'function' ? opts.authorizeRequest({ serviceId: service.id, url: modelRequest.url, model: model, useVision: !!opts.useVision }) : null;
+        }).then(function () {
+          return globalThis.PageAutomationUserAgent.fetchModel(modelRequest.url, {
+            method: 'POST',
+            headers: modelRequest.headers,
+            body: JSON.stringify(body),
+            signal: controller.signal,
+            redirect: typeof opts.authorizeRequest === 'function' ? 'error' : 'follow',
+          });
         }).then(function (response) {
           return response.text().then(function (text) {
             if (!response.ok) {

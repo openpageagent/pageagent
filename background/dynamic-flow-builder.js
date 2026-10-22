@@ -255,6 +255,7 @@
 
     return {
       USER_FLOW_PREFIX: USER_FLOW_PREFIX,
+      buildWorkflowNodes: buildWorkflowNodes,
       reload: reload,
       removeLegacyPageScripts: removeLegacyPageScripts,
       syncNetCapture: syncNetCapture,

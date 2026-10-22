@@ -30,8 +30,8 @@
         if (contexts && contexts.length > 0) return;
         return chrome.offscreen.createDocument({
           url: OFFSCREEN_URL,
-          reasons: ['IFRAME_SCRIPTING'],
-          justification: '在沙箱 iframe 中执行用户自定义自动化脚本（MV3 扩展上下文禁止 eval）',
+          reasons: ['IFRAME_SCRIPTING', 'WORKERS'],
+          justification: '托管脚本沙箱及可终止的本地离线工具 Worker',
         }).catch(function (err) {
           // 并发创建时可能报 already exists，容忍
           if (!/single offscreen document|already exists/i.test(err.message || '')) throw err;
@@ -134,6 +134,7 @@
           addLog: options.nodeExecutionAddLog || options.addLog || addLog,  // 支持会话级日志函数
           signal: options.signal || null,
           abortListener: null,
+          apiController: new AbortController(),
         };
 
         var entry = runningScripts[execId];
@@ -158,6 +159,7 @@
       if (!entry || entry.active !== true) return;
       entry.active = false;
       delete runningScripts[execId];
+      entry.apiController.abort();
       clearTimeout(entry.timer);
       if (entry.signal && entry.abortListener && typeof entry.signal.removeEventListener === 'function') {
         try { entry.signal.removeEventListener('abort', entry.abortListener); } catch (_) {}
@@ -262,7 +264,7 @@
             throw new Error('脚本执行已结束或不存在');
           }
           var apiCall = entry.apiCall || executeApiCall;
-          return apiCall(payload.api, payload.args);
+          return apiCall(payload.api, payload.args, { signal: entry.apiController.signal });
         }).then(function (result) {
           if (!isActiveEntry(payload.execId, entry, generation)) {
             throw new Error('脚本执行已结束或不存在');
@@ -298,6 +300,7 @@
     }
 
     return {
+      utilities: globalThis.UtilityService.create(ensureOffscreen),
       runScript: runScript,
       turndownHtmlToMarkdown: turndownHtmlToMarkdown,
       abortAll: abortAll,

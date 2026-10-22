@@ -8,7 +8,8 @@
   var RESOURCE_TYPES = ['stylesheet', 'script', 'image', 'font', 'object',
     'ping', 'csp_report', 'media', 'websocket', 'webtransport', 'webbundle', 'other'];
 
-  function create(chromeApi) {
+  function create(chromeApi, options) {
+    options = options || {};
     var settingsApi = root.PageAutomationSystemSettings;
     var profileApi = root.UserAgentProfile;
     var rulesApi = chromeApi.declarativeNetRequest;
@@ -199,7 +200,8 @@
         var signal = init && init.signal;
         var request = {
           userAgent: ua, resolve: resolve, reject: reject,
-          send: function () {
+          send: async function () {
+            if (options.prepareRequest) await options.prepareRequest();
             var requestSignal = signal ? AbortSignal.any([signal, gate.signal]) : gate.signal;
             return fetchImpl(url, Object.assign({}, init, { signal: requestSignal }));
           },

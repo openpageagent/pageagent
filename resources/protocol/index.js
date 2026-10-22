@@ -62,6 +62,24 @@
     RESOURCE_NOT_FOUND: 404,
     METHOD_NOT_ALLOWED: 405,
     RESOURCE_CONFLICT: 409,
+    REVISION_CONFLICT: 409,
+    ADDRESS_CONFLICT: 409,
+    DATA_CONFLICT: 409,
+    DEPENDENCY_CHANGED: 409,
+    CONTENT_CHANGED: 409,
+    AUTHORIZATION_CHANGED: 409,
+    PERMISSION_DENIED: 403,
+    SESSION_CLOSED: 410,
+    RESOURCE_BUSY: 429,
+    UNSUPPORTED_CAPABILITY: 422,
+    DEPENDENCY_UNRESOLVED: 422,
+    DEPENDENCY_UNSUPPORTED: 422,
+    NOT_PUBLISHED: 409,
+    DRAFT_NOT_FOUND: 404,
+    INVALID_ADDRESS: 400,
+    INVALID_CURSOR: 400,
+    SERIALIZATION_FAILED: 422,
+    STORAGE_BUSY: 503,
     IDEMPOTENCY_CONFLICT: 409,
     RESOURCE_GONE: 410,
     ETAG_MISMATCH: 412,
@@ -339,11 +357,12 @@
   function createErrorResponse(requestId, error, overrides) {
     overrides = overrides || {};
     if (!(error instanceof ArpError)) {
-      error = new ArpError('INTERNAL_ERROR', 'ARP request failed', {
+      var cause = boundedErrorCause(error);
+      error = new ArpError('INTERNAL_ERROR', cause.message, {
         status: 500,
         retryable: false,
         performed: overrides.performed || 'unknown',
-        details: { cause: boundedErrorCause(error) },
+        details: { cause: cause },
       });
     }
     var performedSource = hasOwn(overrides, 'performed') ? overrides.performed : error.performed;
@@ -1377,6 +1396,9 @@
     }
     if (exposed.POST || exposed.PUT || exposed.PATCH || exposed.DELETE) {
       lines.push('# 当前工具策略');
+      if (routeRoots['/local'] && (routeRoots['/page'] || routeRoots['/browser'])) {
+        lines.push('规则：页面或浏览器任务优先使用当前已开放的页面、浏览器能力。仅当用户明确指定本地执行，或能力契约、能力缺失或实际错误表明浏览器能力无法满足目标时，才改用本地能力；不要仅为减少工具调用次数而切换到本地执行。');
+      }
       lines.push('规则：不要重复 performed=yes 的操作。写入或执行操作返回 performed=unknown 时，不要自动重放；如有只读观测方式则用它核实，否则把结果报告为未知。');
       lines.push('规则：当前 RouteContract 声明 if-match 前置条件而你尚未取得 ETag 时，先 GET 同一 canonical URI；Runtime 会在该资源的模型结果中保留 ETag。不得猜测、复用其他资源的 ETag，或以缺失前置条件试探。');
     }
@@ -2594,10 +2616,15 @@
       var performed = error instanceof ArpError
         ? error.performed
         : (executionStarted ? 'unknown' : 'no');
-      var normalizedError = error instanceof ArpError ? error : arpError('INTERNAL_ERROR', 'ARP adapter or pipeline failed', {
-        performed: performed,
-        details: { cause: boundedErrorCause(error) },
-      });
+      var normalizedError = error;
+      if (!(error instanceof ArpError)) {
+        var cause = boundedErrorCause(error);
+        normalizedError = arpError('INTERNAL_ERROR', cause.message, {
+          performed: performed,
+          stage: executionStarted ? 'adapter' : 'pipeline',
+          details: { cause: cause },
+        });
+      }
       normalizedError.warnings = boundaryWarnings.concat(normalizedError.warnings || []);
       var response = createErrorResponse(requestId, normalizedError, {
         performed: performed,

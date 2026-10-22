@@ -24,7 +24,7 @@
   function statusRanges(raw) {
     return String(raw || '200-399').split(',').map(function (part) {
       var match = /^([1-5]\d{2})(?:\s*-\s*([1-5]\d{2}))?$/.exec(part.trim());
-      if (!match) throw new Error('心跳期望状态码格式无效，例如 200-299,304');
+      if (!match) throw new Error('心跳期望状态码格式无效：状态码需为 100 至 599，范围用连字符连接，多项用英文逗号分隔');
       var range = [Number(match[1]), Number(match[2] || match[1])];
       if (range[0] > range[1]) throw new Error('心跳期望状态码范围无效');
       return range;

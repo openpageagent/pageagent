@@ -126,9 +126,10 @@
         if (!active) return Promise.reject(new Error('节点执行已结束，页面 API 不再可用'));
         return verifyPage(pageId, command, params, execution);
       };
-      execution.executeApiCall = function (api, args) {
+      execution.executeApiCall = function (api, args, scriptExecution) {
         if (!active) return Promise.reject(new Error('节点执行已结束，脚本 API 不再可用'));
-        return executeApiCall(api, args, execution);
+        return executeApiCall(api, args, scriptExecution && scriptExecution.signal
+          ? Object.assign({}, execution, { signal: scriptExecution.signal }) : execution);
       };
       return Object.freeze({
         scope: Object.freeze(execution),
@@ -237,6 +238,7 @@
     // --- 页面生命周期 ---
 
     pageLifecycleOps = nodePageLifecycleOpsModule.createPageLifecycleOps({
+      authorizeApplication: deps.authorizeApplication,
       chrome: chrome,
       tabRuntime: tabRuntime,
       getConfig: getConfig,
@@ -257,15 +259,15 @@
     function getRememberedPageTabId(pageId) { return pageLifecycleOps.getRememberedPageTabId(pageId); }
     function raceWithStop(promise) { return pageLifecycleOps.raceWithStop(promise); }
     function openPage(pageId, options, execution) { return pageLifecycleOps.openPage(pageId, options, execution); }
-    function refreshPage(pageId, options, execution) { return pageLifecycleOps.refreshPage(pageId, options, execution); }
-    function navigatePage(pageId, url, options, execution) { return pageLifecycleOps.navigatePage(pageId, url, options, execution); }
-    function ensurePageReady(pageId, execution) { return pageLifecycleOps.ensurePageReady(pageId, execution); }
+    function refreshPage(pageId, options, execution) { return Promise.resolve(deps.authorizeApplication ? deps.authorizeApplication({ kind: 'page', pageId: pageId, command: 'refreshPage', tabId: options && options.tabId }) : null).then(function () { return pageLifecycleOps.refreshPage(pageId, options, execution); }); }
+    function navigatePage(pageId, url, options, execution) { return Promise.resolve(deps.authorizeApplication ? deps.authorizeApplication({ kind: 'page', pageId: pageId, command: 'navigatePage', tabId: options && options.tabId }) : null).then(function () { return pageLifecycleOps.navigatePage(pageId, url, options, execution); }); }
+    function ensurePageReady(pageId, execution) { return Promise.resolve(deps.authorizeApplication ? deps.authorizeApplication({ kind: 'node', pageId: pageId }) : null).then(function () { return pageLifecycleOps.ensurePageReady(pageId, execution); }); }
 
     function executeUnifiedPageCommand(pageId, command, params, execution, source) {
       params = Object.assign({}, params || {});
-      var resolveTab = pageId
-        ? ensurePageReady(pageId, execution)
-        : requireRuntimeTabId(params, command);
+      var resolveTab = Promise.resolve().then(function () {
+        return deps.authorizeApplication ? deps.authorizeApplication({ kind: 'page', pageId: pageId, command: command }) : null;
+      }).then(function () { return pageId ? ensurePageReady(pageId, execution) : requireRuntimeTabId(params, command); });
       return resolveTab.then(function (resolvedTabId) {
         if (!(Number(resolvedTabId) > 0)) throw new Error(command + ' 无法取得目标页面 tabId');
         params.tabId = resolvedTabId;
@@ -273,12 +275,15 @@
         var pageLoadWaitLabel = internalPageLoadWait ? '内部导航加载检查' : '等待页面加载';
         // Browser tab operations need no CDP connection or document recovery.
         // Reading or closing a discarded tab must not wake or reload it.
-        var prepared = /^(?:activateTab|getCurrentTab|closeTab)$/.test(command)
-          ? Promise.resolve(resolvedTabId)
-          : (typeof tabRuntime.preparePageCommandTab === 'function'
-            ? tabRuntime.preparePageCommandTab(resolvedTabId, params)
-            : Promise.resolve(resolvedTabId));
+        var prepared = Promise.resolve().then(function () {
+          return deps.authorizeApplication ? deps.authorizeApplication({ kind: 'page', pageId: pageId, command: command, tabId: resolvedTabId, url: params.url }) : null;
+        }).then(function () {
+          return /^(?:activateTab|getCurrentTab|closeTab)$/.test(command) || typeof tabRuntime.preparePageCommandTab !== 'function'
+            ? resolvedTabId : tabRuntime.preparePageCommandTab(resolvedTabId, params);
+        });
         return prepared.then(function () {
+          return deps.authorizeApplication ? deps.authorizeApplication({ kind: 'page', pageId: pageId, command: command, tabId: resolvedTabId, url: params.url }) : null;
+        }).then(function () {
           if (command !== 'waitForPageLoad') logForExecution(execution, '统一页面引擎: ' + command + ' tabId=' + resolvedTabId);
           if (command === 'waitForPageLoad') {
             logForExecution(execution, '开始' + pageLoadWaitLabel + ': tabId=' + resolvedTabId, { level: 'info' });
@@ -420,6 +425,7 @@
     }
 
     var httpNodes = globalThis.NodeHttp.createHttpNodes({
+      authorizeApplication: deps.authorizeApplication,
       addLog: addLog,
       throwIfStopped: throwIfStopped,
       maxBodyLength: MAX_WEBHOOK_BODY_LENGTH,
@@ -432,6 +438,17 @@
       throwIfStopped();
       if (!mailClient) throw new Error('邮件发送服务尚未初始化');
       return mailClient.send(params, { signal: execution && execution.signal });
+    }
+
+    function execLocalOperation(operation, params, execution) {
+      throwIfStopped();
+      if (typeof deps.executeLocalOperation !== 'function') throw new Error('本地文件、命令与桌面服务尚未初始化');
+      return Promise.resolve().then(function () {
+        return deps.authorizeApplication ? deps.authorizeApplication({ kind: 'local', command: operation }) : null;
+      }).then(function () {
+        throwIfStopped();
+        return deps.executeLocalOperation(operation, params, { signal: execution && execution.signal });
+      });
     }
 
     // --- 通用数据/集成节点 ---
@@ -499,6 +516,7 @@
     var execSaveFile = fileOpsExecutor.execSaveFile;
 
     var browserOpsExecutor = globalThis.NodeBrowserOps.createBrowserOps({
+      authorizeApplication: deps.authorizeApplication,
       chrome: chrome,
       addLog: addLog,
       pageSource: pageSource,
@@ -518,7 +536,9 @@
       sleep: sleep,
       ensurePageReady: ensurePageReady,
       requireRuntimeTabId: requireRuntimeTabId,
-      capturePageScreenshot: pageAutomation.captureScreenshot,
+      capturePageScreenshot: function (tabId, options) {
+        return Promise.resolve(deps.authorizeApplication ? deps.authorizeApplication({ kind: 'page', tabId: tabId, command: 'screenshot' }) : null).then(function () { return pageAutomation.captureScreenshot(tabId, options); });
+      },
       preparePageCommandTab: tabRuntime.preparePageCommandTab,
       verifyAssertion: pageAutomation.verification.verifyAssertion,
     });
@@ -527,7 +547,17 @@
 
     var getModelClient = function () {
       if (!modelClient) throw new Error('模型客户端未初始化');
-      return modelClient;
+      if (!deps.authorizeApplication) return modelClient;
+      var guarded = Object.create(modelClient);
+      guarded.chat = function (request) {
+        return Promise.resolve().then(function () {
+          throwIfStopped();
+          return deps.authorizeApplication({ kind: 'model', modelServiceId: request && request.serviceId });
+        }).then(function () { return modelClient.chat(Object.assign({}, request, {
+          authorizeRequest: function (target) { return deps.authorizeApplication({ kind: 'model', modelServiceId: target.serviceId, url: target.url, model: target.model, useVision: target.useVision }); },
+        })); });
+      };
+      return guarded;
     };
     var modelNodes = globalThis.NodeModel.createModelNodes({
       addLog: addLog,
@@ -1763,6 +1793,22 @@
         : (params.defaultValue !== undefined ? parseJsonValue(params.defaultValue, params.defaultValue, 'JSON 默认值') : null);
     }
 
+    async function listUtilities() {
+      throwIfStopped();
+      if (deps.authorizeApplication) await deps.authorizeApplication({ kind: 'utility', command: 'list' });
+      throwIfStopped();
+      return { tools: JSON.parse(JSON.stringify(globalThis.OfflineToolCatalog.tools)) };
+    }
+
+    async function executeUtility(toolId, request, execution) {
+      throwIfStopped();
+      if (deps.authorizeApplication) await deps.authorizeApplication({ kind: 'utility', command: toolId });
+      throwIfStopped();
+      var sandbox = getSandboxEngine();
+      if (!sandbox || !sandbox.utilities) throw new Error('离线工具服务尚未初始化');
+      return sandbox.utilities.execute(toolId, request, { signal: execution && execution.signal || getAbortSignal() });
+    }
+
     var scriptOps = nodeScriptOpsModule.createScriptOps({
       tabRuntime: tabRuntime,
       FlowData: globalThis.FlowData,
@@ -1783,15 +1829,25 @@
       getModelClient: getModelClient,
       httpFetch: httpNodes.httpFetch,
       execSaveFile: fileOpsExecutor.execSaveFile,
+      listUtilities: listUtilities,
+      executeUtility: executeUtility,
       logForExecution: logForExecution,
       addLog: addLog,
     });
 
     function executeApiCall(api, args, execution) {
-      return scriptOps.executeApiCall(api, args, execution);
+      return Promise.resolve().then(function () {
+        return deps.authorizeApplication ? deps.authorizeApplication() : null;
+      }).then(function () { return scriptOps.executeApiCall(api, args, execution); });
     }
 
     var nodeDispatcher = nodeDispatcherModule.createNodeDispatcher({
+      utilityTools: globalThis.OfflineToolCatalog ? globalThis.OfflineToolCatalog.tools : [],
+      executeUtility: function (tool, params, execution) {
+        var options = {};
+        Object.keys(tool.fields).forEach(function (key) { if (params[key] !== undefined) options[key] = params[key]; });
+        return executeUtility(tool.id, { operation: params.operation, input: params.input, options: options }, execution);
+      },
       page: {
         openPage: openPage,
         perceive: perceivePage,
@@ -1813,6 +1869,7 @@
       callbacks: {
         logForExecution: logForExecution,
         execSendEmail: execSendEmail,
+        execLocalOperation: execLocalOperation,
         execForEachParallel: execForEachParallel,
         execExportTestReport: execExportTestReport,
         execAttachArtifact: execAttachArtifact,
@@ -1853,6 +1910,8 @@
       var params;
 
       return Promise.resolve().then(function () {
+        return deps.authorizeApplication ? deps.authorizeApplication() : null;
+      }).then(function () {
         throwIfStopped();
         executionContract.assertNode(node);
         if (state.resetContext === true) resetCtx();
@@ -1876,7 +1935,8 @@
           executionContract.resolveNodeParams(node, runCtx)
         );
 
-        return nodeDispatcher.dispatch(node, params, state, execution);
+        if (deps.authorizeApplication) globalThis.AppContract.assertNode(node);
+        return Promise.resolve(deps.authorizeApplication ? deps.authorizeApplication({ kind: /^(setCookie|getCookie|clearCookies)$/.test(node.type) ? 'page' : 'node', command: node.type, url: /^(setCookie|getCookie|clearCookies)$/.test(node.type) ? params.url : undefined, pageId: node.pageId || params.pageId, modelServiceId: params.modelServiceId || params.serviceId }) : null).then(function () { return nodeDispatcher.dispatch(node, params, state, execution); });
       }).then(function (result) {
         var completion;
         try {

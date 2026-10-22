@@ -1,0 +1,50 @@
+{
+  "kind": "pfa-full-backup",
+  "version": 7,
+  "modules": {
+    "apps": {
+      "items": {
+        "app_gitlab_tools": {
+          "appId": "app_gitlab_tools",
+          "slug": "gitlab-tools",
+          "name": "GitLab 批量操作",
+          "icon": "fa-code-fork",
+          "description": "使用浏览器登录态或访问令牌，跨多个分支创建合并请求与执行 Cherry-pick。",
+          "generationScope": ["data.read", "data.write"],
+          "sourceFiles": {
+            "app.js": "builtin-apps/gitlab-tools/app.js",
+            "client.js": "builtin-apps/gitlab-tools/client.js",
+            "views.js": "builtin-apps/gitlab-tools/views.js",
+            "app.css": "builtin-apps/gitlab-tools/app.css",
+            "theme.css": "apps/default-theme.css"
+          },
+          "defaultPermissions": {
+            "enabled": true,
+            "resources": []
+          },
+          "slots": {
+            "published": {
+              "html": "<p>正在加载 GitLab 批量操作…</p>",
+              "css": "@import url('app-file:app.css');",
+              "javascript": "import { mountGitLabTools } from './app.js';\nawait mountGitLabTools();\n",
+              "themeCss": "@import url('app-file:theme.css');",
+              "description": "GitLab 批量操作工作台：顶部并排展示 Commit 信息与执行预览，中间是分支双列表，底部展示可复制的逐分支结果；站点和认证收在齿轮设置中。支持接口搜索、本地正则过滤、MR 标题反查分支、批量 MR 与 Cherry-pick。",
+              "capabilities": ["data.read", "data.write"],
+              "actions": [],
+              "dependencies": [],
+              "customBehavior": [
+                "界面与主题源码通过 sourceFiles 安装到 code.files，复制和导出携带这些文件。令牌模式通过扩展 fetch 请求用户指定的 HTTP/HTTPS GitLab 站点，使用 PRIVATE-TOKEN，不发送浏览器 Cookie，不跟随重定向。",
+                "登录态模式通过 chrome.tabs 复用同一浏览器环境中对应站点的标签页；没有时创建后台标签页。使用 chrome.scripting 在该页内调用 GitLab API，复用会话 Cookie，并从页面 meta 读取 CSRF 信息用于写请求。",
+                "点击执行后逐分支创建临时分支、Cherry-pick 和合并请求，或直接向所选分支 Cherry-pick；不会自动合并或重试写入。通过 PageAgent.data 保存站点、认证方式、合并后删除临时分支选项及用户选择记住的令牌，不保存 Cookie。"
+              ],
+              "externalResources": []
+            }
+          },
+          "assets": [],
+          "dataIncluded": false,
+          "data": []
+        }
+      }
+    }
+  }
+}

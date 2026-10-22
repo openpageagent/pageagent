@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Page Agent 配置中心</title>
   <link rel="stylesheet" href="options.css">
+  <link rel="stylesheet" href="options-app.css">
 </head>
 <body>
   <div id="app">
@@ -20,7 +21,8 @@
         不要联动改名。
       -->
       <nav id="nav">
-        <button class="nav-item active" data-section="conversation">对话</button>
+        <button class="nav-item active" data-section="apps">应用</button>
+        <button class="nav-item" data-section="conversation">对话</button>
         <button class="nav-item" data-section="flows">流程</button>
         <button class="nav-item" data-section="pages">页面</button>
         <button class="nav-item" data-section="scripts">脚本</button>
@@ -41,7 +43,8 @@
       </div>
     </aside>
 
-    <main id="main" class="conversation-main">
+    <main id="main">
+      <section id="section-apps" class="section active"></section>
       <!-- 页面配置 -->
       <section id="section-pages" class="section">
         <header class="section-header">
@@ -92,7 +95,7 @@
         <p class="section-desc">自定义 JS 脚本在沙箱中执行，通过 api 对象调用全部节点能力。</p>
         <details id="api-reference" class="reference-panel">
           <summary>脚本 API 速查</summary>
-          <pre>// 页面操作：page.open(pageId) 打开页面并返回 tabId，后续操作只传 tabId
+          <page-code-editor readonly language="javascript" rows="18" aria-label="脚本 API 速查">// 页面操作：page.open(pageId) 打开页面并返回 tabId，后续操作只传 tabId
 const opened = await page.open(pageId, { urlOverride, waitStable, forceReopen, maxReuseMinutes: 60 })
 const tabId = opened.tabId
 await page.refresh(tabId)                              // 刷新页面
@@ -114,6 +117,14 @@ await http.webhook(url, { any: 'json' })               // POST JSON
 const answer = await api.model.chat('总结这段文本: ...')
 const answer2 = await api.model.chat({ system: '角色设定', user: '问题', temperature: 0 })
 
+// 开发者工具箱：直接调用，返回计算值；不需要先 list
+const digest = await api.utilities.hash('abc', { algorithm: 'SHA256' })
+const encoded = await api.utilities.base64.encode('abc')
+const decoded = await api.utilities.base64.decode(encoded)
+const formatted = await api.utilities.json.format('{"name":"demo"}')
+const id = await api.utilities.uuid.v4()
+await ctx.set('digest', digest)
+
 // 运行上下文（与流程节点共享）
 const v = await ctx.get('varName')                     // 读变量
 await ctx.set('varName', value)                        // 写变量
@@ -121,7 +132,7 @@ await ctx.set('varName', value)                        // 写变量
 // 其它
 await log('消息', 'info')                               // 写日志
 await sleep(1000)                                      // 等待
-return result                                          // 返回值写入节点输出</pre>
+return result                                          // 返回值写入节点输出</page-code-editor>
         </details>
         <div id="scripts-list" class="item-list"></div>
         <div id="script-editor" class="editor hidden"></div>
@@ -169,7 +180,7 @@ return result                                          // 返回值写入节点�
         <header class="section-header">
           <h2>MCP 服务器连接</h2>
         </header>
-        <p class="section-desc">管理当前扩展环境与 MCP 服务的连接。连接用于外部客户端配置和管理自动化流程，也用于邮件通知及可选的本地文件与命令操作。</p>
+        <p class="section-desc">管理当前扩展环境与 MCP 服务的连接。连接用于外部客户端配置和管理自动化流程，也用于邮件通知及可选的本地文件、命令与桌面操作。</p>
 
         <details class="reference-panel">
           <summary>MCP 连接与使用说明</summary>
@@ -185,16 +196,10 @@ return result                                          // 返回值写入节点�
             </div>
 
             <label class="mcp-snippet-label">启动命令</label>
-            <pre class="mcp-snippet" id="mcp-start-command"></pre>
-            <div class="mcp-actions">
-              <button class="btn-small" id="btn-copy-mcp-command">复制启动命令</button>
-            </div>
+            <page-code-editor readonly language="shell" rows="3" id="mcp-start-command"></page-code-editor>
 
             <label class="mcp-snippet-label">Cherry Studio 配置</label>
-            <pre class="mcp-snippet" id="mcp-cherry-config"></pre>
-            <div class="mcp-actions">
-              <button class="btn-small" id="btn-copy-cherry-config">复制 Cherry Studio 配置</button>
-            </div>
+            <page-code-editor readonly language="json" id="mcp-cherry-config"></page-code-editor>
 
             <p class="mcp-note">一键写入 Cherry Studio 配置需要 Cherry Studio 提供官方导入协议或本机助手。当前扩展只能生成配置并复制，不能直接修改桌面应用配置文件。</p>
           </div>
@@ -204,16 +209,10 @@ return result                                          // 返回值写入节点�
             <p>使用内置单文件 MCP 服务器 <code>mcp-server/page-agent-mcp-server.cjs</code>；上方填写扩展目录后会自动生成完整路径。</p>
 
             <label class="mcp-snippet-label">Codex 配置</label>
-            <pre class="mcp-snippet" id="mcp-codex-config"></pre>
-            <div class="mcp-actions">
-              <button class="btn-small" id="btn-copy-codex-config">复制 Codex 命令</button>
-            </div>
+            <page-code-editor readonly language="shell" id="mcp-codex-config"></page-code-editor>
 
             <label class="mcp-snippet-label">Claude Code 配置</label>
-            <pre class="mcp-snippet" id="mcp-claude-config"></pre>
-            <div class="mcp-actions">
-              <button class="btn-small" id="btn-copy-claude-config">复制 Claude Code 命令</button>
-            </div>
+            <page-code-editor readonly language="shell" id="mcp-claude-config"></page-code-editor>
 
             <p class="mcp-note">Claude Code 本地 stdio MCP 使用 <code>claude mcp add ... -- command args</code> 格式；Codex 和 Claude Code 添加后均可用自然语言调用 <code>page-agent</code> 创建流程。</p>
           </div>
@@ -278,7 +277,7 @@ return result                                          // 返回值写入节点�
 
           <div class="setting-item">
             <label>当前连接名称</label>
-            <input type="text" id="mcp-client-name" placeholder="例如 Chrome 工作资料 / Edge 测试资料">
+            <input type="text" id="mcp-client-name" placeholder="输入连接名称">
             <small>用于在本地 MCP 服务中识别当前扩展环境。</small>
           </div>
 
@@ -316,15 +315,15 @@ return result                                          // 返回值写入节点�
           </div>
 
           <section class="local-tools-settings" aria-labelledby="local-tools-title">
-            <h3 id="local-tools-title">本地文件与命令</h3>
-            <p class="form-help">通过 MCP Server 为对话提供本地文件操作与 Bash 命令执行能力。默认开启，仅在连接成功且服务端支持时向对话提供。</p>
-            <p class="form-help">五项能力统一使用下方工作目录；连接后默认回显服务端运行目录，也可指定其他绝对目录。命令以服务端进程权限运行。</p>
+            <h3 id="local-tools-title">本地文件、命令与桌面</h3>
+            <p class="form-help">通过 MCP Server 操作本地文件、执行 Bash，并控制鼠标、键盘、剪贴板、截图、图片定位、应用和窗口。默认开启，仅在连接成功且服务端支持时向对话提供。</p>
+            <p class="form-help">文件和命令使用下方工作目录；桌面操作作用于服务端机器，仅支持 macOS 和 Windows。鼠标和图片定位等能力需服务端安装 robotjs，可通过 desktop 查询支持范围；macOS 还支持窗口移动和缩放。</p>
 
             <div class="setting-item">
               <label class="switch-label">
                 <input type="checkbox" id="mcp-local-tools-enabled" disabled>
                 <span class="switch-slider"></span>
-                <span class="switch-text">启用本地文件与命令</span>
+                <span class="switch-text">启用本地文件、命令与桌面</span>
               </label>
               <small id="mcp-local-tools-status" role="status" aria-live="polite"></small>
             </div>
@@ -337,7 +336,7 @@ return result                                          // 返回值写入节点�
             </div>
 
             <div class="help-doc">
-              <table aria-label="本地文件与命令的五项能力">
+              <table aria-label="本地文件、命令与桌面能力">
                 <thead><tr><th scope="col">能力</th><th scope="col">名称</th><th scope="col">用途</th></tr></thead>
                 <tbody>
                   <tr><td><code>read</code></td><td>读取文件</td><td>读取文本文件，支持按行分页查看内容。</td></tr>
@@ -345,6 +344,11 @@ return result                                          // 返回值写入节点�
                   <tr><td><code>delete</code></td><td>删除文件</td><td>删除单个文件或符号链接，不递归删除目录。</td></tr>
                   <tr><td><code>grep</code></td><td>查找内容</td><td>在文件或目录中搜索指定文本，返回文件路径、行号和匹配内容。</td></tr>
                   <tr><td><code>bash</code></td><td>执行 Bash</td><td>从工作目录启动命令或脚本，返回执行输出。</td></tr>
+                  <tr><td><code>desktop</code></td><td>桌面能力</td><td>查询当前平台支持的操作和系统权限要求。</td></tr>
+                  <tr><td><code>mouse / keyboard</code></td><td>鼠标与键盘</td><td>平滑移动、点击、左键拖拽、滚轮、单键、组合键、粘贴和逐字输入。</td></tr>
+                  <tr><td><code>clipboard</code></td><td>文本剪贴板</td><td>macOS/Windows：读取、写入或清空。</td></tr>
+                  <tr><td><code>screenshot / locate</code></td><td>截图与图片定位</td><td>截取屏幕或局部，匹配 PNG 模板并返回屏幕坐标；截图可由视觉模型查看。</td></tr>
+                  <tr><td><code>application / window</code></td><td>应用与窗口</td><td>启动、请求关闭、打开打印对话框；窗口查询、恢复并激活、读取边界，Windows 包含 UI Automation 暴露的多窗口和对话框；macOS 可移动/缩放窗口。</td></tr>
                 </tbody>
               </table>
             </div>
@@ -433,7 +437,7 @@ return result                                          // 返回值写入节点�
 
           <div class="setting-item">
             <label>服务名称</label>
-            <input type="text" id="model-service-name" placeholder="例如 OpenAI / Qwen / 本地 Ollama">
+            <input type="text" id="model-service-name" placeholder="输入服务名称">
           </div>
 
           <div class="setting-item">
@@ -453,7 +457,7 @@ return result                                          // 返回值写入节点�
 
           <div class="setting-item">
             <label>User-Agent（可选）</label>
-            <input type="text" id="model-user-agent" placeholder="例如 Mozilla/5.0 或自定义客户端标识">
+            <input type="text" id="model-user-agent" placeholder="输入自定义 User-Agent">
             <small>通过浏览器网络规则随该服务请求发送；留空时使用浏览器默认值，始终独立于系统 User-Agent。</small>
           </div>
 
@@ -534,7 +538,7 @@ return result                                          // 返回值写入节点�
       </section>
 
       <!-- 对话 -->
-      <section id="section-conversation" class="section active">
+      <section id="section-conversation" class="section">
         <header class="section-header">
           <h2>对话</h2>
         </header>
@@ -566,12 +570,22 @@ return result                                          // 返回值写入节点�
         </header>
         <div class="help-doc">
 
+          <h3>v1.1.0</h3>
+          <ul>
+            <li><b>应用</b>：新增应用管理与开发助手，支持通过对话或代码创建应用、预览发布，并调用流程和脚本。</li>
+            <li><b>内置应用</b>：新增「开发者工具箱」、Developer Utils 和「GitLab 批量操作」，支持复制后修改。</li>
+            <li><b>离线工具</b>：新增编解码、格式转换、加密校验等工具，支持对话、应用、流程和脚本调用。</li>
+            <li><b>代码编辑</b>：升级代码编辑器，支持语法高亮、查找和格式化。</li>
+            <li><b>流程节点</b>：新增本地文件、Bash 和桌面操作节点。</li>
+            <li><b>代理配置</b>：新增浏览器代理设置，支持域名匹配、绕过规则和 HTTP／HTTPS 代理认证。</li>
+          </ul>
+
           <h3>v1.0.3</h3>
           <ul>
             <li><b>邮件通知</b>：新增统一 SMTP 发件账户、通知总开关和测试邮件入口，支持 TLS / STARTTLS；发送邮件需连接支持邮件发送的 MCP Server。</li>
             <li><b>邮件节点</b>：新增「邮件通知」节点，支持收件人、抄送、密送、变量模板、纯文本或 HTML 正文，以及文本和 Base64 附件，邮件节点不自动重试。</li>
             <li><b>流程通知</b>：支持按整个流程的成功或失败结果发送邮件，可自定义主题与正文模板，多轮运行汇总为一封通知；异步投递并记录结果，通知失败不影响流程结果，主动停止和单节点调试不发送。</li>
-            <li><b>本地文件与命令</b>：对话可通过已连接且支持该能力的 MCP Server 读取、写入、删除和查找文件，以及执行 Bash 命令；支持独立开关和统一工作目录。</li>
+            <li><b>本地文件、命令与桌面</b>：对话可通过 MCP Server 操作文件、执行 Bash，并调用服务端支持的鼠标、键盘、剪贴板、截图、图片定位、应用和窗口能力；使用统一开关和工作目录。</li>
             <li><b>定时运行</b>：支持每天多个时刻、指定日期和 JSON 输入参数，可按工作日、节假日或休息日批量选日，支持中国大陆调休与国外全国公众假日，并可将保存的日历信息传入运行参数。</li>
             <li><b>知识与 Skill</b>：新增 Skill 目录树、搜索分页和知识与 Skill 批量删除，导入与删除支持进度、失败详情和停止后续处理；优化大量 Skill 的存储，支持按需预览资源文件。</li>
             <li><b>助手配置</b>：Skill 支持按目录批量勾选、搜索、分页和仅看已选，跨页保留选择，并取消最多选择 50 个 Skill 的限制。</li>
@@ -615,11 +629,6 @@ return result                                          // 返回值写入节点�
         </header>
         <div class="system-settings">
           <div class="setting-item">
-            <label for="system-user-agent">User-Agent（可选）</label>
-            <input type="text" id="system-user-agent" maxlength="512" placeholder="例如 Mozilla/5.0 或自定义客户端标识">
-            <small>仅用于扩展自身发起的非模型请求，保存后对后续请求生效；留空时使用浏览器默认值。模型请求仅使用模型配置。</small>
-          </div>
-          <div class="setting-item">
             <label class="switch-label">
               <input type="checkbox" id="system-floating-entry-disabled">
               <span class="switch-slider"></span>
@@ -627,12 +636,50 @@ return result                                          // 返回值写入节点�
             </label>
             <small>在网页中隐藏悬浮入口；重新打开后会恢复显示。</small>
           </div>
+          <div class="setting-item">
+            <label for="system-user-agent">User-Agent（可选）</label>
+            <input type="text" id="system-user-agent" maxlength="512" placeholder="输入自定义 User-Agent">
+            <small>用于流程 HTTP 请求、资源下载和 MCP 连接；留空时使用浏览器默认值。</small>
+          </div>
+          <h3>代理设置</h3>
+          <div class="setting-item">
+            <label for="system-proxy-server">浏览器代理（可选）</label>
+            <input type="text" id="system-proxy-server" maxlength="2048" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080">
+            <small>支持 HTTP / SOCKS5，作用于网页、模型和 MCP 连接。</small>
+          </div>
+          <div class="setting-item">
+            <label for="system-proxy-username">代理用户名（可选）</label>
+            <input type="text" id="system-proxy-username" maxlength="1024" autocomplete="off" placeholder="HTTP 代理用户名">
+          </div>
+          <div class="setting-item">
+            <label for="system-proxy-password">代理密码（可选）</label>
+            <input type="password" id="system-proxy-password" maxlength="1024" autocomplete="new-password" placeholder="HTTP 代理密码">
+            <small>仅 HTTP / HTTPS 代理支持用户名密码认证。</small>
+          </div>
+          <div class="setting-item">
+            <label for="system-proxy-host-patterns">匹配域名</label>
+            <textarea id="system-proxy-host-patterns" rows="3" maxlength="8192" placeholder="example.com, *.example.com"></textarea>
+            <small>每行一个或逗号分隔，支持通配符；留空匹配全部。</small>
+          </div>
+          <div class="setting-item">
+            <label for="system-proxy-bypass-list">绕过域名</label>
+            <textarea id="system-proxy-bypass-list" rows="3" maxlength="8192" placeholder="localhost, *.internal.example.com"></textarea>
+            <small>每行一个或逗号分隔，支持通配符。</small>
+          </div>
+          <div class="setting-item">
+            <button type="button" class="btn-primary" id="btn-save-system-proxy">保存代理设置</button>
+          </div>
+          <div class="mcp-log-panel">
+            <div class="mcp-log-header">
+              <h4>代理控制状态</h4>
+              <button type="button" class="btn-small" id="btn-refresh-system-proxy-status">刷新状态</button>
+            </div>
+            <div class="mcp-log-list mcp-log-message" id="system-proxy-status" role="status" aria-live="polite">正在读取…</div>
+          </div>
         </div>
       </section>
     </main>
   </div>
-
-  <div id="toast" class="hidden"></div>
 
   <template id="mail-test-template">
     <form id="mail-test-form" class="mail-test-form">
@@ -671,9 +718,14 @@ return result                                          // 返回值写入节点�
     <div class="drawer-footer" id="drawer-actions"></div>
   </div>
 
+  <!-- UMD globals must load before Monaco installs its AMD loader. -->
+  <script src="../dependencies/marked/marked.min.js"></script>
+  <script src="../dependencies/dompurify/purify.min.js"></script>
+  <script src="../ui/code-editor.js"></script>
   <script src="../shared/config-migration.js"></script>
   <script src="../shared/page-action-contract.js"></script>
   <script src="../shared/page-verification-contract.js"></script>
+  <script src="../utilities/catalog.js"></script>
   <script src="../flows/node-types.js"></script>
   <script src="../resources/mcp-tool-contract.js"></script>
   <script src="../resources/protocol/index.js"></script>
@@ -704,7 +756,11 @@ return result                                          // 返回值写入节点�
   <script src="../settings/mail-settings.js"></script>
   <script src="../ui/runtime-client.js"></script>
   <script src="../ui/resource-client.js"></script>
+  <script src="../shared/app-contract.js"></script>
+  <script src="../apps/app-store.js"></script>
+  <script src="../apps/backup-client.js"></script>
   <script src="../ui/lifecycle.js"></script>
+  <script src="../ui/feedback.js"></script>
   <script src="../shared/sync-event-stream.js"></script>
   <script src="../ui/image-artifact-client.js"></script>
   <script src="../ui/zip-store.js"></script>
@@ -712,6 +768,7 @@ return result                                          // 返回值写入节点�
   <script src="../ui/conversation-event-view.js"></script>
   <script src="../ui/conversation-list-view.js"></script>
   <script src="../ui/conversation-shared.js"></script>
+  <script src="../shared/system-runtime-permissions.js"></script>
   <script src="conversation-profile-schema.js"></script>
   <script src="conversation-assistant-state-runtime.js"></script>
   <script src="conversation-state.js"></script>
@@ -752,6 +809,7 @@ return result                                          // 返回值写入节点�
   <script src="options-schedule-controller.js"></script>
   <script src="options-url-trigger-controller.js"></script>
   <script src="options-backup-controller.js"></script>
+  <script src="options-app-controller.js"></script>
   <script src="options-run-report-controller.js"></script>
   <script src="options-mail-controller.js"></script>
   <script src="options.js"></script>

@@ -142,6 +142,7 @@
       'application/merge-patch+json': true,
     });
     var ARP_OPTION_PERMISSIONS = Object.freeze([
+      'utilities.read', 'utilities.execute',
       'flows.read', 'flows.write', 'flows.delete',
       'flows.nodes.read', 'flows.nodes.write', 'flows.nodes.delete',
       'node-types.read',
@@ -155,14 +156,18 @@
       'schedules.read', 'schedules.write', 'schedules.delete',
       'url-triggers.read', 'url-triggers.write', 'url-triggers.delete',
       'scripts.read', 'scripts.write', 'scripts.delete',
+      'apps.read', 'apps.write', 'apps.delete', 'apps.execute',
       'config.read', 'skills.read', 'skills.write', 'skills.delete',
       'assistants.read', 'assistants.write', 'assistants.delete',
       'model-services.read', 'model-services.write', 'model-services.delete',
       'model-services.execute', 'agent-settings.read', 'agent-settings.write',
+      'system-settings.read', 'system-settings.write',
+      'mail-settings.read', 'mail-settings.write', 'mail-settings.execute',
       'connections.read', 'connections.write', 'connections.execute',
       'mcp-servers.read', 'mcp-servers.write', 'mcp-servers.delete', 'mcp-servers.call', 'mcp-calls.read',
     ]);
     var ARP_SIDEPANEL_PERMISSIONS = Object.freeze([
+      'utilities.read', 'utilities.execute',
       'page.read', 'page.interact',
       'browser.read', 'browser.navigate', 'browser.downloads.read',
       'flows.read', 'flows.nodes.read', 'node-types.read',

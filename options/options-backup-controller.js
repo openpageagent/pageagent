@@ -163,7 +163,9 @@
       return error;
     }
 
+    var checkedBackupSizes = new WeakMap();
     function assertBackupSize(value, label) {
+      if (value && typeof value === 'object' && checkedBackupSizes.has(value)) return checkedBackupSizes.get(value);
       var bytes;
       try {
         bytes = backupByteSize(value);
@@ -304,7 +306,7 @@
     }
 
     var FULL_BACKUP_KIND = 'pfa-full-backup';
-    var FULL_BACKUP_VERSION = 6;
+    var FULL_BACKUP_VERSION = 7;
     var CONFIG_BACKUP_SECTIONS = [
       { id: 'flowGroups', label: '流程组', configSection: 'flowGroups' },
       { id: 'flows', label: '流程', configSection: 'flows' },
@@ -314,6 +316,7 @@
       { id: 'urlTriggers', label: 'URL 触发运行', configSection: 'urlTriggers' },
     ];
     var BACKUP_MODULE_DEFS = [
+      { id: 'apps', label: '应用', note: '当前草稿、发布内容、主题资源和可选业务数据；不包含 SDK 授权' },
       { id: 'conversations', label: '对话', note: 'JSON 备份保存图片引用；含媒体的完整迁移请在对话页使用 ZIP 导出' },
       { id: 'assistants', label: '助手' },
       { id: 'knowledge', label: '知识' },
@@ -486,7 +489,7 @@
       service = service && typeof service === 'object' && !Array.isArray(service) ? service : {};
       var output = safeClone(service);
       if (!hasOwn(output, 'protocol') && hasOwn(output, 'apiStyle')) output.protocol = output.apiStyle;
-      ['apiKey', 'headers', 'secret', 'apiStyle', 'providerType', 'provider_type', 'reasoningProviderType'].forEach(function (key) { delete output[key]; });
+      ['apiKey', 'headers', 'customHeaders', 'authorization', 'secret', 'hasApiKey', 'maskedApiKey', 'apiStyle', 'providerType', 'provider_type', 'reasoningProviderType'].forEach(function (key) { delete output[key]; });
       return output;
     }
 
@@ -671,6 +674,7 @@
     }
 
     function filterBuiltinBackupItems(moduleId, module) {
+      if (moduleId === 'apps') return module;
       var output = safeClone(module || {});
       if (moduleId !== 'knowledge' && moduleId !== 'skills') return output;
       var items = backupModuleItemsObject(output);
@@ -871,6 +875,10 @@
         };
       }
 
+      if (source.appModules) {
+        modules.apps = source.appModules.apps;
+        Object.keys(source.appModules).forEach(function (key) { if (!modules[key]) modules[key] = source.appModules[key]; });
+      }
       return modules;
     }
 
@@ -886,6 +894,11 @@
         readMcpServersForBackup(),
         readMcpConnectionsForBackup(),
         readLocalStorageValue(globalThis.PageAutomationMailSettings.SETTINGS_KEY),
+        readResourceCollection('/apps').then(function (apps) {
+          var items = dictionary(), order = [];
+          apps.forEach(function (app) { if (!app.__builtin) { items[app.appId] = app; order.push(app.appId); } });
+          return { apps: { label: '应用', source: '/apps', items: items, order: order } };
+        }),
       ]).then(function (results) {
         var runtimeConfig = results[0];
         if (!runtimeConfig || typeof runtimeConfig !== 'object' || Array.isArray(runtimeConfig)) {
@@ -902,6 +915,7 @@
           mcpServers: results[7],
           mcpConnections: results[8],
           mailSettings: results[9],
+          appModules: results[10],
         };
       });
     }
@@ -980,6 +994,7 @@
 
     function backupItemTitle(moduleId, id, item, pkg) {
       item = item || {};
+      if (moduleId === 'apps') return item.name || id;
       if (moduleId === 'pages') return item.label || item.url || id;
       if (moduleId === 'flows') return item.label || id;
       if (moduleId === 'flowGroups') return item.label || item.name || id;
@@ -997,6 +1012,7 @@
     }
 
     function backupItemMeta(moduleId, id, item, pkg) {
+      if (moduleId === 'apps') return Object.values(item.slots || {}).map(function (code) { return 'SDK: ' + code.capabilities.join(', ') + '；自定义行为: ' + (code.customBehavior.join('；') || '无'); }).join(' | ');
       if (moduleId === 'mcpSettings') return [item && item.enabled === true ? '已启用' : '已停用', item && item.url || ''].filter(Boolean).join(' · ');
       item = item || {};
       if (moduleId === 'pages') return item.url || '';
@@ -1079,7 +1095,8 @@
       }).join('');
       $('#drawer-title').textContent = '一键导出所有数据';
       $('#drawer-content').innerHTML =
-        '<p class="drawer-hint">按模块选择要写入 v6 备份包的数据。模型服务密钥和授权类请求头不会导出；Conversation Journal 中的运行轨迹会按所选模块保留。</p>'
+        '<p class="drawer-hint">按模块选择要写入 v7 备份包的数据。应用的必要依赖随应用一起导出，SDK 授权不导出。模型服务密钥和授权类请求头不会导出。</p>'
+        + '<label><input id="backup-app-data" type="checkbox" checked>包含应用业务数据</label>'
         + '<div class="backup-toolbar">'
         + '<button class="btn-small" data-action="select-all-export-backup">全选</button>'
         + '<button class="btn-small" data-action="clear-export-backup">清空</button>'
@@ -1119,7 +1136,7 @@
       });
     }
 
-    function exportSelectedBackup() {
+    async function exportSelectedBackup() {
       if (destroyed) return { ok: false, destroyed: true };
       if (!pendingBackupExport || !pendingBackupExport.modules) {
         toast('备份数据尚未读取完成', true);
@@ -1130,8 +1147,33 @@
         toast('请选择至少一个模块', true);
         return { ok: false, error: '请选择至少一个模块' };
       }
-      var pkg = createBackupPackage(pendingBackupExport.modules, selected);
-      var result = downloadFile('pfa-full-backup-' + backupFilenameTimestamp(new Date()) + '.json', JSON.stringify(pkg, null, 2), 'application/json');
+      var modules = dictionary();
+      selected.forEach(function (key) { modules[key] = pendingBackupExport.modules[key]; });
+      if (selected.indexOf('apps') !== -1) {
+        var appModules = await root.AppBackup.exportApps(pendingBackupExport.modules.apps.order, !$('#backup-app-data') || $('#backup-app-data').checked);
+        Object.keys(appModules).forEach(function (key) {
+          var incoming = appModules[key], existing = modules[key];
+          // Unselected modules contain only the application's collected dependencies.
+          if (key === 'apps' || !existing) { modules[key] = incoming; return; }
+          if (key === 'modelSettings') {
+            var services = existing.value.services.slice();
+            incoming.value.services.forEach(function (service) {
+              var index = services.findIndex(function (item) { return item.id === service.id; });
+              if (index === -1) services.push(service); else services[index] = Object.assign({}, services[index], service);
+            });
+            modules[key] = Object.assign({}, existing, { value: Object.assign({}, existing.value, { services: services }) });
+          } else {
+            modules[key] = Object.assign({}, existing, {
+              items: Object.assign(dictionary(), existing.items, incoming.items),
+              order: Array.from(new Set(existing.order.concat(incoming.order)))
+            });
+          }
+        });
+      }
+      var pkg = createBackupPackage(modules, Object.keys(modules));
+      var blob = await root.AppBackup.work('serialize', { value: pkg, limit: maxBackupBytes });
+      await root.AppBackup.verifyExport(pkg.modules);
+      var result = downloadFile('pfa-full-backup-' + backupFilenameTimestamp(new Date()) + '.json', blob, 'application/json');
       toast('备份已导出');
       closeDrawer();
       return result;
@@ -1139,13 +1181,13 @@
 
     function normalizeBackupPackage(raw) {
       if (raw === null || raw === undefined) return null;
-      assertBackupSize(raw, '备份数据');
+      var checkedSize = assertBackupSize(raw, '备份数据');
       if (raw && raw.kind === FULL_BACKUP_KIND) {
         if (!raw.modules || typeof raw.modules !== 'object' || Array.isArray(raw.modules)) {
           throw backupError('invalid-modules', '备份 modules 必须是对象');
         }
-        if (raw.version !== FULL_BACKUP_VERSION) {
-          throw backupError('unsupported-version', '仅支持 v6 备份，收到版本: ' + String(raw.version));
+        if (raw.version !== 6 && raw.version !== FULL_BACKUP_VERSION) {
+          throw backupError('unsupported-version', '仅支持 v6/v7 备份，收到版本: ' + String(raw.version));
         }
         var pkg = {
           kind: FULL_BACKUP_KIND,
@@ -1162,7 +1204,7 @@
           if (!rawModule || typeof rawModule !== 'object' || Array.isArray(rawModule)) {
             throw backupError('invalid-module', '备份模块 ' + moduleId + ' 必须是对象');
           }
-          var module = safeClone(rawModule);
+          var module = moduleId === 'apps' ? Object.assign({}, rawModule) : safeClone(rawModule);
           if (hasOwn(rawModule, 'order') && !Array.isArray(rawModule.order)) {
             throw backupError('invalid-module-order', '备份模块 ' + moduleId + ' 的 order 必须是数组');
           }
@@ -1177,7 +1219,7 @@
               if (!item || typeof item !== 'object' || Array.isArray(item)) {
                 throw backupError('invalid-module-item', '备份模块 ' + moduleId + ' 的条目 ' + id + ' 格式无效');
               }
-              setOwn(normalizedItems, id, safeClone(item));
+              setOwn(normalizedItems, id, moduleId === 'apps' ? item : safeClone(item));
             });
             module.items = normalizedItems;
             module.order = orderedKeysForObject(normalizedItems, (rawModule.order || []).map(function (id) {
@@ -1201,7 +1243,7 @@
           }
           setOwn(pkg.modules, moduleId, filterBuiltinBackupItems(moduleId, module));
         });
-        assertBackupSize(pkg, '标准化后的备份数据');
+        checkedBackupSizes.set(pkg, checkedSize);
         return pkg;
       }
       return null;
@@ -1241,7 +1283,7 @@
           + '<input type="checkbox" data-import-backup-module="' + esc(moduleId) + '"' + (enabled ? '' : ' disabled') + '>'
           + '<span><b>' + esc(def.label || module.label || moduleId) + '</b>'
           + '<small>' + esc((module && module.source) || '') + '</small></span>'
-          + '<em>' + (enabled ? (items.length || 1) + ' 项 · ' + backupSizeLabel(module) : '无数据') + '</em>'
+          + '<em>' + (enabled ? (items.length || 1) + ' 项' + (moduleId === 'apps' ? '' : ' · ' + backupSizeLabel(module)) : '无数据') + '</em>'
           + '</label></summary>'
           + itemHtml
           + '</details>';
@@ -1250,7 +1292,7 @@
       $('#drawer-title').textContent = '一键导入备份数据';
       $('#drawer-content').innerHTML =
         '<p class="drawer-hint">选择要导入的模块和明细。所选条目会按 ID/key 写入并覆盖同名数据，未勾选的数据保持不变。</p>'
-        + '<div class="backup-import-meta">备份时间：' + esc(exportedAt) + ' · v6</div>'
+        + '<div class="backup-import-meta">备份时间：' + esc(exportedAt) + ' · v' + esc(pkg.version) + '</div>'
         + '<div class="backup-import-meta"><label><input type="radio" name="backup-import-mode" value="merge" checked> 合并</label> '
         + '<label><input type="radio" name="backup-import-mode" value="replace"> 替换所选 Flow/FlowGroup 集合</label></div>'
         + '<div class="backup-toolbar">'
@@ -1258,6 +1300,15 @@
         + '<button class="btn-small" data-action="clear-import-backup">清空</button>'
         + '</div>'
         + '<div class="backup-module-list" id="backup-import-list">' + rows + '</div>';
+      if (pkg.modules.apps) {
+        var scopes = Object.keys(pkg.modules.apps.items).map(function (id) {
+          var item = pkg.modules.apps.items[id];
+          return '<fieldset><legend>' + esc(item.name) + ' · 本机生成范围（导入后 SDK 仍关闭）</legend>' + root.AppContract.CAPABILITIES.map(function (capability) {
+            return '<label><input type="checkbox" data-app-import-scope="' + esc(id) + '" value="' + esc(capability) + '"' + ((item.generationScope || []).indexOf(capability) !== -1 ? ' checked' : '') + '>' + esc(capability) + '</label>';
+          }).join(' ') + '</fieldset>';
+        }).join('');
+        $('#drawer-content').insertAdjacentHTML('beforeend', scopes);
+      }
       $('#drawer-actions').innerHTML =
         '<button class="btn-secondary" data-action="cancel-drawer">取消</button>'
         + '<button class="btn-primary" data-action="confirm-import-backup">导入所选数据</button>';
@@ -1355,6 +1406,22 @@
         updateImportBackupModuleCheckbox(moduleId);
       } else {
         setImportBackupModuleSelection(moduleId, input.checked);
+      }
+      var pkg = pendingBackupImport && pendingBackupImport.package;
+      if (pkg && pkg.modules.apps) {
+        var changedId = input.dataset.importBackupItem;
+        importBackupItemInputs('apps').forEach(function (appInput) {
+          if (!appInput.checked) return;
+          var app = pkg.modules.apps.items[appInput.dataset.importBackupItem];
+          (app.required || []).forEach(function (dependency) {
+            if (dependency.builtin) return;
+            if (!input.checked && moduleId === dependency.module && (!changedId || changedId === dependency.id)) { appInput.checked = false; return; }
+            if (moduleId === 'apps') importBackupItemInputs(dependency.module).forEach(function (dependencyInput) {
+              if (dependencyInput.dataset.importBackupItem === dependency.id) { dependencyInput.checked = true; dependencyInput.title = app.name + ' 的必要依赖'; }
+            });
+          });
+        });
+        updateAllImportBackupModuleCheckboxes();
       }
     }
 
@@ -1772,6 +1839,7 @@
             if (section === 'flows') migrateLegacyPageNodes(item);
             if (section === 'schedules') remapScheduleAssistant(item, preflight, '定时运行 ' + id);
             if (section === 'flows') remapFlowAssistants(item, preflight, '流程 ' + id);
+            if (hasOwn(plan, 'apps') && (section === 'schedules' || section === 'urlTriggers')) item.enabled = false;
             var request = section === 'flows' || section === 'flowGroups'
               ? upsertFlowBackupResource(section, id, item)
               : mutateConfigResource('upsert', section, item);
@@ -2398,13 +2466,16 @@
       if (hasOwn(plan, 'mailSettings')) {
         add('mailSettings', function () { return applyMailSettingsBackupImport(pkg, plan); });
       }
+      if (hasOwn(plan, 'apps')) {
+        add('apps', function () { return root.AppBackup.importApps(pkg, plan, preflight.appScopes, preflight.appExpected, preflight.assistantIdMap).then(function (result) { return '应用 ' + result.count + ' 项（SDK 未授权）'; }); });
+      }
       return steps;
     }
 
     function retryData(preflight) {
       return {
-        package: plainClone(preflight.package),
-        plan: plainClone(preflight.plan),
+        package: preflight.package,
+        plan: plainClone(preflight.originalPlan || preflight.plan),
         mode: preflight.importMode,
       };
     }
@@ -2449,6 +2520,7 @@
           index++;
           return runNext();
         }).catch(function (error) {
+          if (error && Array.isArray(error.completed)) completed.push.apply(completed, error.completed);
           failures.push({ step: step.id, error: errorText(error), items: error && error.failures || [] });
           index++;
           return runNext();
@@ -2462,7 +2534,27 @@
       if (importInFlight) return importInFlight;
       var operation = Promise.resolve().then(function () {
         return preflightImport(raw, rawPlan, rawMode);
-      }).then(executeImport).catch(function (error) {
+      }).then(async function (preflight) {
+        if (preflight.plan.apps !== undefined) {
+          if (preflight.importMode !== 'merge') throw new Error('导入应用及其共享依赖请使用“合并”，以保留兼容资源及其他应用的配置');
+          var scopes = {};
+          root.AppBackup.selected(preflight.package, preflight.plan).forEach(function (id) {
+            var inputs = $all('[data-app-import-scope]').filter(function (input) { return input.dataset.appImportScope === id; });
+            scopes[id] = inputs.length ? inputs.filter(function (input) { return input.checked; }).map(function (input) { return input.value; }) : preflight.package.modules.apps.items[id].generationScope;
+          });
+          preflight.appScopes = scopes;
+          var appCheck = await root.AppBackup.preflight(preflight.package, preflight.plan, scopes);
+          preflight.appExpected = appCheck.revisions;
+          preflight.originalPlan = plainClone(preflight.plan);
+          appCheck.reuse.forEach(function (item) {
+            if (!hasOwn(preflight.plan, item.module)) return;
+            if (preflight.plan[item.module] === null) preflight.plan[item.module] = selectableBackupIds(item.module, preflight.package.modules[item.module]);
+            preflight.plan[item.module] = preflight.plan[item.module].filter(function (id) { return id !== item.id; });
+            if (item.kind === 'assistants') preflight.assistantIdMap[item.resourceId] = item.resourceId;
+          });
+        }
+        return executeImport(preflight);
+      }).catch(function (error) {
         return {
           ok: false,
           partial: false,
@@ -2530,6 +2622,11 @@
 
     function readJsonFile(file, onDone) {
       if (destroyed) return Promise.resolve({ ok: false, destroyed: true, error: '备份控制器已销毁' });
+      if (root.AppBackup) return root.AppBackup.work('parse', { file: file, limit: maxBackupBytes }).then(function (value) {
+        if (destroyed) return { ok: false, destroyed: true };
+        if (value && typeof value === 'object') checkedBackupSizes.set(value, file.size);
+        return onDone(value);
+      }).catch(function (error) { toast(error.message, true); return { ok: false, error: error.message }; });
       var fileSize = Number(file && file.size);
       if (Number.isFinite(fileSize) && fileSize > maxBackupBytes) {
         var sizeError = '文件过大 (' + fileSize + ' bytes)，最大允许 ' + maxBackupBytes + ' bytes';
@@ -2643,7 +2740,7 @@
       }
       if (action === 'confirm-export-backup') {
         if (event) event.stopPropagation();
-        exportSelectedBackup();
+        exportSelectedBackup().catch(function (error) { toast('导出失败: ' + error.message, true); });
         return true;
       }
       if (action === 'select-all-import-backup' || action === 'clear-import-backup') {
@@ -2683,6 +2780,14 @@
       destroy: destroy,
       handleAction: handleAction,
       openExportBackupDrawer: openExportBackupDrawer,
+      exportApp: async function (appId) {
+        var includeData = confirm('导出时包含此应用的业务数据？选择“取消”将仅导出源码、主题与依赖。');
+        var modules = await root.AppBackup.exportApps([appId], includeData);
+        var pkg = createBackupPackage(modules, Object.keys(modules));
+        var blob = await root.AppBackup.work('serialize', { value: pkg, limit: maxBackupBytes });
+        await root.AppBackup.verifyExport(pkg.modules);
+        return downloadFile('page-agent-' + appId + '.json', blob, 'application/json');
+      },
       openImportBackupFromRaw: openImportBackupFromRaw,
       exportSelectedBackup: exportSelectedBackup,
       importPackage: importPackage,
