@@ -1,899 +1,563 @@
 #!/usr/bin/env node
 'use strict';
 
-// MCP is an ARP/1 transport adapter. It does not own another tool catalog.
-const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
-const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
-const {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
-  ErrorCode,
-  RequestSchema,
-} = require('@modelcontextprotocol/sdk/types.js');
+const fs = require('fs/promises');
+const path = require('path');
+const os = require('os');
+const { randomUUID } = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const WebSocket = require('ws');
-const arp = require('../resources/protocol/index.js');
-const { createHttpApi } = require('./http-api');
+const arp = require('../resources/protocol');
+const contract = require('../shared/mcp-contract');
+const encryption = require('../shared/websocket-encryption');
+const { AuthStore, generateCredential } = require('./auth-store');
+const { AuditLog, unavailable: auditUnavailable } = require('./audit-log');
+const { acquireLock } = require('./state-lock');
+const { ExecutionControl, terminationCapability, safeError } = require('./execution-control');
+const { EnvironmentInfo, discoverBash } = require('./environment-info');
+const { capabilities: desktopCapabilities } = require('./desktop-operations');
+const { createLocalConnection } = require('./local-connection');
 const { createMailQueue } = require('./mail-queue');
-const { createLocalConnection } = require('./local-operations');
-const {
-  ExtensionRequestBroker,
-  isArpEnvelope,
-  normalizeTransportContext,
-} = require('./extension-request-broker');
+const { ExtensionRequestBroker, isArpEnvelope, normalizeTransportContext } = require('./extension-request-broker');
+const { createHttpApi } = require('./http-api');
+const { McpHttpHandler, canonicalToMcpUri, mcpToCanonicalUri } = require('./mcp-http-handler');
+const { createServerArp } = require('./server-arp');
+const { Archive } = require('./archive');
 const { version: SERVER_VERSION } = require('./package.json');
+const { LIMITS } = contract;
 
+function checkNodeVersion() {
+  const [major, minor, patch] = process.versions.node.split('.').map(Number);
+  if (major < 22 || major === 22 && (minor < 16 || minor === 16 && patch < 0)) throw new Error('Page Agent MCP Server requires Node >=22.16.0');
+}
 function parseCliArgs(argv) {
-  const args = Array.isArray(argv) ? argv.slice() : [];
-  const parsed = {};
-  for (let index = 0; index < args.length; index++) {
-    const arg = String(args[index] || '');
-    const next = () => {
-      const value = args[index + 1];
-      index++;
-      return value;
-    };
-    if (arg === '--ws-port') parsed.wsPort = next();
-    else if (arg === '--http-port') parsed.httpPort = next();
-    else if (arg === '--host') parsed.host = next();
-    else if (arg === '--ws-host') parsed.wsHost = next();
-    else if (arg === '--http-host') parsed.httpHost = next();
-    else if (arg === '--default-client') parsed.defaultClient = next();
-    else if (arg === '--default-client-id') parsed.defaultClientId = next();
-    else if (arg === '--default-client-name') parsed.defaultClientName = next();
+  const options = {}; const positional = [];
+  const names = { '--ws-port': 'wsPort', '--http-port': 'httpPort', '--host': 'host', '--ws-host': 'wsHost',
+    '--http-host': 'httpHost', '--server-name': 'serverName', '--state-dir': 'stateDir', '--password': 'password', '--audit-command-content': 'auditCommandContent' };
+  for (let index = 0; index < argv.length; index++) {
+    const argument = argv[index];
+    if (!argument.startsWith('--')) { positional.push(argument); continue; }
+    const [name, ...rest] = argument.split('=');
+    if (!Object.prototype.hasOwnProperty.call(names, name)) throw new Error('Unknown argument: ' + name);
+    const value = rest.length ? rest.join('=') : argv[++index];
+    if (!value || value.startsWith('--')) throw new Error('Missing value: ' + name);
+    options[names[name]] = value;
   }
-  return parsed;
+  for (const key of ['wsPort', 'httpPort']) if (options[key] !== undefined) {
+    const value = Number(options[key]); if (!Number.isInteger(value) || value < 1 || value > 65535) throw new Error('Invalid port'); options[key] = value;
+  }
+  if (options.auditCommandContent && !['hash', 'plain'].includes(options.auditCommandContent)) throw new Error('Invalid --audit-command-content');
+  const command = positional.join(' ');
+  if (positional.length && command !== 'auth set-password' && command !== 'auth pairings list'
+    && !(positional.length === 4 && positional.slice(0, 3).join(' ') === 'auth pairings revoke')) throw new Error('Unknown command');
+  if (options.password !== undefined) {
+    if (command && command !== 'auth set-password') throw new Error('--password is only supported when starting the server or running auth set-password');
+    contract.password(options.password);
+  }
+  return { options, positional };
 }
-
-function normalizePort(value, fallback) {
-  const port = Number(value);
-  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : fallback;
+function createManagementContext() {
+  const account = os.userInfo();
+  return { transportSessionId: randomUUID(), requestId: randomUUID(), parentRequest: null,
+    principal: { transport: 'cli', id: 'os:' + account.username, clientId: null, pairingId: null },
+    caller: null, callerAssurance: 'server_verified', executor: { user: account.username,
+      uid: typeof process.geteuid === 'function' ? process.geteuid() : null,
+      gid: typeof process.getegid === 'function' ? process.getegid() : null, pid: process.pid } };
 }
-
-const CLI_ARGS = parseCliArgs(process.argv.slice(2));
-const WS_PORT = normalizePort(CLI_ARGS.wsPort, normalizePort(process.env.WS_PORT, 9999));
-const HTTP_PORT = normalizePort(CLI_ARGS.httpPort, normalizePort(process.env.HTTP_PORT, 9998));
-const DEFAULT_BIND_HOST = '127.0.0.1';
-const WS_HOST = String(
-  CLI_ARGS.wsHost || CLI_ARGS.host || process.env.PAGE_AGENT_WS_HOST
-  || process.env.PAGE_AGENT_HOST || DEFAULT_BIND_HOST
-).trim() || DEFAULT_BIND_HOST;
-const HTTP_HOST = String(
-  CLI_ARGS.httpHost || CLI_ARGS.host || process.env.PAGE_AGENT_HTTP_HOST
-  || process.env.PAGE_AGENT_HOST || DEFAULT_BIND_HOST
-).trim() || DEFAULT_BIND_HOST;
-const HTTP_CORS_ORIGINS = String(
-  process.env.PAGE_AGENT_HTTP_CORS_ORIGINS || ''
-).trim();
-const HTTP_MCP_BEARER_TOKEN = String(
-  process.env.PAGE_AGENT_HTTP_BEARER_TOKEN || ''
-).trim();
-const MCP_TOOL_TIMEOUT_MS = 180000;
-const WS_MAX_PAYLOAD_BYTES = 32 * 1024 * 1024;
-const DEFAULT_CLIENT_SELECTOR = Object.freeze({
-  any: String(CLI_ARGS.defaultClient || process.env.PAGE_AGENT_DEFAULT_CLIENT || '').trim(),
-  clientId: String(CLI_ARGS.defaultClientId || process.env.PAGE_AGENT_DEFAULT_CLIENT_ID || '').trim(),
-  clientName: String(CLI_ARGS.defaultClientName || process.env.PAGE_AGENT_DEFAULT_CLIENT_NAME || '').trim(),
-});
-
-function closeListeningServer(server) {
-  if (!server || typeof server.close !== 'function') return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    try {
-      server.close((error) => {
-        if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') reject(error);
-        else resolve();
-      });
-      if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
-      else if (typeof server.closeActiveConnections === 'function') server.closeActiveConnections();
-    } catch (error) {
-      if (error && error.code === 'ERR_SERVER_NOT_RUNNING') resolve();
-      else reject(error);
-    }
+async function setPassword(auth, audit, password, context = createManagementContext()) {
+  const generated = password === undefined;
+  if (generated) password = generateCredential();
+  contract.password(password);
+  await audit.write('execution.intent', { ...context, operation: 'password.change' });
+  const result = await auth.setPassword(password, audit.serverId);
+  audit.serverId = result.serverId;
+  if (generated) console.error('自动生成的配对密码：' + password);
+  password = undefined;
+  await audit.write('password.changed', { ...context, operation: 'password.change', parameters: { authEpoch: result.authEpoch } });
+  console.error('密码已设置；已有配对已撤销。');
+  return result;
+}
+function listenReady(server) {
+  return new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
+}
+function closeListener(server) {
+  if (!server) return Promise.resolve();
+  return new Promise(resolve => {
+    try { server.close(() => resolve()); if (server.closeAllConnections) server.closeAllConnections(); else if (server.closeActiveConnections) server.closeActiveConnections(); }
+    catch (_) { resolve(); }
   });
 }
-
-function isListeningServer(server) {
-  if (!server) return true;
-  if (server.listening === true) return true;
-  if (typeof server.address !== 'function') return false;
-  try { return server.address() !== null; } catch (_) { return false; }
-}
-
-function waitForListeningServer(server, label) {
-  if (!server || typeof server.once !== 'function' || typeof server.removeListener !== 'function') {
-    return Promise.resolve();
-  }
-  const observable = typeof server.address === 'function' || typeof server.listening === 'boolean';
-  if (!observable || isListeningServer(server)) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const cleanup = () => {
-      server.removeListener('listening', onListening);
-      server.removeListener('error', onError);
-      server.removeListener('close', onClose);
-    };
-    const finish = (callback, value) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      callback(value);
-    };
-    const onListening = () => finish(resolve);
-    const onError = (error) => finish(reject, error);
-    const onClose = () => finish(reject, new Error(`${label} server closed before listening`));
-    server.once('listening', onListening);
-    server.once('error', onError);
-    server.once('close', onClose);
-    if (isListeningServer(server)) onListening();
-  });
-}
-
-function canonicalToMcpUri(uri) {
-  return 'arp://' + arp.canonicalizeUri(uri, { allowRoot: true });
-}
-
-function mcpToCanonicalUri(uri) {
-  const text = String(uri || '');
-  if (!text.startsWith('arp:///') || /[?#]/.test(text)) {
-    throw new Error('MCP resource URI must use arp:/// followed by one canonical ARP path');
-  }
-  return arp.canonicalizeUri(text.slice('arp://'.length), { allowRoot: true });
-}
-
-function createMcpToolDefinitions() {
-  return arp.createToolDefinitions()
-    .filter((definition) => arp.METHODS.includes(definition.name))
-    .map((definition) => {
-      const inputSchema = Object.assign({}, definition.inputSchema, {
-        properties: Object.assign({}, definition.inputSchema.properties, {
-          mcpClientId: {
-            type: 'string',
-            minLength: 1,
-            maxLength: 256,
-            pattern: '\\S',
-            description: '目标 Extension 客户端 ID。连接多个客户端时必须显式传入。',
-          },
-        }),
-      });
-      return Object.assign({}, definition, { inputSchema });
-    });
-}
-
 class PageAgentMCPServer {
   constructor(options = {}) {
-    this.wsPort = options.wsPort !== undefined ? options.wsPort : WS_PORT;
-    this.httpPort = options.httpPort !== undefined ? options.httpPort : HTTP_PORT;
-    this.wsHost = options.wsHost || WS_HOST;
-    this.httpHost = options.httpHost || HTTP_HOST;
-    this.installSignalHandlers = options.installSignalHandlers === true;
-    this._closePromise = null;
-    this._closing = false;
-    this._networkReady = false;
-    this._stdioInput = null;
-    this._stdioEndHandler = null;
-    this.transportSessionId = String(options.sessionId || this.generateId('mcp_session'));
-    this.defaultTransportContext = normalizeTransportContext({
-      sessionId: this.transportSessionId,
-      conversationId: this.transportSessionId,
-    });
-
-    this.toolDefinitions = createMcpToolDefinitions();
-    if (this.toolDefinitions.length !== 6) {
-      throw new Error(`ARP MCP surface must contain exactly 6 resource methods, got ${this.toolDefinitions.length}`);
-    }
-
-    this.server = new Server(
-      { name: 'page-agent-arp', version: SERVER_VERSION },
-      { capabilities: { tools: {}, resources: {} } }
-    );
-    this.wsServer = options.wsServer || new WebSocket.Server({
-      port: this.wsPort,
-      host: this.wsHost,
-      maxPayload: WS_MAX_PAYLOAD_BYTES,
-    });
-    this.extensionWs = null;
-    this.extensionClients = new Map();
-    this.clientCallContext = new AsyncLocalStorage();
-    this.requestBroker = new ExtensionRequestBroker();
-    this.pendingRequests = this.requestBroker.pendingRequests;
-    this.mailConnections = new Map();
-    this.mailQueue = createMailQueue();
-    this.localConnections = new Map();
-
-    this.setupWebSocket();
-    this.setupToolHandlers();
-    this.setupResourceHandlers();
-    this.setupErrorHandling();
-
-    this.httpServer = options.httpServer || createHttpApi({
-      callArp: (method, request, timeoutMs, callOptions) => this.callArp(method, request, timeoutMs, callOptions),
-      withClientTarget: (target, fn, callOptions) => this.withClientTarget(target, fn, callOptions),
-      getExtensionClients: () => this.listExtensionClients(),
-      createCorrelationContext: (hint) => this.createCorrelationContext(hint),
-      handleMcpMessage: (message, requestOptions) => this.handleHttpMcpMessage(message, requestOptions),
-      mcpBearerToken: options.httpMcpBearerToken !== undefined
-        ? options.httpMcpBearerToken
-        : HTTP_MCP_BEARER_TOKEN,
-      port: this.httpPort,
-      host: this.httpHost,
-      allowedOrigins: options.allowedHttpOrigins !== undefined
-        ? options.allowedHttpOrigins
-        : HTTP_CORS_ORIGINS,
-      pollIntervalMs: options.httpPollIntervalMs,
-    });
-    if (this.httpServer && typeof this.httpServer.on === 'function') {
-      this.httpServer.on('error', (error) => {
-        if (!this._closing && this._networkReady) console.error('[HTTP API] Server error:', error);
-      });
-    }
-    this._networkStartup = Promise.all([
-      waitForListeningServer(this.wsServer, 'WebSocket'),
-      waitForListeningServer(this.httpServer, 'HTTP'),
-    ]).then(() => {
-      this._networkReady = true;
-      return null;
-    }, (error) => {
-      if (!this._closing) console.error('[MCP Server] Network startup failed:', error);
-      return error;
-    });
+    this.options = options; this.version = SERVER_VERSION; this.auth = new AuthStore(options.stateDir);
+    this.serverName = contract.serverName(options.serverName ?? (String(process.env.PAGE_AGENT_SERVER_NAME || '').trim() || os.hostname()));
+    this.clients = new Map(); this.sockets = new Map(); this.callContext = new AsyncLocalStorage();
+    this.requestBroker = new ExtensionRequestBroker((socket, body, callback) => this.send(socket, body, callback));
+    this.mailQueue = createMailQueue(); this.mailRequests = new Set(); this.closing = false;
+    this.toolDefinitions = arp.createToolDefinitions().filter(item => arp.METHODS.includes(item.name)).map(item => ({ ...item,
+      inputSchema: { ...item.inputSchema, properties: { ...item.inputSchema.properties,
+        mcpClientId: { type: 'string', minLength: 1, maxLength: 200, description: '访问插件资源时的目标客户端 ID；服务端 /local、/clients 无需填写，也可使用 /clients/{clientId}/arp' } } } }));
   }
-
-  generateId(prefix) {
-    return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-  }
-
-  createCorrelationContext(hint) {
-    const safeHint = String(hint || '').trim();
-    const sessionId = safeHint || this.transportSessionId;
-    return normalizeTransportContext({ sessionId, conversationId: sessionId });
-  }
-
-  setupWebSocket() {
-    this.wsServer.on('connection', (ws, request) => {
-      this.localConnections.set(ws, createLocalConnection(message => {
-        if (ws.readyState === WebSocket.OPEN) {
-          try { ws.send(JSON.stringify(message), () => {}); } catch (_) {}
-        }
-      }));
-      this.mailConnections.set(ws, {
-        origin: String(request && request.headers && request.headers.origin || '').replace(/\/$/, ''),
-        ready: false,
-        active: new Map(),
-        seen: new Set(),
-      });
-      const socketId = this.generateId('socket');
-      const record = this.registerExtensionClient(ws, {
-        clientId: socketId,
-        clientName: socketId,
-        source: 'socket',
-        remoteAddress: request && request.socket ? request.socket.remoteAddress : '',
-      });
-      console.error(`[WebSocket] Extension connected: ${record.clientId}`);
-      ws.on('message', (data) => {
-        try { this.handleExtensionMessage(JSON.parse(data.toString()), ws); }
-        catch (error) { console.error('[WebSocket] Parse error:', error.message); }
-      });
-      ws.on('close', () => {
-        const removed = this.unregisterExtensionClient(ws);
-        console.error('[WebSocket] Extension disconnected' + (removed ? `: ${removed.clientId}` : ''));
-      });
-      ws.on('error', (error) => console.error('[WebSocket] Error:', error.message));
-    });
-    this.wsServer.on('error', (error) => {
-      if (!this._closing && this._networkReady) console.error('[WebSocket] Server error:', error);
-    });
-    console.error(`[WebSocket] ARP/1 transport listening on ws://${this.wsHost}:${this.wsPort}`);
-  }
-
-  normalizeClientInfo(info, fallback = {}) {
-    info = info && typeof info === 'object' ? info : {};
-    const clientId = String(info.clientId || fallback.clientId || this.generateId('socket')).trim();
-    const clientName = String(info.clientName || info.name || fallback.clientName || clientId).trim();
-    return {
-      clientId,
-      clientName,
-      source: info.source || fallback.source || 'extension',
-      protocol: String(info.protocol || fallback.protocol || 'arp/1'),
-      extensionId: String(info.extensionId || '').trim(),
-      extensionName: String(info.extensionName || '').trim(),
-      extensionVersion: String(info.extensionVersion || '').trim(),
-      browser: String(info.browser || '').trim(),
-      profile: String(info.profile || '').trim(),
-      os: String(info.os || '').trim(),
-      language: String(info.language || '').trim(),
-      incognito: info.incognito === true || info.incognitoContext === true,
-      incognitoContext: info.incognito === true || info.incognitoContext === true,
-      incognitoAccess: info.incognitoAccess === true,
-      connectedAt: fallback.connectedAt || Date.now(),
-      lastSeenAt: Date.now(),
-      remoteAddress: String(info.remoteAddress || fallback.remoteAddress || '').trim(),
-    };
-  }
-
-  registerExtensionClient(ws, info) {
-    const previousId = ws.__pageAgentClientId;
-    const previous = previousId ? this.extensionClients.get(previousId) : null;
-    const client = this.normalizeClientInfo(info, Object.assign({}, previous || {}, info || {}));
-    if (previousId && previousId !== client.clientId) this.extensionClients.delete(previousId);
-    const existing = this.extensionClients.get(client.clientId);
-    if (existing && existing.ws !== ws) {
-      this.requestBroker.rejectForSocket(existing.ws, `Extension client replaced: ${client.clientId}`);
-      this.cancelMailForSocket(existing.ws);
-      this.closeLocalConnection(existing.ws);
-      try { existing.ws.close(1000, 'Replaced by a newer ARP connection'); } catch (_) {}
-    }
-    const record = Object.assign({}, existing || {}, client, {
-      ws,
-      connectedAt: existing && existing.ws === ws ? existing.connectedAt : client.connectedAt,
-      lastSeenAt: Date.now(),
-    });
-    ws.__pageAgentClientId = record.clientId;
-    this.extensionClients.set(record.clientId, record);
-    this.extensionWs = this.getOnlyOrFirstExtensionWs();
-    return record;
-  }
-
-  unregisterExtensionClient(ws) {
-    this.cancelMailForSocket(ws);
-    this.closeLocalConnection(ws);
-    let removed = null;
-    for (const [clientId, record] of this.extensionClients.entries()) {
-      if (record.ws !== ws) continue;
-      removed = record;
-      this.extensionClients.delete(clientId);
-    }
-    this.requestBroker.rejectForSocket(ws, removed
-      ? `Extension client disconnected: ${removed.clientId}`
-      : 'Extension client disconnected');
-    this.extensionWs = this.getOnlyOrFirstExtensionWs();
-    return removed;
-  }
-
-  getOnlyOrFirstExtensionWs() {
-    const record = Array.from(this.extensionClients.values())
-      .find((client) => client.ws && client.ws.readyState === WebSocket.OPEN);
-    return record ? record.ws : null;
-  }
-
-  handleExtensionMessage(message, ws) {
-    if (message && (message.type === 'local.call' || message.type === 'local.cancel')) {
-      const connection = this.localConnections.get(ws);
-      if (connection && !this._closing) connection.handle(message);
-      return;
-    }
-    if (message && (message.type === 'mail.send' || message.type === 'mail.cancel')) {
-      this.handleMailMessage(message, ws);
-      return;
-    }
-    if (message && message.type === 'heartbeat') {
-      const clientId = ws && ws.__pageAgentClientId;
-      const record = clientId ? this.extensionClients.get(clientId) : null;
-      if (record) record.lastSeenAt = Date.now();
-      return;
-    }
-    if (message && message.type === 'hello') {
-      const currentId = ws && ws.__pageAgentClientId;
-      const current = currentId ? this.extensionClients.get(currentId) : null;
-      const record = this.registerExtensionClient(ws, Object.assign(
-        {}, current || {}, message.clientInfo || {},
-        { protocol: message.protocol || message.clientInfo && message.clientInfo.protocol || 'arp/1', remoteAddress: current && current.remoteAddress }
-      ));
-      console.error(`[WebSocket] Extension registered: ${record.clientId} (${record.clientName}) protocol=${record.protocol}`);
-      const mailConnection = this.mailConnections.get(ws);
-      if (mailConnection) {
-        mailConnection.ready = /^[a-p]{32}$/.test(record.extensionId)
-          && mailConnection.origin === 'chrome-extension://' + record.extensionId;
-      }
-      const localConnection = this.localConnections.get(ws);
-      if (localConnection) localConnection.configure(
-        !!(mailConnection && mailConnection.ready && message.localToolsEnabled === true), message.localWorkingDirectory);
-      try {
-        ws.send(JSON.stringify({
-          type: 'hello',
-          server: 'page-agent-arp',
-          version: SERVER_VERSION,
-          protocol: 'arp/1',
-          mail: mailConnection && mailConnection.ready ? 'smtp/1' : null,
-          localOperations: mailConnection && mailConnection.ready ? 'local/1' : null,
-          workingDirectory: mailConnection && mailConnection.ready ? process.cwd() : null,
-          clientId: record.clientId,
-          connectedClients: this.listExtensionClients().length,
-        }));
-      } catch (error) {
-        console.error('[WebSocket] Failed to send hello ack:', error.message);
-      }
-      return;
-    }
-    const outcome = this.requestBroker.handleResponse(message, ws);
-    if (outcome === 'wrong-socket') {
-      console.error(`[WebSocket] Ignoring response for request ${message.requestId} from non-target client`);
-    }
-  }
-
-  getCurrentCallContext() {
-    return this.clientCallContext.getStore() || {};
-  }
-
-  closeLocalConnection(ws) {
-    const connection = this.localConnections.get(ws);
-    if (connection) connection.close();
-    this.localConnections.delete(ws);
-  }
-
-  cancelMailForSocket(ws) {
-    const connection = this.mailConnections.get(ws);
-    if (!connection) return;
-    this.mailConnections.delete(ws);
-    for (const controller of connection.active.values()) controller.abort();
-    connection.active.clear();
-    connection.seen.clear();
-  }
-
-  handleMailMessage(message, ws) {
-    const connection = this.mailConnections.get(ws);
-    const requestId = message.requestId;
-    if (typeof requestId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(requestId)) return;
-    const reply = body => {
-      if (ws.readyState !== WebSocket.OPEN) return;
-      try { ws.send(JSON.stringify(Object.assign({ type: 'mail.result', requestId }, body)), () => {}); } catch (_) {}
-    };
-    if (this._closing || !connection || !connection.ready) {
-      reply({ ok: false, error: '邮件发送只允许已完成握手的浏览器插件连接' });
-      return;
-    }
-    if (message.type === 'mail.cancel') {
-      const controller = connection.active.get(requestId);
-      if (controller) controller.abort();
-      return;
-    }
-    // Never submit the same request twice on one connection, including after
-    // completion. Bound the set instead of evicting IDs that could be replayed.
-    if (connection.seen.has(requestId)) return;
-    if (connection.seen.size >= 10000) {
-      reply({ ok: false, error: '当前连接已达到邮件请求总量上限，请重新连接，邮件尚未发送' });
-      return;
-    }
-    connection.seen.add(requestId);
-    const controller = new AbortController();
-    connection.active.set(requestId, controller);
-    this.mailQueue.enqueue(message.payload, { signal: controller.signal }).then(result => {
-      reply({ ok: true, result });
-    }, error => {
-      reply({ ok: false, error: error.message || '邮件发送失败' });
-    }).finally(() => { connection.active.delete(requestId); });
-  }
-
-  async callArp(method, request, timeoutMs = 30000, options = {}) {
-    const current = this.getCurrentCallContext();
-    const client = this.resolveExtensionClient(current.clientSelector);
-    const context = normalizeTransportContext(options.context || current.transportContext || this.defaultTransportContext);
-    return this.requestBroker.call({
-      ws: client.ws,
-      clientId: client.clientId,
-      method,
-      request,
-      context,
-      timeoutMs,
-      signal: options.signal || current.signal || null,
-    });
-  }
-
-  callMcpTool(method, args, options = {}) {
-    const request = Object.assign({}, args || {});
-    const mcpClientId = String(request.mcpClientId || '').trim();
-    delete request.mcpClientId;
-    if (!mcpClientId && this.listExtensionClients().length > 1) {
-      const error = new Error('Multiple Extension clients are connected; pass mcpClientId in this Method Tool call');
-      error.code = ErrorCode.InvalidParams;
-      throw error;
-    }
-    const invoke = () => this.callArp(method, request, MCP_TOOL_TIMEOUT_MS, options);
-    return mcpClientId
-      ? this.withClientTarget({ clientId: mcpClientId }, invoke, options)
-      : invoke();
-  }
-
-  withClientTarget(target, fn, options = {}) {
-    const current = this.getCurrentCallContext();
-    return this.clientCallContext.run({
-      clientSelector: this.normalizeClientSelector(target),
-      transportContext: options.context || current.transportContext || this.defaultTransportContext,
-      signal: options.signal || current.signal || null,
-    }, fn);
-  }
-
-  normalizeSelectorBoolean(value) {
-    if (value === undefined || value === null || value === '') return undefined;
-    if (typeof value === 'boolean') return value;
-    const text = String(value).trim().toLowerCase();
-    if (['1', 'true', 'yes', 'on', 'incognito', 'private'].includes(text)) return true;
-    if (['0', 'false', 'no', 'off', 'regular'].includes(text)) return false;
-    return undefined;
-  }
-
-  normalizeClientSelector(value) {
-    if (!value) return {};
-    if (typeof value === 'string') return value.trim() ? { any: value.trim() } : {};
-    if (typeof value !== 'object') return {};
-    const selector = {
-      any: String(value.any || value.mcpClient || '').trim(),
-      clientId: String(value.clientId || value.mcpClientId || '').trim(),
-      clientName: String(value.clientName || value.mcpClientName || '').trim(),
-      browser: String(value.browser || '').trim(),
-      profile: String(value.profile || '').trim(),
-      extensionId: String(value.extensionId || '').trim(),
-    };
-    const incognito = this.normalizeSelectorBoolean(value.incognito !== undefined
-      ? value.incognito
-      : value.mcpClientIncognito);
-    if (incognito !== undefined) selector.incognito = incognito;
-    Object.keys(selector).forEach((key) => {
-      if (selector[key] === '' || selector[key] === undefined) delete selector[key];
-    });
-    return selector;
-  }
-
-  hasSelector(selector) {
-    return !!(selector && Object.keys(selector).some((key) => selector[key] !== '' && selector[key] !== undefined));
-  }
-
-  clientMatchesSelector(record, selector) {
-    const lower = (value) => String(value || '').toLowerCase();
-    if (selector.clientId && record.clientId !== selector.clientId) return false;
-    if (selector.clientName && lower(record.clientName) !== lower(selector.clientName)) return false;
-    if (selector.browser && lower(record.browser) !== lower(selector.browser)) return false;
-    if (selector.profile && lower(record.profile) !== lower(selector.profile)) return false;
-    if (selector.extensionId && record.extensionId !== selector.extensionId) return false;
-    if (selector.incognito !== undefined && !!record.incognito !== !!selector.incognito) return false;
-    if (selector.any) {
-      const query = lower(selector.any);
-      const values = [record.clientId, record.clientName, record.browser, record.profile, record.extensionId].map(lower);
-      if (!values.some((value) => value === query || value.includes(query))) return false;
-    }
-    return true;
-  }
-
-  resolveExtensionClient(selector) {
-    const clients = Array.from(this.extensionClients.values())
-      .filter((record) => record.ws && record.ws.readyState === WebSocket.OPEN);
-    if (!clients.length) throw new Error('Chrome Extension ARP transport is not connected');
-    const explicit = this.normalizeClientSelector(selector);
-    const effective = this.hasSelector(explicit)
-      ? explicit
-      : this.normalizeClientSelector(DEFAULT_CLIENT_SELECTOR);
-    if (!this.hasSelector(effective)) {
-      if (clients.length === 1) return clients[0];
-      throw new Error('Multiple Extension clients are connected; configure --default-client-id or PAGE_AGENT_DEFAULT_CLIENT_ID');
-    }
-    const matches = clients.filter((record) => this.clientMatchesSelector(record, effective));
-    if (matches.length === 1) return matches[0];
-    if (!matches.length) throw new Error('No Extension client matches the configured default selector');
-    throw new Error('The configured default selector matches multiple Extension clients');
-  }
-
-  listExtensionClients() {
-    const now = Date.now();
-    return Array.from(this.extensionClients.values())
-      .filter((record) => record.ws && record.ws.readyState === WebSocket.OPEN)
-      .map((record) => ({
-        clientId: record.clientId,
-        clientName: record.clientName,
-        protocol: record.protocol,
-        extensionId: record.extensionId,
-        extensionName: record.extensionName,
-        extensionVersion: record.extensionVersion,
-        browser: record.browser,
-        profile: record.profile,
-        os: record.os,
-        language: record.language,
-        incognito: !!record.incognito,
-        connectedAt: record.connectedAt,
-        lastSeenAt: record.lastSeenAt,
-        idleMs: now - Number(record.lastSeenAt || now),
-        remoteAddress: record.remoteAddress,
-        pendingRequestCount: this.requestBroker.countForClient(record.clientId),
-      }));
-  }
-
-  setValidatedRequestHandler(schema, handler) {
-    const method = schema.shape.method.value;
-    const envelopeSchema = RequestSchema.extend({ method: schema.shape.method }).passthrough();
-    this.server.setRequestHandler(envelopeSchema, async (request, extra) => {
-      const parsed = schema.safeParse(request);
-      if (!parsed.success) {
-        const details = parsed.error.issues.slice(0, 3).map((issue) => {
-          const path = issue.path && issue.path.length ? issue.path.join('.') : 'request';
-          return `${path}: ${issue.message}`;
-        }).join('; ');
-        const error = new Error(`Invalid params for ${method}${details ? `: ${details}` : ''}`);
-        error.code = ErrorCode.InvalidParams;
-        throw error;
-      }
-      return handler(parsed.data, extra || {});
-    });
-  }
-
-  localErrorEnvelope(code, message, options = {}) {
-    const error = arp.arpError(code, message, {
-      status: options.status,
-      retryable: options.retryable === true,
-      performed: 'no',
-    });
-    return arp.createErrorResponse(this.generateId('arp_mcp'), error, { performed: 'no' });
-  }
-
-  inlineImageContents(envelope) {
-    const modelContent = envelope && envelope.primary && envelope.primary.data
-      && envelope.primary.data.modelContent;
-    if (!Array.isArray(modelContent)) return [];
-    const seen = new Set();
-    return modelContent.filter((part) => (
-      part && part.type === 'image'
-      && typeof part.data === 'string' && part.data.length > 0
-      && /^image\/[A-Za-z0-9.+-]+$/.test(String(part.mimeType || ''))
-    )).map((part) => {
-      const key = `${part.mimeType}:${part.data.length}:${part.data.slice(0, 32)}`;
-      if (seen.has(key)) return null;
-      seen.add(key);
-      return { type: 'image', data: part.data, mimeType: part.mimeType };
-    }).filter(Boolean);
-  }
-
-  stripInlineImageData(value) {
-    if (Array.isArray(value)) return value.map((item) => this.stripInlineImageData(item));
-    if (!value || typeof value !== 'object') return value;
-    const output = {};
-    Object.keys(value).forEach((key) => {
-      if (key === 'data' && value.type === 'image' && typeof value.data === 'string') return;
-      output[key] = this.stripInlineImageData(value[key]);
-    });
-    if (value.type === 'image' && typeof value.data === 'string') output.inlineData = true;
-    return output;
-  }
-
-  toolResult(envelope) {
-    const isError = !isArpEnvelope(envelope) || Number(envelope.status.code) >= 400;
-    const imageContents = this.inlineImageContents(envelope);
-    const projectedEnvelope = imageContents.length ? this.stripInlineImageData(envelope) : envelope;
-    return {
-      content: [{ type: 'text', text: JSON.stringify(projectedEnvelope, null, 2) }].concat(imageContents),
-      structuredContent: projectedEnvelope,
-      isError,
-    };
-  }
-
-  async handleHttpMcpMessage(message, options = {}) {
-    const method = String(message && message.method || '');
-    const params = message && message.params && typeof message.params === 'object'
-      ? message.params
-      : {};
-    if (method === 'initialize') {
-      const requestedVersion = String(params.protocolVersion || '2025-11-25');
-      const protocolVersion = requestedVersion === '2025-06-18'
-        ? requestedVersion
-        : '2025-11-25';
-      return {
-        protocolVersion,
-        capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'page-agent-arp', version: SERVER_VERSION },
-        instructions: 'Page Agent ARP/1 method tools backed by the connected browser extension.',
-      };
-    }
-    if (method === 'notifications/initialized' || method === 'ping') return {};
-    if (method === 'tools/list') return { tools: this.toolDefinitions };
-    if (method === 'tools/call') {
-      const name = String(params.name || '');
-      if (!arp.METHODS.includes(name)) {
-        const error = new Error(`Unknown ARP method tool: ${name}`);
-        error.code = ErrorCode.InvalidParams;
-        throw error;
-      }
-      const envelope = await this.callMcpTool(name, params.arguments, {
-        signal: options.signal,
-        context: options.context,
-      });
-      return this.toolResult(envelope);
-    }
-    const error = new Error(`Method not found: ${method || '(empty)'}`);
-    error.code = ErrorCode.MethodNotFound;
-    throw error;
-  }
-
-  setupToolHandlers() {
-    this.setValidatedRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: this.toolDefinitions,
-    }));
-
-    this.setValidatedRequestHandler(CallToolRequestSchema, async (request, extra) => {
-      const name = String(request.params.name || '');
-      const args = request.params.arguments || {};
-      if (!arp.METHODS.includes(name)) {
-        return this.toolResult(this.localErrorEnvelope('INVALID_REQUEST', `Unknown ARP method tool: ${name}`));
-      }
-      try {
-        const envelope = await this.callMcpTool(name, args, { signal: extra.signal });
-        return this.toolResult(envelope);
-      } catch (error) {
-        if (error && error.code === ErrorCode.InvalidParams) {
-          return this.toolResult(this.localErrorEnvelope('INVALID_REQUEST', error.message, { status: 400 }));
-        }
-        if (error && error.name !== 'AbortError') {
-          console.error(`[MCP Tool] ${name} transport failed: ${error.message}`);
-        }
-        return this.toolResult(this.localErrorEnvelope(
-          'TEMPORARILY_UNAVAILABLE',
-          `ARP Extension transport failed: ${error.message}`,
-          { status: 503, retryable: true }
-        ));
-      }
-    });
-  }
-
-  setupResourceHandlers() {
-    const rootResource = {
-      uri: canonicalToMcpUri('/'),
-      name: 'ARP/1 resources',
-      description: 'Read to discover registered first-level resources.',
-      mimeType: 'application/json',
-    };
-    this.setValidatedRequestHandler(ListResourcesRequestSchema, async (_request, extra) => {
-      try {
-        const envelope = await this.callArp('OPTIONS', { uri: '/' }, 30000, { signal: extra.signal });
-        const discovered = envelope && envelope.capabilities && Array.isArray(envelope.capabilities.resources)
-          ? envelope.capabilities.resources : [];
-        return {
-          resources: [rootResource].concat(discovered.map((resource) => ({
-            uri: canonicalToMcpUri(resource.href),
-            name: resource.type || resource.relation || resource.href,
-            description: resource.relation ? `ARP relation: ${resource.relation}` : 'Registered ARP resource.',
-            mimeType: 'application/json',
-          }))),
-        };
-      } catch (_) {
-        return { resources: [rootResource] };
-      }
-    });
-    this.setValidatedRequestHandler(ReadResourceRequestSchema, async (request, extra) => {
-      const resourceUri = String(request.params.uri || '');
-      try {
-        const canonicalUri = mcpToCanonicalUri(resourceUri);
-        const namespace = canonicalUri === '/' || canonicalUri === '/page' || canonicalUri === '/browser';
-        const method = namespace ? 'OPTIONS' : 'GET';
-        const envelope = await this.callArp(method, { uri: canonicalUri }, 30000, { signal: extra.signal });
-        const imageContents = this.inlineImageContents(envelope);
-        if (imageContents.length) {
-          return {
-            contents: imageContents.map((image) => ({
-              uri: resourceUri,
-              mimeType: image.mimeType,
-              blob: image.data,
-            })),
-          };
-        }
-        return {
-          contents: [{
-            uri: resourceUri,
-            mimeType: 'application/json',
-            text: JSON.stringify(envelope, null, 2),
-          }],
-        };
-      } catch (error) {
-        const envelope = this.localErrorEnvelope(
-          'UPSTREAM_FAILED',
-          `Failed to read ARP resource ${resourceUri}: ${error.message}`,
-          { status: 502, retryable: true }
-        );
-        return {
-          contents: [{
-            uri: resourceUri,
-            mimeType: 'application/json',
-            text: JSON.stringify(envelope, null, 2),
-          }],
-        };
-      }
-    });
-  }
-
-  setupErrorHandling() {
-    this.server.onerror = (error) => console.error('[MCP Server Error]', error);
-    this.server.onclose = () => {
-      if (this._closing) return;
-      this.close({ skipMcp: true, reason: 'MCP transport closed' }).catch((error) => {
-        console.error('[MCP Server] Failed to close after transport disconnect:', error);
-      });
-    };
-    if (!this.installSignalHandlers) return;
-    this._signalHandler = async () => {
-      try {
-        await this.close({ reason: 'Process signal received' });
-        process.exit(0);
-      } catch (error) {
-        console.error('[MCP Server] Shutdown failed:', error);
-        process.exit(1);
-      }
-    };
-    process.once('SIGINT', this._signalHandler);
-    process.once('SIGTERM', this._signalHandler);
-  }
-
-  async run(transport = new StdioServerTransport()) {
+  async run() {
+    checkNodeVersion();
     try {
-      const startupError = await this._networkStartup;
-      if (startupError) throw startupError;
-      this.transport = transport;
-      await this.server.connect(transport);
-      const input = transport && transport._stdin;
-      if (input && typeof input.once === 'function') {
-        this._stdioInput = input;
-        this._stdioEndHandler = () => {
-          if (this._closing) return;
-          this.close({ reason: 'MCP stdio closed' }).catch((error) => {
-            console.error('[MCP Server] Failed to close after stdio EOF:', error);
-          });
-        };
-        input.once('end', this._stdioEndHandler);
-        input.once('close', this._stdioEndHandler);
-        if (input.readableEnded || input.destroyed) {
-          await this.close({ reason: 'MCP stdio closed' });
-          return;
-        }
+      await this.auth.init();
+      this.releaseProcess = await acquireLock(path.join(this.auth.directory, 'process.lock'), 0);
+      console.error('数据目录：' + this.auth.directory);
+      const state = await this.auth.read(true);
+      this.serverId = state ? state.serverId : randomUUID();
+      this.audit = new AuditLog(this.auth.directory, this.serverId, this.options.auditCommandContent || 'plain', available => this.broadcastStatus(available));
+      await this.audit.init();
+      const environmentPassword = String(process.env.PAGE_AGENT_PAIRING_PASSWORD || '').trim();
+      delete process.env.PAGE_AGENT_PAIRING_PASSWORD;
+      if (!state || this.options.password !== undefined) {
+        let initialPassword = this.options.password;
+        if (!state && initialPassword === undefined && environmentPassword) initialPassword = environmentPassword;
+        const result = await setPassword(this.auth, this.audit, initialPassword);
+        this.serverId = result.serverId;
+        delete this.options.password;
       }
-      console.error('Page Agent ARP/1 MCP Server running');
-      console.error(`WebSocket transport: ws://${this.wsHost}:${this.wsPort}`);
-      console.error('MCP tools: GET POST PUT PATCH DELETE OPTIONS');
+      const httpCredential = await this.auth.ensureHttpBearerToken(this.options.httpMcpBearerToken ?? process.env.PAGE_AGENT_HTTP_BEARER_TOKEN);
+      if (httpCredential.generatedToken) console.error('自动生成的 HTTP MCP Bearer 令牌：' + httpCredential.generatedToken);
+      delete httpCredential.generatedToken;
+      delete this.options.httpMcpBearerToken;
+      this.startupDirectory = await fs.realpath(process.cwd()); this.shell = await discoverBash();
+      this.environment = new EnvironmentInfo(this.serverId, this.shell, () => this.broadcastStatus(this.audit.available)); await this.environment.snapshot(true);
+      const desktop = desktopCapabilities();
+      this.capabilities = { localProtocol: contract.LOCAL, files: ['read', 'write', 'delete', 'grep'],
+        bash: { supported: !!this.shell, executable: this.shell },
+        desktop: { supported: process.platform === 'darwin' || process.platform === 'win32', actions: desktop.supported,
+          reason: process.platform === 'linux' ? 'PLATFORM_UNSUPPORTED' : null, permissionsVerified: false, requirements: desktop.requirements },
+        mail: { supported: true, protocol: 'smtp/1' }, configuration: { ...contract.CONFIGURATION, version: SERVER_VERSION },
+        serverPolicy: 'allow-implemented', policyRevision: 1,
+        environment: { schemaVersion: 1, disk: true, dynamicTtlMs: LIMITS.dynamicTtlMs },
+        execution: { ...LIMITS, cancelAck: true, processTermination: terminationCapability(), cpuHardLimit: false, memoryHardLimit: false },
+        audit: { enabled: true, available: true, commandContent: this.audit.commandContent } };
+      this.execution = new ExecutionControl(this.audit);
+      this.archive = new Archive(this);
+      await this.archive.init();
+      this.serverArp = createServerArp(this); this.httpHandler = new McpHttpHandler(this);
+      const host = this.options.host || process.env.PAGE_AGENT_HOST || '127.0.0.1';
+      const wsHost = this.options.wsHost || process.env.PAGE_AGENT_WS_HOST || host;
+      const httpHost = this.options.httpHost || process.env.PAGE_AGENT_HTTP_HOST || host;
+      const wsPort = this.options.wsPort || Number(process.env.WS_PORT) || 9999;
+      const httpPort = this.options.httpPort || Number(process.env.HTTP_PORT) || 9998;
+      this.wsServer = new WebSocket.Server({ host: wsHost, port: wsPort, maxPayload: encryption.MAX_FRAME_BYTES });
+      const wsReady = listenReady(this.wsServer);
+      this.wsServer.on('connection', (socket, request) => this.accept(socket, request));
+      this.httpServer = createHttpApi({ port: httpPort, host: httpHost,
+        mcpBearerTokenHash: httpCredential.hash,
+        allowedOrigins: this.options.allowedHttpOrigins ?? process.env.PAGE_AGENT_HTTP_CORS_ORIGINS,
+        getExtensionClients: () => this.listExtensionClients(),
+        onAuthenticationFailure: address => {
+          try { this.auth.checkRate(address); } catch (_) { return; }
+          this.auth.failed(address);
+          this.audit.bestEffort('auth.denied', { principal: null, operation: 'http.authenticate', errorReason: 'AUTH_FAILED' });
+        },
+        handleMcpHttp: (...args) => this.httpHandler.handle(...args) });
+      await Promise.all([wsReady, listenReady(this.httpServer)]);
+      this.revokeTimer = setInterval(() => this.checkRevocations(), 1000);
+      if (this.options.installSignalHandlers) {
+        this.signalHandler = () => this.close().then(() => { process.exitCode = 0; }, () => { process.exitCode = 1; });
+        process.once('SIGINT', this.signalHandler); process.once('SIGTERM', this.signalHandler);
+      }
+      console.error(`Page Agent MCP ${SERVER_VERSION} [${this.serverName}]: ws://${wsHost}:${wsPort}, http://${httpHost}:${httpPort}/mcp`);
+    } catch (error) { await this.close().catch(() => {}); throw error; }
+  }
+  send(socket, body, callback) {
+    if (socket.readyState !== WebSocket.OPEN) { if (callback) callback(new Error('Connection closed')); return; }
+    const identity = socket.pageAgentIdentity;
+    const frame = identity ? { ...body, transportProtocol: contract.TRANSPORT, serverId: identity.serverId,
+      clientId: identity.clientId, transportSessionId: identity.transportSessionId, requestId: body.requestId || randomUUID() } : body;
+    const failed = error => { socket.close(1011, 'Send failed'); if (callback) callback(error); };
+    try {
+      const text = JSON.stringify(frame);
+      if (!identity) { socket.send(text, callback); return; }
+      const record = this.sockets.get(socket);
+      if (!record || !record.cipher) throw new Error('Encryption unavailable');
+      record.sendQueue = record.sendQueue.then(async () => {
+        if (socket.readyState !== WebSocket.OPEN) throw new Error('Connection closed');
+        const encrypted = await record.cipher.encrypt(text);
+        if (socket.readyState !== WebSocket.OPEN) throw new Error('Connection closed');
+        socket.send(encrypted, error => { if (error) failed(error); else if (callback) callback(); });
+      }).catch(failed);
+    } catch (error) { failed(error); }
+  }
+  authError(socket, requestId, error) {
+    this.send(socket, { type: 'auth.error', transportProtocol: contract.TRANSPORT, authProtocol: contract.AUTH,
+      ...(requestId && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(requestId) ? { requestId } : {}),
+      code: error.code || 'AUTHENTICATION_REQUIRED', reason: error.reason || 'AUTH_FAILED', retryable: error.retryable === true,
+      ...(error.retryAfterMs ? { retryAfterMs: error.retryAfterMs } : {}) });
+  }
+  accept(socket, request) {
+    if (this.closing || [...this.sockets.values()].filter(item => !item.identity).length >= LIMITS.unauthenticated) { socket.close(1013, 'Authentication capacity reached'); return; }
+    try { this.auth.checkRate(request.socket.remoteAddress || ''); }
+    catch (error) { this.authError(socket, null, error); socket.close(1008, 'Authentication rate limited'); return; }
+    const record = { socket, identity: null, state: 'authenticating', origin: String(request.headers.origin || '').replace(/\/$/, ''),
+      address: request.socket.remoteAddress || '', activeMail: new Map(), activeArp: new Map(), seen: new Set(), processingAuth: false,
+      cipher: null, sendQueue: Promise.resolve(), receiveQueue: Promise.resolve() };
+    this.sockets.set(socket, record);
+    record.authTimer = setTimeout(() => socket.close(1008, 'Authentication timeout'), LIMITS.authTimeoutMs);
+    this.send(socket, { type: 'auth.required', transportProtocol: contract.TRANSPORT, authProtocol: contract.AUTH,
+      pairingVersion: contract.PAIRING, serverId: this.serverId });
+    const auditInvalidFrame = reason => {
+      if (record.local) this.audit.bestEffort('authorization.denied', {
+        ...record.local.context({}), decision: 'deny', errorReason: reason,
+      });
+    };
+    const dispatch = message => this.message(record, message).catch(error => {
+      if (!record.identity) { this.authError(socket, message.requestId, error); socket.close(1008, 'Authentication failed'); }
+      else if (error.reason === 'IDENTITY_MISMATCH' || error.reason === 'CREDENTIAL_REVOKED') { auditInvalidFrame(error.reason); socket.close(1008, error.reason); }
+      else {
+        if (message.type === 'arp.call') {
+          this.audit.bestEffort('authorization.denied', { ...record.local.context(message), decision: 'deny', errorReason: error.reason || 'INVALID_REQUEST' });
+          this.send(record.socket, { type: 'arp.response', requestId: message.requestId, envelope: this.arpFailure(error) }); return;
+        }
+        const type = { 'local.configure': 'local.configured', 'environment.get': 'environment.result', 'local.call': 'local.result', 'mail.send': 'mail.result' }[message.type];
+        this.audit.bestEffort('authorization.denied', { ...record.local.context(message), decision: 'deny', errorReason: error.reason || 'INVALID_REQUEST' });
+        if (!type) { socket.close(1008, 'Invalid control frame'); return; }
+        this.send(socket, { type, requestId: message.requestId, ok: false, error: safeError(error), audit: { recorded: false },
+          ...(type === 'environment.result' ? { scope: message.scope } : {}),
+          ...(type === 'mail.result' ? { receipt: { performed: error.performed || 'no' } } : {}),
+          ...(type === 'local.result' ? { ...contract.resultTarget(message),
+            receipt: { performed: 'no' }, execution: { outcome: 'rejected', startedAt: null, finishedAt: null,
+              durationMs: 0, effectiveTimeoutMs: null, termination: 'not_started', stopReason: null, stopReasonAssurance: null } } : {}) });
+      }
+    });
+    socket.on('message', (data, isBinary) => {
+      record.receiveQueue = record.receiveQueue.then(async () => {
+        if (socket.readyState !== WebSocket.OPEN || record.state === 'disconnected') return;
+        if (isBinary) contract.fail('INVALID_FRAME');
+        const authenticating = !record.identity;
+        if (authenticating && data.length > LIMITS.authBytes) { this.auth.failed(record.address); socket.close(1009, 'Authentication message too large'); return; }
+        let text = data.toString(), message = JSON.parse(text);
+        if (!authenticating) { text = await record.cipher.decrypt(message); message = JSON.parse(text); }
+        if (socket.readyState !== WebSocket.OPEN || record.state === 'disconnected') return;
+        if (!contract.record(message)) contract.fail('INVALID_OBJECT');
+        if (message.type === 'local.configure' && Buffer.byteLength(text) > LIMITS.configureBytes) { auditInvalidFrame('CONFIGURATION_TOO_LARGE'); socket.close(1009, 'Configuration too large'); return; }
+        const work = dispatch(message);
+        // Serialize authentication/decryption only; operations must allow cancellation and nested ARP calls.
+        if (authenticating) await work;
+      }).catch(error => {
+        if (!record.identity) this.auth.failed(record.address);
+        auditInvalidFrame(error.reason || 'INVALID_FRAME'); socket.close(1008, 'Invalid encrypted or authentication frame');
+      });
+    });
+    socket.on('close', () => this.disconnect(record)); socket.on('error', () => {});
+  }
+  async message(record, message) {
+    const { socket } = record;
+    if (!record.identity) {
+      if (record.processingAuth) contract.fail('AUTH_IN_PROGRESS'); record.processingAuth = true;
+      try {
+        const authenticated = await this.auth.authenticate(message, record.origin, record.address, async pairing => {
+          await this.audit.write('execution.intent', { operation: 'pairing.create', requestId: message.requestId,
+            transportSessionId: pairing.transportSessionId, claimedClientId: pairing.clientId,
+            principal: { transport: 'websocket', id: pairing.clientId, clientId: pairing.clientId, pairingId: pairing.pairingId } });
+        });
+        const token = authenticated.token, communicationKey = authenticated.communicationKey;
+        delete authenticated.token; delete authenticated.communicationKey;
+        const cipher = await encryption.create(communicationKey, { ...authenticated, requestId: message.requestId }, false);
+        if (socket.readyState !== WebSocket.OPEN || this.closing) return;
+        const auditContext = { transportSessionId: authenticated.transportSessionId, requestId: message.requestId,
+          principal: { transport: 'websocket', id: authenticated.clientId, clientId: authenticated.clientId, pairingId: authenticated.pairingId } };
+        if (token) await this.audit.write('pairing.created', auditContext);
+        await this.audit.write('auth.succeeded', { ...auditContext, parameters: {
+          address: record.address, clientName: message.clientInfo.clientName, extensionId: message.clientInfo.extensionId,
+          incognito: message.clientInfo.incognito, version: message.clientInfo.version } });
+        await this.auth.assertActive(authenticated);
+        if (socket.readyState !== WebSocket.OPEN || this.closing) return;
+        const previous = this.clients.get(authenticated.clientId);
+        // auth.ok has the authentication schema; bind the common layer afterwards.
+        this.send(socket, { type: 'auth.ok', transportProtocol: contract.TRANSPORT, authProtocol: contract.AUTH,
+          pairingVersion: contract.PAIRING,
+          requestId: message.requestId, serverId: authenticated.serverId, clientId: authenticated.clientId,
+          pairingId: authenticated.pairingId, transportSessionId: authenticated.transportSessionId, ...(token ? { token, communicationKey } : {}) });
+        record.cipher = cipher; record.identity = authenticated; socket.pageAgentIdentity = authenticated;
+        record.clientInfo = message.clientInfo; record.state = 'authenticated'; clearTimeout(record.authTimer);
+        if (previous) {
+          const revoked = previous.identity.pairingId !== authenticated.pairingId;
+          this.disconnect(previous, revoked ? 'grant_revoked' : 'disconnect');
+          previous.socket.close(revoked ? 1008 : 1000, revoked ? 'CREDENTIAL_REVOKED' : 'Authenticated reconnect');
+        }
+        this.clients.set(authenticated.clientId, record);
+        record.local = createLocalConnection({ identity: authenticated, auth: this.auth, audit: this.audit, execution: this.execution,
+          environment: this.environment, capabilities: this.capabilities, startupDirectory: this.startupDirectory, shell: this.shell,
+          seen: record.seen, reply: body => this.send(socket, body), validateParent: (parent, identity) => this.requestBroker.validateParent(parent, identity) });
+      } catch (error) {
+        if (error.reason !== 'AUTH_RATE_LIMITED') await this.audit.bestEffort('auth.denied', { claimedClientId: typeof message.clientId === 'string' ? message.clientId.slice(0, 200) : null, errorReason: error.reason || 'AUTH_FAILED' });
+        throw error;
+      } finally { delete message.password; delete message.token; }
+      return;
+    }
+    contract.frame(message, record.identity);
+    if (message.type === 'arp.call.cancel') { const active = record.activeArp.get(message.requestId); if (active) active.abort('source_cancelled'); return; }
+    if (message.type === 'local.cancel') { await record.local.handle(message); return; }
+    if (message.type === 'mail.cancel') { const active = record.activeMail.get(message.requestId); if (active) active.abort(); return; }
+    if (!['local.call', 'environment.get', 'local.configure'].includes(message.type)) await this.auth.assertActive(record.identity);
+    if (message.type === 'arp.call') { await this.handleArpCall(record, message); return; }
+    if (message.type === 'heartbeat') { record.lastSeenAt = Date.now(); return; }
+    if (message.type === 'arp.result') { this.requestBroker.handleResponse(message, socket); return; }
+    if (message.type === 'hello' || message.type === 'local.configure') {
+      if (record.seen.has(message.requestId) || record.seen.size >= LIMITS.seenRequests) contract.fail('DUPLICATE_REQUEST');
+      record.seen.add(message.requestId);
+    }
+    if (message.type === 'hello') {
+      if (message.clientInfo.clientId !== record.identity.clientId || message.clientInfo.extensionId !== record.clientInfo.extensionId
+        || message.clientInfo.incognito !== record.clientInfo.incognito) contract.fail('IDENTITY_MISMATCH');
+      record.clientInfo = message.clientInfo; record.hello = true;
+      this.send(socket, { type: 'hello', requestId: message.requestId, protocol: 'arp/1', version: SERVER_VERSION,
+        serverName: this.serverName, platform: process.platform, startupWorkingDirectory: this.startupDirectory,
+        capabilities: { ...this.capabilities, audit: { ...this.capabilities.audit, available: this.audit.available } }, environment: this.environment.base }); return;
+    }
+    if (message.type === 'local.configure') {
+      if (!record.hello) contract.fail('HELLO_REQUIRED'); record.state = 'configuring';
+      const version = record.configureVersion = (record.configureVersion || 0) + 1;
+      try {
+        const result = await record.local.configure(message);
+        if (version === record.configureVersion) record.state = 'ready';
+        this.send(socket, { type: 'local.configured', requestId: message.requestId, ok: true, ...result });
+        if (record.state === 'ready') this.archive.connected(record.identity.clientId).catch(error => {
+          console.error('Archive connection: ' + error.message);
+        });
+      } catch (error) { throw error; }
+      return;
+    }
+    if (this.closing || record.state !== 'ready') contract.fail('CONNECTION_NOT_READY', '连接尚未就绪', 'TEMPORARILY_UNAVAILABLE');
+    if (message.type === 'local.call' || message.type === 'environment.get') { await record.local.handle(message); return; }
+    if (message.type === 'mail.send') {
+      const pending = this.mail(record, message); this.mailRequests.add(pending);
+      try { await pending; } finally { this.mailRequests.delete(pending); }
+      return;
+    }
+    contract.fail('UNEXPECTED_FRAME');
+  }
+  async mail(record, message) {
+    const context = { ...record.local.context(message), operation: 'mail.send', parameters: { action: 'send' } };
+    if (record.seen.has(message.requestId)) throw Object.assign(new Error('重复请求，原邮件投递结果不可推断'), {
+      code: 'RESOURCE_CONFLICT', reason: 'DUPLICATE_REQUEST', performed: 'unknown' });
+    if (record.seen.size >= LIMITS.seenRequests) contract.fail('SESSION_REQUEST_LIMIT', '会话请求数量已达上限', 'RESOURCE_BUSY');
+    record.seen.add(message.requestId);
+    const controller = new AbortController(); record.activeMail.set(message.requestId, controller);
+    let result, error, sending = false;
+    try {
+      context.parentAssurance = this.requestBroker.validateParent(message.caller.parentRequest, record.identity) ? 'server_verified'
+        : message.caller.parentRequest ? 'client_asserted' : null;
+      // Reserve the existing bounded mail slot before asynchronous audit/auth
+      // work, so large SMTP payloads cannot accumulate outside that queue.
+      result = await this.mailQueue.enqueue(message.payload, { signal: controller.signal, beforeSend: async signal => {
+        await this.audit.write('execution.intent', context); await this.auth.assertActive(record.identity);
+        if (signal.aborted || this.closing) throw new Error('邮件发送已取消');
+        sending = true;
+      } });
+    } catch (failure) { error = failure; }
+    finally { message.payload = null; record.activeMail.delete(message.requestId); }
+    const receipt = { performed: error ? error.performed || (sending ? 'unknown' : 'no') : 'yes' };
+    const recorded = await this.audit.bestEffort('execution.finished', { ...context, receipt,
+      errorReason: error ? sending && error.performed !== 'no' ? 'MAIL_DELIVERY_UNKNOWN' : error.reason || 'MAIL_NOT_SENT' : null });
+    this.send(record.socket, { type: 'mail.result', requestId: message.requestId, ok: !error,
+      ...(error ? { error: safeError(error) } : { result }), receipt, audit: { recorded } });
+  }
+  disconnect(record, reason = 'disconnect') {
+    record.state = 'disconnected';
+    clearTimeout(record.authTimer); if (record.local) record.local.close(reason);
+    for (const controller of record.activeMail.values()) controller.abort();
+    for (const controller of record.activeArp.values()) controller.abort(reason);
+    this.requestBroker.rejectForSocket(record.socket, 'Extension disconnected; result unknown');
+    if (record.identity && this.clients.get(record.identity.clientId) === record) this.clients.delete(record.identity.clientId);
+    this.sockets.delete(record.socket);
+  }
+  async checkRevocations() {
+    this.auth.reportRateLimit();
+    if (this.checkingRevocations || this.closing) return; this.checkingRevocations = true;
+    try {
+      for (const record of this.clients.values()) {
+        try { await this.auth.assertActive(record.identity); }
+        catch (_) { this.disconnect(record, 'grant_revoked'); record.socket.close(1008, 'CREDENTIAL_REVOKED'); }
+      }
+    } finally { this.checkingRevocations = false; }
+  }
+  broadcastStatus(available) {
+    for (const record of this.clients.values()) this.send(record.socket, { type: 'server.status', audit: { available },
+      environmentRevision: this.environment ? this.environment.revision : 0 });
+  }
+  withClientTarget(target, fn, options = {}) {
+    const current = this.callContext.getStore() || {};
+    return this.callContext.run({ ...current, ...options, clientSelector: target }, fn);
+  }
+  resolveExtensionClient(selector) {
+    if (!selector || typeof selector.clientId !== 'string' || !selector.clientId) contract.fail('TARGET_REQUIRED', '必须明确指定目标扩展 ID');
+    const client = this.clients.get(selector.clientId);
+    if (!client || client.state !== 'ready' || client.socket.readyState !== WebSocket.OPEN) contract.fail('CONNECTION_NOT_READY', '目标扩展未就绪', 'TEMPORARILY_UNAVAILABLE');
+    return client;
+  }
+  listExtensionClients() {
+    return [...this.clients.values()].map(item => ({ ...item.clientInfo, state: item.state, clientId: item.identity.clientId,
+      lastSeenAt: item.lastSeenAt || null, pendingRequestCount: this.requestBroker.countForClient(item.identity.clientId) }));
+  }
+  arpFailure(error) {
+    return arp.createErrorResponse(randomUUID(), arp.arpError(error.code || 'UPSTREAM_FAILED', error.message,
+      { performed: error.performed || 'no', retryable: false, details: { ...(error.details || {}), reason: error.reason || error.code } }));
+  }
+  async handleArpCall(record, message) {
+    if (record.state !== 'ready') contract.fail('CONNECTION_NOT_READY', '来源客户端尚未就绪', 'TEMPORARILY_UNAVAILABLE');
+    if (record.seen.has(message.requestId) || record.seen.size >= LIMITS.seenRequests) contract.fail('DUPLICATE_REQUEST');
+    record.seen.add(message.requestId);
+    if (record.activeArp.size >= LIMITS.httpSessionActive) contract.fail('ARP_BUSY', '客户端转发槽已满', 'RESOURCE_BUSY');
+    const controller = new AbortController(); const lifecycle = { pending: new Set() };
+    record.activeArp.set(message.requestId, controller);
+    const options = { sourceIdentity: record.identity, signal: controller.signal, lifecycle,
+      context: { sessionId: record.identity.transportSessionId, conversationId: message.caller.conversationId || record.identity.transportSessionId,
+        parentRequest: { transportSessionId: record.identity.transportSessionId, requestId: message.requestId } } };
+    try {
+      if (!this.audit.available) throw auditUnavailable();
+      if (message.method !== 'GET' || !this.serverArp.owns(message.method, message.request)) {
+        await this.audit.write('request.received', { ...record.local.context(message), operation: 'arp.call',
+          parameters: { method: message.method, ...this.audit.parameters('arp', { uri: message.request.uri }) } });
+      }
+      const envelope = await this.callArp(message.method, message.request, 180000, options);
+      this.send(record.socket, { type: 'arp.response', requestId: message.requestId, envelope });
     } catch (error) {
-      try { await this.close({ reason: 'MCP startup failed' }); }
-      catch (closeError) { console.error('[MCP Server] Failed to clean up:', closeError); }
+      this.send(record.socket, { type: 'arp.response', requestId: message.requestId, envelope: this.arpFailure(error) });
+    } finally {
+      Promise.allSettled([...lifecycle.pending]).then(() => record.activeArp.delete(message.requestId));
+    }
+  }
+  async callArp(method, request, timeoutMs = 30000, options = {}) {
+    const current = this.callContext.getStore() || {};
+    options = { ...current, ...options };
+    if (options.sourceIdentity) {
+      await this.auth.assertActive(options.sourceIdentity);
+      const source = this.resolveExtensionClient({ clientId: options.sourceIdentity.clientId });
+      if (source.identity.transportSessionId !== options.sourceIdentity.transportSessionId) contract.fail('CONNECTION_NOT_READY');
+    }
+    if (this.serverArp.owns(method, request)) return this.serverArp.dispatch(method, request, options);
+    if (options.sourceIdentity) contract.fail('TARGET_REQUIRED', '请通过 /clients/{clientId}/arp 指定目标客户端');
+    return this.forwardArp(options.target || current.clientSelector && current.clientSelector.clientId, method, request, timeoutMs, options);
+  }
+  async forwardArp(targetClientId, method, request, timeoutMs = 30000, options = {}) {
+    const current = this.callContext.getStore() || {};
+    const context = normalizeTransportContext(options.context || current.context);
+    const parent = context.parentRequest || { transportSessionId: context.sessionId, requestId: randomUUID() };
+    context.parentRequest = parent;
+    const auditContext = { ...parent, parentRequest: null, operation: 'arp.' + method,
+      principal: options.sourceIdentity ? { transport: 'websocket', id: options.sourceIdentity.clientId,
+        clientId: options.sourceIdentity.clientId, pairingId: options.sourceIdentity.pairingId }
+        : options.systemTask ? { transport: 'system', id: 'archive', clientId: null, pairingId: null }
+          : { transport: 'http', id: 'http:operator', clientId: null, pairingId: null },
+      caller: { kind: 'external', actorId: options.sourceIdentity ? options.sourceIdentity.clientId : options.systemTask ? 'archive' : 'http:operator', conversationId: context.conversationId, runId: null },
+      callerAssurance: 'server_verified', executor: { ...this.environment.base.executor, pid: null },
+      decision: 'allow', ruleIds: ['session.authenticated', 'target.current'], policyRevision: 1, grantRevision: null,
+      parameters: { ...this.audit.parameters('arp', { uri: request.uri }),
+        targetClientId: typeof targetClientId === 'string' ? targetClientId.slice(0, 200) : null,
+        ...(options.rpcRequestId !== undefined ? { rpcRequestId: options.rpcRequestId } : {}) } };
+    let auditedFailure = false;
+    try {
+      if (!this.audit.available) throw auditUnavailable();
+      if (options.sourceIdentity && targetClientId === options.sourceIdentity.clientId) contract.fail('SELF_CALL_FORBIDDEN', '不能通过服务端调用自己', 'FORBIDDEN');
+      if (options.sourceIdentity) await this.auth.assertActive(options.sourceIdentity);
+      const selector = { clientId: targetClientId };
+      const client = this.resolveExtensionClient(selector);
+      auditContext.parameters.targetClientId = client.identity.clientId;
+      auditContext.ruleIds.push('credential.active');
+      // Configuration operations record their own intent and result; discovery is read-only polling.
+      if (!options.systemTask) await this.audit.write('execution.intent', auditContext);
+      await this.auth.assertActive(client.identity);
+      if (options.sourceIdentity) {
+        await this.auth.assertActive(options.sourceIdentity);
+        const source = this.resolveExtensionClient({ clientId: options.sourceIdentity.clientId });
+        if (source.identity.transportSessionId !== options.sourceIdentity.transportSessionId) contract.fail('CONNECTION_NOT_READY');
+      }
+      if (this.resolveExtensionClient(selector) !== client) contract.fail('CONNECTION_NOT_READY', '目标连接会话已变化', 'TEMPORARILY_UNAVAILABLE');
+      const envelope = await this.requestBroker.call({ ws: client.socket, clientId: client.identity.clientId, method, request, context, timeoutMs,
+        principal: { id: auditContext.principal.id, transport: auditContext.principal.transport },
+        signal: options.signal || current.signal, lifecycle: options.lifecycle || current.lifecycle,
+        onSettled: (result, error) => {
+          auditedFailure = !!error;
+          if (options.systemTask) return;
+          return this.audit.bestEffort(error ? 'execution.unconfirmed' : 'execution.finished', { ...auditContext, parameters: undefined,
+            receipt: result && result.receipt || { performed: 'unknown' }, errorReason: error ? 'RESULT_UNKNOWN' : null });
+        } });
+      if (!this.audit.available) envelope.warnings = (envelope.warnings || []).concat({ code: 'AUDIT_UNAVAILABLE', message: '服务端审计不可用', audit: { recorded: false } });
+      return envelope;
+    } catch (error) {
+      if (!auditedFailure && !options.systemTask) {
+        const denied = { ...auditContext, decision: 'deny', errorReason: error.reason || error.code || 'FORWARD_REJECTED', receipt: { performed: 'no' } };
+        await this.audit.bestEffort('execution.finished', denied);
+      }
       throw error;
     }
   }
-
-  close(options = {}) {
-    if (this._closePromise) return this._closePromise;
-    this._closing = true;
-    this.mailQueue.close();
-    for (const socket of this.localConnections.keys()) this.closeLocalConnection(socket);
-    for (const socket of this.mailConnections.keys()) this.cancelMailForSocket(socket);
-    this.requestBroker.close(options.reason || 'MCP server closed');
-    if (this._stdioInput && this._stdioEndHandler) {
-      this._stdioInput.removeListener('end', this._stdioEndHandler);
-      this._stdioInput.removeListener('close', this._stdioEndHandler);
-    }
-    if (this._signalHandler) {
-      process.removeListener('SIGINT', this._signalHandler);
-      process.removeListener('SIGTERM', this._signalHandler);
-    }
-    for (const record of this.extensionClients.values()) {
-      const socket = record && record.ws;
-      if (!socket) continue;
+  callMcpTool(method, args, options = {}) {
+    const request = { ...args }; const clientId = request.mcpClientId; delete request.mcpClientId;
+    return this.withClientTarget({ clientId }, () => this.callArp(method, request, 180000, options), options);
+  }
+  inlineImageContents(envelope) {
+    const parts = envelope && envelope.primary && envelope.primary.data && envelope.primary.data.modelContent;
+    return Array.isArray(parts) ? parts.filter(part => part && part.type === 'image' && typeof part.data === 'string' && /^image\/[A-Za-z0-9.+-]+$/.test(part.mimeType)) : [];
+  }
+  stripInlineImageData(value) {
+    if (Array.isArray(value)) return value.map(item => this.stripInlineImageData(item));
+    if (!value || typeof value !== 'object') return value;
+    const output = Object.create(null);
+    for (const key of Object.keys(value)) if (!(key === 'data' && value.type === 'image')) output[key] = this.stripInlineImageData(value[key]);
+    if (value.type === 'image' && value.data) output.inlineData = true; return output;
+  }
+  toolResult(envelope) {
+    const images = this.inlineImageContents(envelope); const projected = images.length ? this.stripInlineImageData(envelope) : envelope;
+    return { content: [{ type: 'text', text: JSON.stringify(projected) }].concat(images), structuredContent: projected,
+      isError: !isArpEnvelope(envelope) || envelope.status.code >= 400 };
+  }
+  close() {
+    if (this.closePromise) return this.closePromise; this.closing = true;
+    this.closePromise = (async () => {
+      const deadline = setTimeout(() => { console.error('Shutdown unconfirmed'); process.exit(1); }, 10000); deadline.unref();
+      let settled = false;
       try {
-        if (typeof socket.terminate === 'function') socket.terminate();
-        else if (typeof socket.close === 'function') socket.close(1001, 'MCP server shutting down');
-      } catch (_) {}
-    }
-    this.extensionClients.clear();
-    this.extensionWs = null;
-    this._closePromise = Promise.resolve().then(() => Promise.all([
-      options.skipMcp ? Promise.resolve() : this.server.close(),
-      closeListeningServer(this.httpServer),
-      closeListeningServer(this.wsServer),
-    ])).then(() => {});
-    return this._closePromise;
+        clearInterval(this.revokeTimer); if (this.archive) this.archive.close();
+        if (this.httpHandler) this.httpHandler.close(); this.mailQueue.close();
+        for (const record of [...this.sockets.values()]) { this.disconnect(record, 'shutdown'); record.socket.terminate(); }
+        if (this.wsServer) for (const socket of this.wsServer.clients) socket.terminate();
+        this.requestBroker.close('Server shutdown');
+        const [stopped] = await Promise.all([
+          this.execution ? this.execution.close() : Promise.resolve(true),
+          Promise.allSettled([...this.mailRequests]),
+          this.archive ? this.archive.drain() : Promise.resolve(),
+        ]);
+        await Promise.all([closeListener(this.wsServer), closeListener(this.httpServer)]);
+        if (this.audit) await this.audit.close();
+        if (!stopped) throw new Error('Execution termination unconfirmed');
+        if (this.releaseProcess) { await this.releaseProcess(); this.releaseProcess = null; }
+        settled = true;
+      } finally { if (settled) clearTimeout(deadline); if (this.signalHandler) { process.removeListener('SIGINT', this.signalHandler); process.removeListener('SIGTERM', this.signalHandler); } }
+    })(); return this.closePromise;
   }
 }
-
-if (require.main === module) {
-  const server = new PageAgentMCPServer({ installSignalHandlers: true });
-  server.run().catch(async (error) => {
-    console.error(error);
-    try { await server.close({ reason: 'MCP startup failed' }); } catch (_) {}
-    process.exitCode = 1;
-  });
+async function main() {
+  checkNodeVersion(); const { options, positional } = parseCliArgs(process.argv.slice(2));
+  if (!positional.length) { const server = new PageAgentMCPServer({ ...options, installSignalHandlers: true }); await server.run(); return; }
+  const auth = new AuthStore(options.stateDir); await auth.init(); const state = await auth.read(true);
+  const audit = new AuditLog(auth.directory, state ? state.serverId : randomUUID(), options.auditCommandContent || 'plain');
+  const managementContext = createManagementContext();
+  const revoking = positional.slice(0, 3).join(' ') === 'auth pairings revoke';
+  try { await audit.init(false); } catch (error) { if (!revoking) throw error; console.error('审计不可用，继续撤销配对。'); }
+  try {
+    const command = positional.slice(0, 3).join(' ');
+    if (positional[1] === 'set-password') {
+      await setPassword(auth, audit, options.password, managementContext);
+      delete options.password;
+    } else if (command === 'auth pairings list') {
+      await audit.bestEffort('request.received', { ...managementContext, operation: 'pairings.list' });
+      console.error(JSON.stringify(await auth.list(), null, 2));
+    }
+    else {
+      await audit.bestEffort('execution.intent', { ...managementContext, operation: 'pairing.revoke' });
+      const result = await auth.revoke(positional[3]);
+      await audit.bestEffort('pairing.revoked', { ...managementContext, operation: 'pairing.revoke', parameters: result }); console.error('配对已撤销。');
+    }
+  } finally { await audit.close(); }
 }
-
+if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1; });
 module.exports = PageAgentMCPServer;
 module.exports.canonicalToMcpUri = canonicalToMcpUri;
 module.exports.mcpToCanonicalUri = mcpToCanonicalUri;

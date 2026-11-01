@@ -22,8 +22,6 @@ HTTP 方法 + canonical resource path + 可选 query + Runtime 前置条件
 
 ## 资源路由
 
-当前注册的资源域包括：
-
 ```text
 /page                 页面读取与交互
 /browser              Tab、Window、下载和 CDP
@@ -43,16 +41,19 @@ HTTP 方法 + canonical resource path + 可选 query + Runtime 前置条件
 /assistants           Assistant 配置
 /node-types           Flow 节点目录
 /model-services       模型服务
-/connections          外部连接
+/connections          MCP 服务端连接、目录授权与客户端通信
 /mcp-servers           外部 MCP 服务器和工具
 /mcp-calls             MCP 调用记录
-/local                本地文件与命令
+/local                本地文件、命令、桌面及环境查询
+/utilities            离线计算工具
 /system-settings      系统设置
 /mail-settings        邮件设置与发送
 /config               扩展配置
 ```
 
 完整路径目录由 `ResourceRegistry` 在运行时按权限和连接状态生成。资源 ID 是查询返回的不透明字符串。
+
+上述为扩展内资源目录。服务端本地能力与客户端转发入口见 [MCP 服务](./Page-Agent-11-MCP服务.md)。
 
 ## URI
 
@@ -118,7 +119,7 @@ POST、PUT、PATCH、DELETE 均接受 `preconditions` 和 `idempotencyKey`。
 
 ## 响应 Envelope
 
-ARP 完整响应使用统一外壳；模型 GET 默认可返回路由声明的内容，设置 `responseMode: "full"` 可取得完整响应：
+ARP 完整响应使用统一外壳。模型 GET 默认可返回路由声明的内容；设置 `responseMode: "full"` 获取完整响应：
 
 ```json
 {
@@ -136,10 +137,9 @@ ARP 完整响应使用统一外壳；模型 GET 默认可返回路由声明的�
 }
 ```
 
-写操作和页面动作的 `receipt.performed` 为 `yes`、`no` 或 `unknown`。
-`unknown` 表示请求可能已经产生副作用，需先查询实际状态。
+`receipt.performed` 表示副作用状态：`yes` 已产生、`no` 未产生、`unknown` 无法确认。请求完成状态由响应和回执共同描述。
 
-异步操作还返回 `operationUri`、状态和 `retryAfterMs`。
+ARP 转发保留目标响应状态和回执。异步操作还返回 `operationUri`、状态和 `retryAfterMs`。
 
 错误包含结构化 `code`、`retryable` 和 `details`。
 
@@ -155,6 +155,8 @@ Assistant resourcePolicy
 ```
 
 模型请求不能声明权限。权限不足返回 `403 FORBIDDEN`。
+
+不同入口可用的资源和方法由可信上下文限制，MCP 的调用范围见 [MCP HTTP API](./Page-Agent-11-MCP服务.md#http-api)。
 
 写操作按路由要求在 `preconditions.ifMatch` 中携带读取到的 ETag；缺失返回 `428`，不匹配返回 `412`。
 
@@ -182,13 +184,15 @@ POST /page/javascript-executions
 动作参数使用 canonical locator；执行前由页面引擎在当前 document 重新解析。
 定位失效返回 `TARGET_NOT_FOUND` 或 `TARGET_STALE`，不会静默替换相似元素。
 
-页面读取、动作和验证分别由 `PagePerceptionEngine`、`PageActionEngine`、`PageVerificationEngine` 负责。
+`PagePerceptionEngine` 读取页面，`PageActionEngine` 执行动作并记录事实，`PageVerificationEngine` 验证结果并生成回执。
+
+标签页创建、激活和关闭按浏览器返回结果确认；页面加载和业务条件单独验证。
 
 导航会使旧文档的元素定位失效，Runtime 不自动读取新页面或重放动作。CDP lease 按 generation 持有，在 generation 终态统一释放。
 
 ## Conversation 与 Recording
 
-对话运行使用：
+创建话题、发送消息、读取事件或取消生成：
 
 ```text
 POST   /conversations

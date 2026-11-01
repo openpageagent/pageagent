@@ -335,7 +335,17 @@
         });
       });
     }
-    function touch(appId) { return tx(['app_meta'], 'readwrite', function (t) { t.get('app_meta', appId, function (meta) { if (meta) { meta.lastUsedAt = Date.now(); t.store('app_meta').put(meta); } }); }); }
+    function touch(appId, countOpen) {
+      return tx(['app_meta'], 'readwrite', function (t) {
+        t.get('app_meta', appId, function (meta) {
+          if (!meta) return;
+          meta.lastUsedAt = Date.now();
+          if (countOpen) meta.openCount = (Number.isSafeInteger(meta.openCount) ? meta.openCount : 0) + 1;
+          t.store('app_meta').put(meta);
+          t.result({ lastUsedAt: meta.lastUsedAt, openCount: meta.openCount || 0 });
+        });
+      });
+    }
     async function putAsset(appId, expected, name, blob) {
       if (!/^[A-Za-z0-9_.-]+$/.test(name) || name.includes('..') || !(blob instanceof Blob)) throw C.error('SCHEMA_VALIDATION_FAILED', '资源必须是带简单文件名的 Blob');
       var revision = C.revision();

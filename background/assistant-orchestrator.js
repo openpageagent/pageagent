@@ -293,6 +293,7 @@
       var commandId = createId('assistant_command');
       var instanceId = 'flow-assistant:' + text(input.flowId || input.nodeId || conversationId).slice(0, 420);
       var surface = trustedSurface(instanceId);
+      if (input.localCallerContext) surface.localCallerContext = clone(input.localCallerContext);
       var rawFlowId = text(input.flowId).replace(/^user:/, '');
       var tabId = integer(input.tabId, 0, 0, Number.MAX_SAFE_INTEGER);
       var readableSegment = function (value) { return Array.from(String(value || '')).map(function (character) {

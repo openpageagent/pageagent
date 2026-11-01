@@ -11,6 +11,12 @@
     'background/floating-conversation-wiring.js',
     'background/page-conversation-wiring.js',
     'shared/utils.js',
+    'shared/mcp-contract.js',
+    'shared/server-info-description.js',
+    'shared/websocket-encryption.js',
+    'background/mcp-connection-store.js',
+    'background/builtin-connection-loader.js',
+    'background/archive.js',
     'shared/config-migration.js',
     'shared/schedule-utils.js',
     'shared/sync-event-stream.js',
@@ -193,8 +199,8 @@
   globalThis.PageAutomationUserAgent = globalThis.UserAgentRuntime.create(chrome, {
     prepareRequest: function () { return proxyManager.sync(); },
   });
-  var mailClient = globalThis.MailClient.create(chrome, function () {
-    return mcpRuntime && mcpRuntime.getClient();
+  var mailClient = globalThis.MailClient.create(chrome, function (connectionId) {
+    return mcpRuntime && mcpRuntime.getClient(connectionId);
   });
   var SessionFloatingMessages = globalThis.PageAutomationSessionFloatingMessageContract;
   if (!SessionFloatingMessages || SessionFloatingMessages.API_VERSION !== 1) throw new Error('session/floating message contract 未加载');
@@ -522,6 +528,7 @@
 
   // 执行节点的包装函数（供 message router 和 auto run 使用）
   function executeNode(nodeId, state) {
+    var blocked = configurationBusyError(); if (blocked) return Promise.reject(blocked);
     if (!stepRegistry) buildStepRegistry();
     return stepRegistry.executeNode(nodeId, state);
   }
@@ -1335,6 +1342,7 @@
   });
 
   function runFlowGroup(flowGroupId, opts) {
+    var blocked = configurationBusyError(); if (blocked) return Promise.reject(blocked);
     return flowGroupController.runFlowGroup(flowGroupId, opts);
   }
 
@@ -1350,6 +1358,7 @@
     var configInput = cloneConfigValue(rawConfig || {});
     return Promise.resolve(configReady).then(function () {
       return configRuntimeCoordinator.update(function () {
+        var blocked = configurationBusyError(false); if (blocked) throw blocked;
         var config = sanitizeConfigForStorage(configInput);
         return configStore.saveConfig(config);
       });
@@ -1409,6 +1418,7 @@
     var mutation = sanitizeMutationPayload(payload);
     return Promise.resolve(configReady).then(function () {
       return configRuntimeCoordinator.update(function () {
+        var blocked = configurationBusyError(false); if (blocked) throw blocked;
         assertMutableConfigTarget(mutation);
         if (mutation.op === 'upsert' && mutation.section === 'schedules') validateScheduleConfigItem(mutation.item);
         return configStore.mutate(mutation);
@@ -1746,25 +1756,20 @@
     return normalizeRunTabMode(step && step.runTabMode, getConfiguredFlowRunTabMode(flowId, fallback || DEFAULT_RUN_TAB_MODE));
   }
 
-  var MCP_ENABLED_STORAGE_KEY = INCOGNITO_CONTEXT ? 'mcpEnabledIncognito' : 'mcpEnabled';
-  var MCP_URL_STORAGE_KEY = INCOGNITO_CONTEXT ? 'mcpUrlIncognito' : 'mcpUrl';
-  var MCP_CLIENT_ID_STORAGE_KEY = INCOGNITO_CONTEXT ? 'mcpClientIdIncognito' : 'mcpClientId';
-  var MCP_CLIENT_NAME_STORAGE_KEY = INCOGNITO_CONTEXT ? 'mcpClientNameIncognito' : 'mcpClientName';
-  var MCP_RUN_TAB_MODE_STORAGE_KEY = INCOGNITO_CONTEXT ? 'mcpRunTabModeIncognito' : 'mcpRunTabMode';
-  var MCP_LOCAL_TOOLS_STORAGE_KEY = INCOGNITO_CONTEXT ? 'mcpLocalToolsEnabledIncognito' : 'mcpLocalToolsEnabled';
-  var MCP_LOCAL_DIRECTORY_STORAGE_KEY = INCOGNITO_CONTEXT ? 'mcpLocalWorkingDirectoryIncognito' : 'mcpLocalWorkingDirectory';
-  var mcpRunTabMode = DEFAULT_RUN_TAB_MODE;
-  chrome.storage.local.get([MCP_RUN_TAB_MODE_STORAGE_KEY], function (res) {
-    var error = chrome.runtime.lastError;
-    if (error) {
-      console.error(LOG_PREFIX, '读取 MCP 页面模式失败:', error.message);
-      return;
-    }
-    mcpRunTabMode = normalizeRunTabMode(res && res[MCP_RUN_TAB_MODE_STORAGE_KEY], DEFAULT_RUN_TAB_MODE);
-  });
-  var mcpTabAccessManager = McpTabAccess.createMcpTabAccessManager({
+  function createMcpTabManager(initialMode, isolated) {
+    var localMode = initialMode || DEFAULT_RUN_TAB_MODE;
+    var localState = {};
+    var connectionTabs = isolated ? TabRuntime.createTabRuntime({
+      chrome: chrome, getState: function () { return localState; },
+      setState: function (patch) { localState = Object.assign({}, localState, patch); },
+      addLog: loggingStatus.addLog,
+      resolveCanonicalSource: function (source) { return sourceRegistry.resolveCanonicalSource(source); },
+      matchesSourceUrlFamily: function (source, url) { return sourceRegistry.matchesSourceUrlFamily(source, url); },
+      getPageAutomation: function () { return pageAutomation; },
+    }) : tabRuntime;
+    return McpTabAccess.createMcpTabAccessManager({
     chrome: chrome,
-    tabRuntime: tabRuntime,
+    tabRuntime: connectionTabs,
     pageAutomation: pageAutomation,
     getConfig: function () { return configCache; },
     addLog: loggingStatus.addLog,
@@ -1777,9 +1782,22 @@
     RUN_TAB_MODE_FIXED_CURRENT: RUN_TAB_MODE_FIXED_CURRENT,
     RUN_TAB_MODE_FIXED_NEW: RUN_TAB_MODE_FIXED_NEW,
     DEFAULT_RUN_TAB_MODE: DEFAULT_RUN_TAB_MODE,
-    getInitialRunTabMode: function () { return mcpRunTabMode; },
-    onRunTabModeChanged: function (mode) { mcpRunTabMode = mode; },
-  });
+    getInitialRunTabMode: function () { return localMode; },
+    onRunTabModeChanged: function (mode) { localMode = mode; },
+    });
+  }
+  var mcpTabAccessManager = createMcpTabManager();
+  var mcpTabManagers = new Map();
+  function mcpTabManagerFor(context) {
+    if (!context || !context.sourceConnectionId) return mcpTabAccessManager;
+    var mode = normalizeRunTabMode(context.runTabMode, DEFAULT_RUN_TAB_MODE);
+    var entry = mcpTabManagers.get(context.sourceConnectionId);
+    if (!entry || entry.runTabMode !== mode) {
+      entry = { runTabMode: mode, manager: createMcpTabManager(mode, true) };
+      mcpTabManagers.set(context.sourceConnectionId, entry);
+    }
+    return entry.manager;
+  }
 
   var CONFIG_SYNC_SECTIONS = ['pages', 'flows', 'flowGroups', 'scripts', 'schedules', 'urlTriggers'];
   var CONFIG_SYNC_RESOURCES = {
@@ -1928,20 +1946,6 @@
     }
     if (area === 'local' && changes[configStore.RUNS_KEY]) {
       rebuildRunInputCache(changes[configStore.RUNS_KEY].newValue || []);
-    }
-    if (area === 'local' && changes[MCP_RUN_TAB_MODE_STORAGE_KEY]) {
-      mcpRunTabMode = normalizeRunTabMode(changes[MCP_RUN_TAB_MODE_STORAGE_KEY].newValue, DEFAULT_RUN_TAB_MODE);
-      mcpTabAccessManager.clearFixedTabIfModeNotFixed(mcpRunTabMode);
-    }
-    if (area === 'local' && (
-      changes[MCP_ENABLED_STORAGE_KEY]
-      || changes[MCP_URL_STORAGE_KEY]
-      || changes[MCP_CLIENT_ID_STORAGE_KEY]
-      || changes[MCP_CLIENT_NAME_STORAGE_KEY]
-      || changes[MCP_LOCAL_TOOLS_STORAGE_KEY]
-      || changes[MCP_LOCAL_DIRECTORY_STORAGE_KEY]
-    )) {
-      setTimeout(initMCPClient, 0);
     }
   });
 
@@ -2343,6 +2347,7 @@
 
 
   var runSessionFactory = RunSession.createRunSessionFactory({
+    resolveLocalTarget: function () { return mcpRuntime.target.apply(mcpRuntime, arguments); },
     chrome: chrome,
     tabRuntime: TabRuntime,
     modelClient: ModelClient,
@@ -2398,6 +2403,7 @@
   runCommandService = RunCommandService.createRunCommandService({
     registry: runSessionRegistry,
     createRunSession: function (flowId, options) {
+      var blocked = configurationBusyError(); if (blocked) throw blocked;
       return runSessionFactory.create(flowId, options || {});
     },
     stopRunSession: function (session) {
@@ -2498,157 +2504,17 @@
     },
   });
 
-  var LOCAL_MCP_CONNECTION_ID = INCOGNITO_CONTEXT
-    ? 'local-mcp-incognito'
-    : 'local-mcp';
-
-  function localMcpStorageGet() {
-    var keys = [
-      MCP_ENABLED_STORAGE_KEY, MCP_URL_STORAGE_KEY,
-      MCP_CLIENT_ID_STORAGE_KEY, MCP_CLIENT_NAME_STORAGE_KEY,
-      MCP_RUN_TAB_MODE_STORAGE_KEY,
-      MCP_LOCAL_TOOLS_STORAGE_KEY,
-      MCP_LOCAL_DIRECTORY_STORAGE_KEY,
-    ];
-    return new Promise(function (resolve, reject) {
-      chrome.storage.local.get(keys, function (stored) {
-        var error = chrome.runtime && chrome.runtime.lastError;
-        if (error) reject(new Error(error.message));
-        else resolve(stored || {});
-      });
-    });
-  }
-
-  function localMcpStorageSet(values) {
-    return new Promise(function (resolve, reject) {
-      chrome.storage.local.set(values, function () {
-        var error = chrome.runtime && chrome.runtime.lastError;
-        if (error) reject(new Error(error.message));
-        else resolve(values);
-      });
-    });
-  }
-
-  function assertLocalMcpConnectionId(connectionId) {
-    if (String(connectionId || '') !== LOCAL_MCP_CONNECTION_ID) {
-      throw new Error('MCP Connection does not exist: ' + String(connectionId || ''));
-    }
-  }
-
-  function redactedLocalMcpUrl(value) {
-    try {
-      var url = new URL(String(value || 'ws://127.0.0.1:9999'));
-      url.username = '';
-      url.password = '';
-      return url.toString();
-    } catch (_) {
-      return String(value || '').replace(/^(wss?:\/\/)[^/@\s]+@/i, '$1');
-    }
-  }
-
-  function readLocalMcpConnection() {
-    return localMcpStorageGet().then(function (stored) {
-      var incognito = INCOGNITO_CONTEXT;
-      var client = mcpRuntime && typeof mcpRuntime.getClient === 'function' ? mcpRuntime.getClient() : null;
-      var status = client && typeof client.getStatus === 'function' ? client.getStatus() : {};
-      var enabled = stored[MCP_ENABLED_STORAGE_KEY] === true;
-      var connected = enabled && status.connected === true;
-      var connecting = enabled && status.connecting === true;
-      return {
-        id: LOCAL_MCP_CONNECTION_ID,
-        kind: 'mcp-websocket',
-        enabled: enabled,
-        url: redactedLocalMcpUrl(stored[MCP_URL_STORAGE_KEY] || 'ws://127.0.0.1:9999'),
-        clientId: String(stored[MCP_CLIENT_ID_STORAGE_KEY] || status.clientInfo && status.clientInfo.clientId || ''),
-        clientName: String(stored[MCP_CLIENT_NAME_STORAGE_KEY] || status.clientInfo && status.clientInfo.clientName || ''),
-        runTabMode: normalizeRunTabMode(stored[MCP_RUN_TAB_MODE_STORAGE_KEY], DEFAULT_RUN_TAB_MODE),
-        localToolsEnabled: stored[MCP_LOCAL_TOOLS_STORAGE_KEY] !== false,
-        localWorkingDirectory: String(stored[MCP_LOCAL_DIRECTORY_STORAGE_KEY]
-          || status.serverInfo && status.serverInfo.workingDirectory || ''),
-        localToolsSupported: !!(connected && status.serverInfo && status.serverInfo.localOperations === 'local/1'),
-        state: !enabled ? 'disabled' : (connected ? 'connected' : (connecting ? 'connecting' : 'disconnected')),
-        connected: connected,
-        connecting: connecting,
-        retryCount: Math.max(0, Number(status.retryCount) || 0),
-        incognito: incognito,
-        owner: { scope: 'extension-profile', incognito: incognito },
-      };
-    });
-  }
-
-  var localMcpConnectionRuntime = Object.freeze({
-    listConnections: function () {
-      return readLocalMcpConnection().then(function (connection) { return [connection]; });
-    },
-    getConnection: function (connectionId) {
-      if (String(connectionId || '') !== LOCAL_MCP_CONNECTION_ID) return Promise.resolve(null);
-      return readLocalMcpConnection();
-    },
-    updateConnection: async function (connectionId, input) {
-      assertLocalMcpConnectionId(connectionId);
-      input = input && typeof input === 'object' ? input : {};
-      var values = {};
-      if (Object.prototype.hasOwnProperty.call(input, 'enabled')) values[MCP_ENABLED_STORAGE_KEY] = input.enabled === true;
-      if (Object.prototype.hasOwnProperty.call(input, 'localToolsEnabled')) values[MCP_LOCAL_TOOLS_STORAGE_KEY] = input.localToolsEnabled === true;
-      if (Object.prototype.hasOwnProperty.call(input, 'localWorkingDirectory') || input.localToolsEnabled === true) {
-        var current = await readLocalMcpConnection();
-        var directory = String(Object.prototype.hasOwnProperty.call(input, 'localWorkingDirectory')
-          ? input.localWorkingDirectory || '' : current.localWorkingDirectory).trim();
-        var localEnabled = Object.prototype.hasOwnProperty.call(input, 'localToolsEnabled')
-          ? input.localToolsEnabled === true : current.localToolsEnabled;
-        if ((!directory && localEnabled) || directory.length > 4096 || directory.indexOf('\0') !== -1
-            || (directory && !/^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(directory))) {
-          throw new Error('本地操作必须配置有效的绝对工作目录；连接服务端后可使用回显的运行目录');
-        }
-        values[MCP_LOCAL_DIRECTORY_STORAGE_KEY] = directory;
-      }
-      if (Object.prototype.hasOwnProperty.call(input, 'url')) {
-        var url = new URL(String(input.url || ''));
-        if (url.protocol !== 'ws:' && url.protocol !== 'wss:') throw new Error('MCP Connection URL must use ws/wss');
-        if (url.username || url.password) throw new Error('MCP Connection URL cannot contain credentials');
-        values[MCP_URL_STORAGE_KEY] = url.toString();
-      }
-      if (Object.prototype.hasOwnProperty.call(input, 'clientName')) {
-        values[MCP_CLIENT_NAME_STORAGE_KEY] = String(input.clientName || '').trim();
-      }
-      if (Object.prototype.hasOwnProperty.call(input, 'runTabMode')) {
-        values[MCP_RUN_TAB_MODE_STORAGE_KEY] = normalizeRunTabMode(input.runTabMode, DEFAULT_RUN_TAB_MODE);
-      }
-      return localMcpStorageSet(values).then(function () {
-        if (!mcpRuntime || typeof mcpRuntime.initClient !== 'function') throw new Error('MCP runtime is not initialized');
-        return mcpRuntime.initClient();
-      }).then(readLocalMcpConnection);
-    },
-    attemptConnection: function (connectionId, options) {
-      assertLocalMcpConnectionId(connectionId);
-      options = options || {};
-      return readLocalMcpConnection().then(function (connection) {
-        if (!connection.enabled) throw new Error('MCP Connection is disabled');
-        if (!mcpRuntime || typeof mcpRuntime.initClient !== 'function') throw new Error('MCP runtime is not initialized');
-        return mcpRuntime.initClient();
-      }).then(function (client) {
-        if (!client || typeof client.connectAttempt !== 'function') throw new Error('MCP WebSocket client is unavailable');
-        client.disconnect();
-        return client.connectAttempt({ timeoutMs: options.timeoutMs });
-      }).then(readLocalMcpConnection);
-    },
-    getConnectionLogs: function (connectionId) {
-      assertLocalMcpConnectionId(connectionId);
-      var client = mcpRuntime && typeof mcpRuntime.getClient === 'function' ? mcpRuntime.getClient() : null;
-      var status = client && typeof client.getStatus === 'function' ? client.getStatus() : {};
-      return Promise.resolve(Array.isArray(status.logs) ? status.logs : []);
-    },
-    clearConnectionLogs: function (connectionId) {
-      assertLocalMcpConnectionId(connectionId);
-      var client = mcpRuntime && typeof mcpRuntime.getClient === 'function' ? mcpRuntime.getClient() : null;
-      var status = client && typeof client.getStatus === 'function' ? client.getStatus() : {};
-      var removed = Array.isArray(status.logs) ? status.logs.length : 0;
-      if (client && typeof client.clearLogs === 'function') client.clearLogs();
-      return Promise.resolve({ removed: removed });
-    },
+  var localMcpConnectionRuntime = {};
+  ['listConnections', 'getConnection', 'createConnection', 'updateConnection', 'deleteConnection',
+    'changeWorkspace', 'attemptConnection', 'getConnectionLogs', 'clearConnectionLogs', 'callServerArp'].forEach(function (name) {
+    localMcpConnectionRuntime[name] = async function () {
+      await prepareMcpConnections();
+      return mcpRuntime[name].apply(mcpRuntime, arguments);
+    };
   });
 
   function executeResourceNodeInstance(node, options) {
+    var blocked = configurationBusyError(); if (blocked) return Promise.reject(blocked);
     options = options || {};
     node = node || {};
     if (!node.type) return Promise.reject(new Error('单步节点缺少 type'));
@@ -2663,7 +2529,7 @@
     // live configuration. Reuse the existing per-run tab and lease lifecycle.
     var isolatedTabAccess = applicationSession
       ? createSessionTabAccess(applicationSession, tabRuntime)
-      : mcpTabAccessManager.createTabAccess(options.runTabMode);
+      : mcpTabManagerFor(options.localCallerContext).createTabAccess(options.runTabMode);
     function stopApplicationSession() { applicationSession.status = 'stopped'; }
     if (applicationSession && options.signal) options.signal.addEventListener('abort', stopApplicationSession, { once: true });
     var isolatedExecutor;
@@ -2680,6 +2546,7 @@
       mailClient: mailClient,
       executeLocalOperation: executeLocalOperation,
       tabRuntime: isolatedTabAccess,
+      localCallerContext: options.localCallerContext,
       addLog: addResourceStepLog,
       getConfig: function () { return options.appConfig || configCache; },
       getSession: function () { return applicationSession; },
@@ -2774,41 +2641,37 @@
   conversationMigrationGate.catch(function () {});
 
   var localOperations = Object.freeze({
-    isAvailable: function () {
-      var client = mcpRuntime && mcpRuntime.getClient();
-      var status = client && client.getStatus();
-      return !!(status && status.connected && status.localToolsEnabled && status.localWorkingDirectory
-        && status.serverInfo && status.serverInfo.localOperations === 'local/1');
-    },
-    execute: async function (operation, input, options) {
-      var stored = await localMcpStorageGet();
-      if (stored[MCP_ENABLED_STORAGE_KEY] !== true || stored[MCP_LOCAL_TOOLS_STORAGE_KEY] === false) {
-        throw AgentResourceProtocol.arpError('FORBIDDEN', '请在连接配置中启用本地文件与命令操作', { performed: 'no' });
-      }
-      if (!localOperations.isAvailable()) {
-        throw AgentResourceProtocol.arpError('TEMPORARILY_UNAVAILABLE', '本地操作需要连接支持该能力的 MCP Server', { performed: 'no' });
-      }
-      var status = mcpRuntime.getClient().getStatus();
-      var directory = String(stored[MCP_LOCAL_DIRECTORY_STORAGE_KEY]
-        || status.serverInfo && status.serverInfo.workingDirectory || '').trim();
-      if (!directory || status.localWorkingDirectory !== directory) {
-        throw AgentResourceProtocol.arpError('TEMPORARILY_UNAVAILABLE', '工作目录正在更新，请稍后再试', { performed: 'no' });
-      }
-      try { return await mcpRuntime.getClient().callLocal(operation, input, options); }
-      catch (error) {
-        throw AgentResourceProtocol.arpError('UPSTREAM_FAILED', error.message, { performed: 'unknown', retryable: false });
-      }
-    },
+    discover: function () { return mcpRuntime.discover.apply(mcpRuntime, arguments); },
+    target: function () { return mcpRuntime.target.apply(mcpRuntime, arguments); },
+    environment: function () { return mcpRuntime.environment.apply(mcpRuntime, arguments); },
+    execute: function () { return mcpRuntime.execute.apply(mcpRuntime, arguments); },
   });
 
-  function executeLocalOperation(operation, input, options) {
-    var validation = AgentResourceProtocol.validateJsonSchema(LocalResource.OPERATIONS[operation].inputSchema, input);
+  async function executeLocalOperation(operation, input, options) {
+    options = options || {};
+    var environmental = operation === 'environment' || operation === 'disk';
+    if (!environmental && !Object.prototype.hasOwnProperty.call(LocalResource.OPERATIONS, operation)) throw new Error('未知本地操作');
+    var validation = AgentResourceProtocol.validateJsonSchema(environmental
+      ? LocalResource.ENVIRONMENT_INPUT_SCHEMA : LocalResource.OPERATIONS[operation].inputSchema, input);
     if (!validation.valid) {
       throw AgentResourceProtocol.arpError('SCHEMA_VALIDATION_FAILED', '本地操作参数无效: ' + validation.errors.join('; '), { performed: 'no' });
     }
+    if (options.targetSnapshots || environmental) {
+      var key = JSON.stringify(options.target);
+      var previous = options.targetSnapshots && options.targetSnapshots.get(key);
+      var resolved = await mcpRuntime.target(operation, options.target, options.context || {}, previous);
+      if (!previous && options.targetSnapshots) options.targetSnapshots.set(key, resolved.snapshot);
+      options.expectedTarget = previous || resolved.snapshot;
+    }
+    if (environmental) return localOperations.environment(options.target, options.context || {}, input.refresh, options.signal, options.expectedTarget);
     return localOperations.execute(operation, input, options);
   }
 
+  var archiveService, builtinConnections;
+  function configurationBusyError(execution) {
+    return archiveService && (execution === false ? archiveService.isApplying() : archiveService.isExecutionBlocked())
+      ? AgentResourceProtocol.arpError('RESOURCE_BUSY', '配置同步未完成，请等待或在「同步和备份」中重试') : null;
+  }
   function createCanonicalResourceRuntime() {
     var resourceRouter = globalThis.AgentResourceRouter;
     var conversationRuntime = globalThis.ConversationRuntime;
@@ -2913,6 +2776,26 @@
     resourceOptions.recordingService = globalThis.RecordingResourceService.create(resourceOptions);
     resourceOptions.agentConfigurationService = globalThis.AgentConfigurationResourceService.create(resourceOptions);
     resourceOptions.mcpService = globalThis.McpResourceService.create(resourceOptions);
+    archiveService = globalThis.Archive.create(Object.assign({}, resourceOptions, {
+      binding: function () { return builtinConnections && builtinConnections.binding(); },
+      target: function (id) { return builtinConnections && builtinConnections.target(id); },
+      autoSyncEnabled: function () { return !!builtinConnections && builtinConnections.configuration().autoSyncEnabled; },
+      configuration: function () { return builtinConnections.configuration(); },
+      modelApiKeys: function () { return builtinConnections.modelApiKeys(); },
+      disableAutoSync: function (reason) { return builtinConnections.disableAutoSync(reason); },
+      connection: function () { return mcpRuntime; },
+      hasRunningWork: async function () {
+        if (Object.values(sessions).some(function (session) { return session.status === 'running'; })) return true;
+        await conversationMigrationGate;
+        var active = await conversationJournalRuntime.listActiveConversations();
+        return active.some(function (item) { return !!item.activeGeneration; });
+      },
+      validateSchedule: validateScheduleConfigItem,
+      saveConfiguration: function (config) {
+        return configRuntimeCoordinator.update(function () { return configStore.saveConfig(sanitizeConfigForStorage(config)); });
+      },
+    }));
+    resourceOptions.archiveService = archiveService;
     var appBridge;
     var appViewTabs = new Map();
     chrome.tabs.onRemoved.addListener(function (tabId) { appViewTabs.delete(tabId); });
@@ -2966,9 +2849,23 @@
     globalThis.PageAgentAppBridge = appBridge;
 
     var runtime = resourceRouter.createAgentResourceRouter({
-      authorize: function (input) {
-        if (input.route && input.route.root === 'local' && !localOperations.isAvailable()) {
-          return { allowed: false, message: '本地文件与命令操作未启用或服务端不可用' };
+      authorize: async function (input) {
+        if (input.descriptor.safety === 'execute' && configurationBusyError()) {
+          return { allowed: false, code: 'RESOURCE_BUSY', message: '正在初始化或同步配置，请稍后执行任务' };
+        }
+        if (archiveService && archiveService.isApplying() && !['GET', 'OPTIONS'].includes(input.request.method)
+            && input.route.template !== '/config/restorations') {
+          return { allowed: false, code: 'RESOURCE_BUSY', message: '正在同步配置，请稍后修改或执行任务' };
+        }
+        if (input.context && (input.context.appResourceSession || input.context.appAuthorization)
+            && ['schedules', 'url-triggers'].includes(input.route.root) && !['GET', 'OPTIONS'].includes(input.request.method)) {
+          return { allowed: false, code: 'FORBIDDEN', message: '应用不能创建脱离当前应用授权的自动任务', details: { reason: 'SOURCE_RESTRICTION_REQUIRED' } };
+        }
+        if (input.context && input.context.sourceConnectionId && input.request.method !== 'OPTIONS') {
+          var permissions = await mcpConnectionPermissions(input.context.sourceConnectionId);
+          var permission = McpContract.arpPermission(input.request.method, input.descriptor);
+          if (!permissions[permission]) return { allowed: false, code: 'FORBIDDEN', message: '此连接未开放该类远程操作',
+            details: { reason: 'CONNECTION_PERMISSION_DENIED', permission: permission } };
         }
         if (input.context && input.context.appResourceSession) {
           return resourceOptions.appService.authorizeResources(input.context.appResourceSession, input.descriptor.requiredPermissions).then(function () {
@@ -2980,6 +2877,7 @@
       resourceOptions: resourceOptions,
       adapterOptions: {
         page: {
+          resolveTargetContext: resolveMcpPageTargetContext,
           pageService: pageServiceFactory.createPageService({
             chrome: chrome,
             fetch: globalThis.fetch.bind(globalThis),
@@ -2992,6 +2890,7 @@
       },
     });
     runtime.imageArtifactStore = imageArtifactStoreRuntime;
+    runtime.localOperations = localOperations;
     runtime.resolveImageArtifact = function (artifactUri, resolveOptions) {
       resolveOptions = resolveOptions || {};
       var topicId = String(resolveOptions.topicId || '').trim();
@@ -3014,6 +2913,8 @@
   }
 
   var canonicalResourceRuntime = createCanonicalResourceRuntime();
+  var conversationResourcePermissionCatalog = globalThis.AgentCore.resourcePermissionCatalog(canonicalResourceRuntime);
+  globalThis.ConversationProfileSchema.installResourcePermissionCatalog(conversationResourcePermissionCatalog);
 
   // Conversation P0 runtime: one Journal, one Coordinator and one Command Bus.
   var conversationModelSettingsCache = globalThis.ModelSettings.normalizeSettings({});
@@ -3085,11 +2986,17 @@
   function resolveConversationService(serviceId) {
     return conversationModelSettingsReady.then(function () { return resolveConversationServiceSync(serviceId); });
   }
-  function resolveConversationAssistant(assistantId) {
+  function resolveConversationAssistant(assistantId, conversationId) {
     assistantId = String(assistantId || '').trim();
     return globalThis.ConversationState.load({ fresh: true }).then(function (state) {
       var assistant = state && state.assistants && state.assistants[assistantId];
       if (!assistant) return null;
+      var topic = conversationId && state.topics && state.topics[conversationId];
+      // Topic grants are persisted by trusted UI, never supplied in turn commands.
+      // Use the same snapshot the conversation editor displays and saves.
+      if (topic && topic.assistantId === assistantId && topic.assistantSnapshot) {
+        return globalThis.ConversationState.normalizeAssistantSnapshot(topic.assistantSnapshot, { id: assistantId });
+      }
       return typeof globalThis.ConversationState.normalizeAssistantProfile === 'function'
         ? globalThis.ConversationState.normalizeAssistantProfile(assistant, { id: assistantId })
         : Object.assign({}, assistant, { id: assistantId });
@@ -3157,6 +3064,21 @@
     resolveServiceSync: resolveConversationServiceSync,
     resolveAssistant: resolveConversationAssistant,
     resolveScheduleGrant: resolveConversationScheduleGrant,
+    resolveLocalTarget: async function (input) {
+      var target;
+      if (input.entry && input.entry.type === 'scheduled') {
+        var scheduleId = String(input.entry.currentResource || '').replace(/^\/schedules\//, '');
+        var schedule = configCache && configCache.schedules && configCache.schedules[scheduleId];
+        target = schedule && (schedule.localTarget || schedule.task && schedule.task.localTarget) || null;
+        if (target) {
+          var assistant = await resolveConversationAssistant(input.assistantId);
+          var context = { permissionScope: globalThis.AgentCore.derivePermissionScope(canonicalResourceRuntime, assistant) };
+          await mcpRuntime.target(target.workspaceId ? 'disk' : 'environment', target, context, target);
+        }
+        return target;
+      }
+      return null;
+    },
     ready: Promise.all([conversationModelSettingsReady, conversationSystemSettingsReady]),
     modelSettings: globalThis.ModelSettings,
     chrome: chrome,
@@ -3241,12 +3163,16 @@
     return Object.freeze({
       API_VERSION: bus.API_VERSION,
       dispatch: function (message, sender) {
+        var blocked = message && message.command === 'START_TURN' && configurationBusyError();
+        if (blocked) return Promise.reject(blocked);
         return bus.dispatch(message, sender).then(function (response) {
           broadcastIfMutated(message, response);
           return syncConversationTopicAfterDispatch(message, response);
         });
       },
       dispatchInternal: function (message, surface) {
+        var blocked = message && message.command === 'START_TURN' && configurationBusyError();
+        if (blocked) return Promise.reject(blocked);
         return bus.dispatchInternal(message, surface).then(function (response) {
           broadcastIfMutated(message, response);
           return syncConversationTopicAfterDispatch(message, response);
@@ -3283,39 +3209,8 @@
     }, Math.max(0, Number(delayMs) || 0));
   }
 
-  var CONVERSATION_TERMINAL_STATES = Object.freeze({
-    completed: true, failed: true, cancelled: true, truncated: true, blocked: true,
-  });
-
-  function deleteOrphanConversation(conversationId, metadata) {
-    conversationId = String(conversationId || '').trim();
-    if (!conversationId) return Promise.resolve({ deferred: false });
-    var active = metadata && metadata.activeGeneration;
-    var cancel = Promise.resolve({ state: active && active.state || '' });
-    if (active && !CONVERSATION_TERMINAL_STATES[active.state]) {
-      cancel = conversationAgentRuntime.coordinator.cancelGeneration({
-        conversationId: conversationId,
-        generationId: active.generationId,
-        reason: 'assistant_deleted',
-      }).catch(function (error) {
-        if (error && (error.code === 'GENERATION_STALE' || error.code === 'CONVERSATION_NOT_FOUND')) return { state: 'cancelled' };
-        throw error;
-      });
-    }
-    return cancel.then(function (result) {
-      if (result && result.state === 'cancelling') return { deferred: true };
-      return conversationRecordingAttachmentsRuntime.releaseConversation(conversationId).then(function () {
-        return globalThis.ConversationState.deleteTopic(conversationId);
-      }).then(function () {
-        return { deferred: false };
-      }).catch(function (error) {
-        if (error && error.code === 'CONVERSATION_ACTIVE') return { deferred: true };
-        throw error;
-      });
-    });
-  }
-
-  // 启动和共享配置变更后对账：补齐有效索引，并删除已删除助手留下的完整运行数据链。
+  // Only repair missing indexes. Configuration references may be temporarily
+  // absent; keep topics, Journal entries and attachments for a later restore.
   function reconcileConversationTopics() {
     return Promise.all([
       conversationAgentRuntime.journal.listMetadata(),
@@ -3325,104 +3220,35 @@
       var state = values[1] || {};
       var topics = state.topics || {};
       var assistants = state.assistants || {};
-      var metadataById = Object.create(null);
-      metadataList.forEach(function (metadata) {
-        if (metadata && metadata.conversationId) metadataById[metadata.conversationId] = metadata;
+      var missing = metadataList.filter(function (metadata) {
+        return metadata && metadata.conversationId && metadata.assistantId
+          && assistants[metadata.assistantId]
+          && metadata.archived !== true && metadata.deleted !== true
+          && !topics[metadata.conversationId];
       });
-      var configuredServices = Object.create(null);
-      (conversationModelSettingsCache.services || []).forEach(function (service) {
-        if (service && service.id) configuredServices[String(service.id)] = true;
-      });
-
-      var orphanIds = Object.create(null);
-      Object.keys(topics).forEach(function (topicId) {
-        var assistantId = String(topics[topicId] && topics[topicId].assistantId || '');
-        if (!assistantId || !assistants[assistantId]) orphanIds[topicId] = true;
-      });
-      metadataList.forEach(function (metadata) {
-        var assistantId = String(metadata && metadata.assistantId || '');
-        if (metadata && metadata.conversationId && (!assistantId || !assistants[assistantId])) {
-          orphanIds[metadata.conversationId] = true;
-        }
-      });
-
-      var retryOrphanCleanup = false;
-      var cleanOrphans = Object.keys(orphanIds).reduce(function (chain, conversationId) {
+      return missing.reduce(function (chain, metadata) {
         return chain.then(function () {
-          return deleteOrphanConversation(conversationId, metadataById[conversationId]).then(function (result) {
-            if (result && result.deferred) retryOrphanCleanup = true;
-          }).catch(function (error) {
-            console.warn('[conversation] 清理孤儿话题失败:', conversationId, error);
-          });
+          var assistantId = String(metadata.assistantId || '');
+          var serviceId = String(metadata.serviceId || '');
+          return conversationAgentRuntime.journal.queryEvents(metadata.conversationId, { afterSequence: 0, limit: 20 })
+            .catch(function () { return { events: [] }; })
+            .then(function (page) {
+              var content = '';
+              (page && page.events || []).some(function (event) {
+                var message = event && event.type === 'user_message_appended'
+                  && event.payload && event.payload.message;
+                if (message) content = String(message.content || '');
+                return !!message;
+              });
+              return ensureConversationTopicRecord({
+                conversationId: metadata.conversationId,
+                assistantId: assistantId,
+                serviceId: serviceId,
+                messageContent: content,
+              });
+            });
         });
       }, Promise.resolve());
-
-      var invalidTopicServiceIds = Object.keys(topics).filter(function (topicId) {
-        var topic = topics[topicId];
-        var serviceId = String(topic && topic.modelServiceId || '');
-        return !orphanIds[topicId]
-          && !!(topic && topic.archived !== true && serviceId && !configuredServices[serviceId]);
-      });
-      var cleanTopics = cleanOrphans.then(function () {
-        return invalidTopicServiceIds.reduce(function (chain, topicId) {
-          return chain.then(function () {
-            topics[topicId].modelServiceId = '';
-            return globalThis.ConversationState.updateTopic(topicId, { modelServiceId: '' });
-          });
-        }, Promise.resolve());
-      });
-
-      return cleanTopics.then(function () {
-        return metadataList.reduce(function (chain, metadata) {
-          return chain.then(function () {
-            if (!metadata || orphanIds[metadata.conversationId]) return null;
-            var topic = metadata && topics[metadata.conversationId];
-            if (!topic || topic.archived === true) return null;
-            var patch = {};
-            var metadataServiceId = String(metadata.serviceId || '');
-            if (metadataServiceId && !configuredServices[metadataServiceId]) {
-              var topicServiceId = String(topic.modelServiceId || '');
-              patch.serviceId = configuredServices[topicServiceId] ? topicServiceId : '';
-            }
-            return Object.keys(patch).length
-              ? conversationAgentRuntime.journal.putMetadata(metadata.conversationId, patch)
-              : null;
-          });
-        }, Promise.resolve());
-      }).then(function () {
-        var missing = metadataList.filter(function (metadata) {
-          return metadata && metadata.conversationId && metadata.assistantId
-            && !orphanIds[metadata.conversationId]
-            && metadata.archived !== true && metadata.deleted !== true
-            && !topics[metadata.conversationId];
-        });
-        return missing.reduce(function (chain, metadata) {
-          return chain.then(function () {
-            var assistantId = String(metadata.assistantId || '');
-            var serviceId = String(metadata.serviceId || '');
-            if (!configuredServices[serviceId]) serviceId = '';
-            return conversationAgentRuntime.journal.queryEvents(metadata.conversationId, { afterSequence: 0, limit: 20 })
-              .catch(function () { return { events: [] }; })
-              .then(function (page) {
-                var content = '';
-                (page && page.events || []).some(function (event) {
-                  var message = event && event.type === 'user_message_appended'
-                    && event.payload && event.payload.message;
-                  if (message) content = String(message.content || '');
-                  return !!message;
-                });
-                return ensureConversationTopicRecord({
-                  conversationId: metadata.conversationId,
-                  assistantId: assistantId,
-                  serviceId: serviceId,
-                  messageContent: content,
-                });
-              });
-          });
-        }, Promise.resolve());
-      }).then(function () {
-        if (retryOrphanCleanup) scheduleConversationTopicReconcile(2000);
-      });
     }).catch(function (error) {
       console.warn('[conversation] 话题索引对账失败:', error);
     });
@@ -3521,6 +3347,7 @@
   }
 
   function importConversationBackup(input) {
+    var blocked = configurationBusyError(); if (blocked) return Promise.reject(blocked);
     input = input || {};
     if (input.legacyTopic && typeof input.legacyTopic === 'object') {
       return Promise.reject(conversationArchiveError(
@@ -3828,7 +3655,24 @@
     return Object.freeze(Object.keys(permissions).sort());
   }
 
+  // Route permissions come from ARP contracts; connections select operation categories.
   var mcpTransportPermissionScope = collectCanonicalTransportPermissions(canonicalResourceRuntime);
+
+  async function mcpConnectionPermissions(connectionId) {
+    var value = await mcpRuntime.store.load(), connection = value.connections[connectionId];
+    if (!connection || !connection.enabled) throw AgentResourceProtocol.arpError('FORBIDDEN', '连接已停用或删除', { performed: 'no' });
+    return McpContract.arpPermissions(connection.arpPermissions);
+  }
+
+  function mcpAllowedRouteMethods(permissions) {
+    var methods = Object.create(null);
+    canonicalResourceRuntime.registry.listRoutes().forEach(function (route) {
+      methods[route.template] = Object.keys(route.methods).filter(function (method) {
+        return permissions[McpContract.arpPermission(method, route.methods[method])];
+      });
+    });
+    return methods;
+  }
 
   function webOrigin(value) {
     try {
@@ -3837,43 +3681,156 @@
     } catch (_) { return ''; }
   }
 
-  function activeTrustedPageContext() {
-    return new Promise(function (resolve) {
-      chrome.tabs.query({ active: true, lastFocusedWindow: true }, function (tabs) {
-        var error = chrome.runtime && chrome.runtime.lastError;
-        if (error) { resolve(null); return; }
-        resolve(tabs && tabs[0] || null);
-      });
+  async function resolveMcpPageTargetContext(context, request) {
+    var explicit = Number(request.query && request.query.tabId || request.body && request.body.tabId) || 0;
+    var tab = await mcpTabManagerFor(context).resolveRequestTab({
+      tabId: explicit, signal: context.abortSignal, incognito: INCOGNITO_CONTEXT,
     });
+    var next = Object.assign({}, context, {
+      currentTabId: Number(tab.id), currentWindowId: Number(tab.windowId),
+      origin: webOrigin(tab.pendingUrl || tab.url),
+    });
+    if (context.abortSignal) Object.defineProperty(next, 'abortSignal', {
+      value: context.abortSignal, enumerable: false, configurable: false,
+    });
+    return next;
   }
 
-  function createTrustedMcpResourceContext(correlation, dispatchInfo) {
+  async function createTrustedMcpResourceContext(correlation, dispatchInfo) {
     correlation = correlation || {};
     dispatchInfo = dispatchInfo || {};
     var request = dispatchInfo.request || {};
     var uri = String(request.uri || '');
     var pageScoped = uri === '/page' || uri.indexOf('/page/') === 0;
-    var tabPromise = pageScoped ? activeTrustedPageContext() : Promise.resolve(null);
-    return tabPromise.then(function (tab) {
-      return {
-        actorId: 'mcp-transport:' + String(chrome.runtime.id || 'extension')
-          + ':' + (chrome.extension && chrome.extension.inIncognitoContext ? 'incognito' : 'regular'),
-        sessionId: String(correlation.sessionId || ''),
-        conversationId: String(correlation.conversationId || correlation.sessionId || ''),
-        entryContext: pageScoped ? 'page' : 'global',
-        origin: pageScoped && tab ? webOrigin(tab.url || tab.pendingUrl) : 'mcp://local',
-        permissionScope: mcpTransportPermissionScope.slice(),
-        currentResource: uri === '/' ? '' : uri,
-        visibleResourceUris: uri && uri !== '/' ? [uri] : [],
-        currentTabId: pageScoped && tab ? Number(tab.id) || 0 : 0,
-        currentWindowId: pageScoped && tab ? Number(tab.windowId) || 0 : 0,
-        incognito: INCOGNITO_CONTEXT,
-        transport: 'mcp-websocket',
-      };
-    });
+    var namespace = [dispatchInfo.connectionId, dispatchInfo.principal.transport, dispatchInfo.principal.id];
+    var permissions = await mcpConnectionPermissions(dispatchInfo.connectionId);
+    return {
+      actorId: 'mcp:' + dispatchInfo.connectionId + ':' + dispatchInfo.principal.transport + ':' + dispatchInfo.principal.id,
+      sessionId: await AgentResourceProtocol.sha256(JSON.stringify(namespace.concat(correlation.sessionId))),
+      conversationId: await AgentResourceProtocol.sha256(JSON.stringify(namespace.concat(correlation.conversationId))),
+      sourceConnectionId: dispatchInfo.connectionId,
+      sourcePrincipal: dispatchInfo.principal.id,
+      sourcePrincipalTransport: dispatchInfo.principal.transport,
+      parentRequest: correlation.parentRequest,
+      abortSignal: dispatchInfo.abortSignal,
+      runTabMode: dispatchInfo.connection.runTabMode,
+      entryContext: pageScoped ? 'page' : 'global',
+      origin: 'mcp://local',
+      permissionScope: mcpTransportPermissionScope.slice(),
+      allowedRouteMethods: mcpAllowedRouteMethods(permissions),
+      currentResource: uri === '/' ? '' : uri,
+      visibleResourceUris: uri && uri !== '/' ? [uri] : [],
+      currentTabId: 0,
+      currentWindowId: 0,
+      incognito: INCOGNITO_CONTEXT,
+      transport: 'mcp-websocket',
+    };
   }
 
   var messageRouter = MessageRouter.createMessageRouter({
+    handleArchiveControl: async function (payload) {
+      McpContract.fields(payload, ['action', 'connectionId', 'settings', 'versionId', 'syncable', 'revision', 'operationId', 'includeVersions'], ['action']);
+      if (payload.includeVersions !== undefined && typeof payload.includeVersions !== 'boolean') throw new Error('版本列表读取选项无效');
+      await prepareMcpConnections();
+      await archiveService.whenBindingReady();
+      var configuration = builtinConnections.configuration();
+      if (payload.action === 'settings') {
+        var disablingOnly = payload.settings && payload.settings.autoSyncEnabled === false
+          && payload.settings.syncConnectionId === configuration.settings.syncConnectionId
+          && JSON.stringify(payload.settings.targets) === JSON.stringify(configuration.settings.targets);
+        await archiveService.configure(function () { return builtinConnections.saveConfiguration(payload.settings); }, disablingOnly);
+        var sourceId = builtinConnections.configuration().settings.syncConnectionId;
+        if (sourceId) await archiveService.compatibility(sourceId);
+        var registered = await Promise.allSettled(builtinConnections.configuration().settings.targets.map(async function (target) {
+          var connection = await mcpRuntime.getConnection(target.connectionId);
+          if (!connection || !connection.ready) return;
+          var response = await mcpRuntime.callServerArp(target.connectionId, 'GET', { uri: '/archive' }, { trustedConnectionUi: true });
+          if (!response || response.error) throw new Error(connection.alias + '：' + (response && response.error && response.error.message || '无法读取同步和备份服务'));
+        }));
+        var failures = registered.filter(function (item) { return item.status === 'rejected'; });
+        return { saved: true, warning: failures.length ? '选择已保存，部分连接暂未就绪：' + failures.map(function (item) { return item.reason.message; }).join('；') : null };
+      }
+      var connections = await mcpRuntime.listConnections();
+      var selectedId = [payload.connectionId, configuration.settings.syncConnectionId].find(function (id) {
+        return connections.some(function (item) { return item.id === id; });
+      }) || (connections[0] && connections[0].id);
+      var binding = builtinConnections.target(selectedId);
+      var sourceCompatibility = configuration.settings.syncConnectionId
+        ? await archiveService.compatibility(configuration.settings.syncConnectionId) : null;
+      var compatibility = selectedId === configuration.settings.syncConnectionId ? sourceCompatibility
+        : selectedId ? await archiveService.compatibility(selectedId) : null;
+      configuration = builtinConnections.configuration();
+      var deployment = await archiveService.status(selectedId);
+      var client = await mcpRuntime.store.load();
+      var result = { recoveryPending: deployment.recoveryPending,
+        autoSyncAvailable: configuration.autoSyncAvailable, environmentAllowsSync: configuration.environmentAllowsSync,
+        syncVersion: configuration.syncVersion, syncTarget: configuration.syncTarget,
+        settings: configuration.settings, compatibility: compatibility, sourceCompatibility: sourceCompatibility, selectedConnectionId: selectedId,
+        connections: connections.map(function (item) {
+          return { id: item.id, alias: item.alias, url: item.url, enabled: item.enabled, ready: item.ready,
+            platform: item.platform, state: item.state, reason: item.reason, paired: item.paired, needsPairing: item.needsPairing,
+            serverName: item.serverName, serverId: item.serverId, serverVersion: item.serverVersion, arpPermissions: item.arpPermissions };
+        }), archive: null, versions: null, target: binding,
+        clientId: client.clientId, clientName: client.clientName };
+      if (!binding) {
+        if (payload.action === 'status') return result;
+        throw new Error('请先保存此连接的同步和备份配置');
+      }
+      async function call(method, uri, input) {
+        var request = Object.assign({ uri: uri }, input || {});
+        if (method !== 'GET') request.idempotencyKey = crypto.randomUUID();
+        var envelope = await mcpRuntime.callServerArp(binding.connectionId, method, request, { trustedConnectionUi: true });
+        if (!envelope || envelope.error || !envelope.primary) throw new Error(envelope && envelope.error && envelope.error.message || '同步和备份服务响应无效');
+        return envelope.primary.data;
+      }
+      var bucketUri = '/archive/buckets/' + encodeURIComponent(binding.bucketId);
+      if (payload.action === 'status') {
+        var connection = result.connections.find(function (item) { return item.id === binding.connectionId; });
+        if (!connection || !connection.ready) return result;
+        try {
+          result.archive = await call('GET', '/archive');
+          var bucket = result.archive.buckets.find(function (item) { return item.id === binding.bucketId; });
+          if (bucket && payload.includeVersions) result.versions = await call('GET', bucketUri + '/versions');
+        } catch (error) { result.error = error.message; }
+        return result;
+      }
+      if (['backup', 'apply'].includes(payload.action)) {
+        if (!compatibility || compatibility.compatible !== true) throw new Error('连接尚未就绪或同步版本不兼容');
+        var body = { kind: payload.action };
+        if (payload.action === 'apply') {
+          body.operationId = crypto.randomUUID();
+          if (payload.versionId) body.versionId = payload.versionId;
+          await archiveService.authorizeManual(binding.connectionId, body.operationId);
+        }
+        return call('POST', '/archive/operations', { body: body });
+      }
+      if (payload.action === 'operation') {
+        McpContract.id(payload.operationId);
+        return call('GET', '/archive/operations/' + encodeURIComponent(payload.operationId));
+      }
+      if (payload.action === 'retry') {
+        McpContract.id(payload.operationId);
+        var retry = await call('GET', '/archive/operations/' + encodeURIComponent(payload.operationId));
+        if (retry.kind === 'apply') await archiveService.authorizeManual(binding.connectionId, retry.id);
+        return call('POST', '/archive/operations/' + encodeURIComponent(payload.operationId) + '/retries', { body: {} });
+      }
+      if (payload.action === 'syncable') {
+        if (!Number.isInteger(payload.revision)) throw new Error('请先刷新备份桶');
+        McpContract.id(payload.versionId);
+        if (typeof payload.syncable !== 'boolean') throw new Error('可同步标记必须为布尔值');
+        return call('PATCH', bucketUri + '/versions/' + encodeURIComponent(payload.versionId), {
+          patch: { syncable: payload.syncable }, preconditions: { ifMatch: '"bucket-' + payload.revision + '"' } });
+      }
+      throw new Error('未知的同步和备份操作');
+    },
+    handleMcpControl: async function (type, payload, password) {
+      await prepareMcpConnections();
+      var context = { trustedConnectionUi: true };
+      if (type === 'MCP_CONNECTION_PAIR') return mcpRuntime.pair(payload.connectionId, password, payload.ifMatch);
+      if (type === 'MCP_CLIENT_UPDATE_NAME') return mcpRuntime.updateName(payload.clientName, context);
+      if (type === 'MCP_CLIENT_RESET_ID') return mcpRuntime.resetId(context);
+      if (type === 'MCP_CONNECTIONS_IMPORT') return mcpRuntime.store.importConnections(payload.records, context, payload.preview === true);
+    },
     pageAutomation: pageAutomation,
     getConfig: function () { return configCache; },
     conversationCommandBus: conversationCommandBus,
@@ -3920,6 +3877,14 @@
   // --- Chrome API 事件绑定 ---
 
   chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+    if (message && message.type === 'GET_CONVERSATION_PERMISSION_CATALOG') {
+      if (!trustedExtensionSender(sender)) {
+        sendResponse({ ok: false, error: '仅扩展页面可以读取授权配置目录' });
+        return undefined;
+      }
+      sendResponse({ ok: true, payload: conversationResourcePermissionCatalog });
+      return undefined;
+    }
     if (message && message.type === 'APP_CONVERSATION_CONTEXT' && sender.id === chrome.runtime.id) {
       globalThis.PageAgentApps.conversationContext(message.conversationId).then(function (result) {
         if (result && sender.tab) globalThis.PageAgentApps.watchTab(sender.tab.id, result.appId);
@@ -3943,7 +3908,12 @@
     }
     if (message && message.type === 'APP_MANAGE') {
       var managerUrl = chrome.runtime.getURL('options/options.html');
-      if (sender.id !== chrome.runtime.id || String(sender.url || '').split(/[?#]/)[0] !== managerUrl) {
+      var managerSenderUrl = String(sender.url || '').split(/[?#]/)[0];
+      var launcherOpen = message.operation === 'open' && [
+        chrome.runtime.getURL('sidepanel/sidepanel.html'),
+        chrome.runtime.getURL('popup/popup.html'),
+      ].includes(managerSenderUrl);
+      if (sender.id !== chrome.runtime.id || managerSenderUrl !== managerUrl && !launcherOpen) {
         sendResponse({ error: { code: 'PERMISSION_DENIED', message: '应用管理仅允许配置中心调用' } });
         return false;
       }
@@ -3954,7 +3924,7 @@
         if (message.operation === 'copy') return service.store.copy(input.appId, input.revision);
         if (message.operation === 'dependencies') return service.collect(input.dependencies || []);
         if (message.operation === 'bind-conversation') return service.bindConversation(input.conversationId, input.appId);
-        if (message.operation === 'preflight-import') return service.preflightImport(input.item, input.modules, input.scope, input.plan);
+        if (message.operation === 'preflight-import') return service.preflightImport(input.item, input.modules, input.scope, input.plan, input.rebindConnections === true);
         if (message.operation === 'remap-import') return service.remapImported(input.item, input.idMap, input.modules, input.committedApps);
         if (message.operation === 'check-import-dependencies') return service.collect(Object.values(input.item.slots).flatMap(service.codeDependencies));
         if (message.operation === 'imported') { service.store.emit(input.appId, 'imported', null, input.revision); return { ok: true }; }
@@ -3967,7 +3937,7 @@
           }
           await service.collect(input.dependencies); return { ok: true };
         }
-        if (message.operation === 'open') return service.open(input.appId, input.slot);
+        if (message.operation === 'open') return service.open(input.appId, input.slot, undefined, undefined, { newTab: input.newTab === true, active: input.active !== false, windowId: input.windowId });
         if (message.operation === 'cancel-runs') return service.cancelRuns(input.appId);
         if (message.operation === 'stop') {
           var tabs = await chrome.tabs.query({});
@@ -4195,7 +4165,11 @@
       saveRunningSnapshots();
       return;
     }
-    scheduler.handleAlarm(alarm);
+    archiveService.whenBindingReady().then(function () {
+      if (!configurationBusyError()) return scheduler.handleAlarm(alarm);
+    }).catch(function (error) {
+      loggingStatus.addLog('定时任务初始化失败: ' + error.message, { level: 'warn' });
+    });
   });
 
   // 定期保存所有运行中会话的恢复快照（SW 意外被杀后可用）
@@ -4255,7 +4229,9 @@
 
   // URL 触发器：页面加载完成时检查是否匹配
   chrome.webNavigation.onCompleted.addListener(function (details) {
-    urlTriggerController.handleNavigation(details).catch(function (err) {
+    archiveService.whenBindingReady().then(function () {
+      if (!configurationBusyError()) return urlTriggerController.handleNavigation(details);
+    }).catch(function (err) {
       loggingStatus.addLog('URL 触发器处理失败: ' + (err && err.message || err), { level: 'warn' });
     });
   });
@@ -4502,16 +4478,11 @@
     }
   }
 
-  // Action 左键直接打开侧边栏；Chrome 的右键菜单仍由浏览器托管，自定义项只能追加。
+  // Action 左键显示快捷菜单，侧边栏由菜单中的入口打开。
   try {
-    var behaviorPromise = chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+    var behaviorPromise = chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
     if (behaviorPromise && behaviorPromise.catch) behaviorPromise.catch(function () {});
   } catch (_) {}
-  if (chrome.action && chrome.action.onClicked) {
-    chrome.action.onClicked.addListener(function (tab) {
-      openSidepanelForWindow(tab && tab.windowId);
-    });
-  }
   if (chrome.runtime && chrome.runtime.onConnect) {
     chrome.runtime.onConnect.addListener(function (port) {
       if (!port || port.name !== 'page-automation-sidepanel') return;
@@ -4526,6 +4497,16 @@
     });
   }
   setupActionContextMenu();
+  chrome.commands.onCommand.addListener(function (command, tab) {
+    if (command === 'open-sidepanel') {
+      // 直接使用快捷键事件的窗口，保留打开侧边栏所需的用户手势。
+      openSidepanelForWindow(tab && tab.windowId);
+    } else if (command === 'close-sidepanel') {
+      closeSidepanelForWindow(tab && tab.windowId);
+    } else if (command === 'open-options') {
+      openHomePage();
+    }
+  });
   if (chrome.contextMenus && chrome.contextMenus.onClicked) {
     chrome.contextMenus.onClicked.addListener(function (info, tab) {
       if (!info) return;
@@ -4588,20 +4569,96 @@
 
   var mcpRuntime = McpRuntime.createMcpRuntime({
     chrome: chrome,
+    beforeConnect: prepareMcpConnections,
+    onChange: function () {
+      broadcast({ type: 'MCP_CONNECTIONS_CHANGED' });
+      var source = builtinConnections && builtinConnections.binding();
+      if (source && archiveService) {
+        archiveService.compatibility(source.connectionId).then(function () { return archiveService.status(); })
+          .catch(function (error) { loggingStatus.addLog('Sync negotiation failed: ' + error.message, { scope: 'mcp', level: 'warn' }); });
+      }
+    },
+    onResetTargets: function (id) { mcpTabManagers.delete(id); },
+    onExecutionState: function (state) { broadcast(Object.assign({ type: 'MCP_EXECUTION_STATE' }, state)); },
     addLog: loggingStatus.addLog,
     prepareNetwork: async function () {
       await proxyManager.sync();
       return globalThis.PageAutomationUserAgent.sync();
     },
-    dispatchResource: function (method, request, context) {
-      return canonicalResourceRuntime.dispatch(method, request, context);
+    dispatchResource: async function (method, request, context) {
+      var targetPath = '';
+      try {
+        targetPath = AgentResourceProtocol.canonicalizeUri(AgentResourceProtocol.parseRequestTarget(request && request.uri, method).path);
+      } catch (_) { /* The router returns the canonical validation error. */ }
+      if (!/^\/(?:page|browser)(?:\/|$)/.test(targetPath)) {
+        return canonicalResourceRuntime.dispatch(method, request, context);
+      }
+      // WebSocket requests have no local conversation-generation completion hook.
+      // Give concurrent requests separate owners and release only this request's resources.
+      var owner = 'McpRequest:' + crypto.randomUUID();
+      var controller = new AbortController();
+      var upstreamSignal = context.abortSignal;
+      function cancelRequest() { controller.abort(upstreamSignal.reason); }
+      if (upstreamSignal) {
+        if (upstreamSignal.aborted) cancelRequest();
+        else upstreamSignal.addEventListener('abort', cancelRequest, { once: true });
+      }
+      var requestContext = Object.assign({}, context, { pageActionOwner: owner, abortSignal: controller.signal });
+      try {
+        return await canonicalResourceRuntime.dispatch(method, request, requestContext);
+      } finally {
+        // Prevent a queued acquisition from retaining a lease after cleanup.
+        controller.abort('MCP 页面请求已结束');
+        if (upstreamSignal) upstreamSignal.removeEventListener('abort', cancelRequest);
+        // Use normal idle detach so in-flight CDP commands can settle safely.
+        await pageActionEngine.cleanupOwner(owner).catch(function (error) {
+          loggingStatus.addLog('释放 MCP 请求页面资源失败: ' + error.message, { scope: 'mcp', level: 'warn' });
+        });
+      }
     },
     createTrustedContext: createTrustedMcpResourceContext,
+    migrate: async function (value) {
+      var migration = value.migration;
+      if (!migration || !migration.pending || !migration.confirmed) return;
+      var connection = value.connections[migration.connectionId];
+      var workspace = connection && connection.workspaces.find(function (item) { return item.id === migration.workspaceId; });
+      if (!workspace || !workspace.lastResolvedPath || workspace.migrationPending || workspace.needsAuthorization) return;
+      await configReady;
+      await configRuntimeCoordinator.update(async function () {
+        var stored = await configStore.getConfig(), changed = false;
+        Object.values(stored.flows || {}).forEach(function (flow) {
+          (flow.nodes || []).forEach(function (node) {
+            if (!/^local/.test(node.type)) return;
+            var params = node.params || (node.params = {});
+            if (params.connectionId) return;
+            params.connectionId = migration.connectionId;
+            if (['localRead', 'localWrite', 'localDelete', 'localGrep', 'localBash', 'localLocate'].includes(node.type)) params.workspaceId = migration.workspaceId;
+            changed = true;
+          });
+        });
+        return changed ? configStore.saveConfig(stored) : stored;
+      });
+      var mailKey = globalThis.PageAutomationMailSettings.SETTINGS_KEY;
+      var mail = (await chrome.storage.local.get(mailKey))[mailKey];
+      if (mail && !Object.prototype.hasOwnProperty.call(mail, 'connectionId')) await mailClient.save(Object.assign({}, mail, { connectionId: migration.connectionId }));
+      await mcpRuntime.store.transaction(function (current) { if (current.migration) current.migration.pending = false; });
+    },
   });
 
   function initMCPClient() {
     return mcpRuntime.initClient();
   }
+
+  async function prepareMcpConnections() {
+    await configReady;
+    await builtinConnections.initialize();
+  }
+
+  builtinConnections = BuiltinConnectionLoader.create({
+    runtime: mcpRuntime,
+    onLoaded: function () { return archiveService.initializeBinding(); },
+    log: function (message) { loggingStatus.addLog(message, { scope: 'mcp', level: 'warn' }); },
+  });
 
   var mcpNetworkReconnectTimer = null;
   chrome.storage.onChanged.addListener(function (changes, area) {
@@ -4621,9 +4678,11 @@
     }, 500);
   });
 
-  configReady.then(initMCPClient).catch(function (error) {
-    loggingStatus.addLog('初始化 MCP 连接失败: ' + error.message, { level: 'error', scope: 'mcp' });
-  });
+  configReady.then(async function () {
+    try { await builtinConnections.start(); }
+    catch (error) { loggingStatus.addLog('初始化内置连接失败: ' + error.message, { level: 'error', scope: 'mcp' }); }
+    await initMCPClient();
+  }).catch(function (error) { loggingStatus.addLog('初始化 MCP 连接失败: ' + error.message, { level: 'error', scope: 'mcp' }); });
   Promise.all([configReady, conversationModelSettingsReady]).then(function () {
     return conversationAgentRuntime.migrationReady.then(function () {
       return conversationRecordingAttachmentsRuntime.reconcile();

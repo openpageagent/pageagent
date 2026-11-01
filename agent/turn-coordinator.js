@@ -276,6 +276,7 @@
         message: clone(user && user.payload && user.payload.message || payload.message || {}),
         surface: clone(payload.surface || {}),
         entry: clone(payload.entry || {}),
+        localTarget: clone(payload.localTarget || null),
         budgets: clone(payload.budgets || {}),
         preferences: clone(payload.preferences || {}),
         lineage: clone(payload.lineage || { branchId: text(started.branchId || 'main') }),
@@ -788,6 +789,7 @@
       if (!isRecord(input)) throw coordinatorError('INVALID_COMMAND', 'StartTurnInput must be an object');
       var conversationId = required(input.conversationId, 'conversationId');
       var commandId = required(input.commandId, 'commandId');
+      input = Object.assign({}, input, { localTarget: options.resolveLocalTarget ? await options.resolveLocalTarget(input) : null });
       var generationId = idGenerator('generation');
       var turnId = idGenerator('turn');
       var outcome = await journal.transaction(conversationId, 'readwrite', async function (tx) {
@@ -851,6 +853,7 @@
             payload: {
               surface: clone(input.surface), assistantId: input.assistantId, serviceId: input.serviceId,
               budgets: clone(input.budgets), preferences: clone(input.preferences), entry: clone(input.entry),
+              localTarget: clone(input.localTarget),
               commandId: commandId, requestedAt: Number(input.requestedAt) || 0,
               lineage: clone(input.lineage || { branchId: active.branchId, origin: 'user' }),
             },

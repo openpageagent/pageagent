@@ -27,6 +27,10 @@
     return activePanel ? activePanel.getState() : null;
   }
 
+  function discard() {
+    if (activePanel) activePanel.discard();
+  }
+
   function text(value) {
     return String(value === undefined || value === null ? '' : value).trim();
   }
@@ -60,6 +64,7 @@
     var $ = deps.$ || function (selector) { return document.querySelector(selector); };
     var esc = deps.esc || function (value) { return String(value == null ? '' : value); };
     var toast = deps.toast || function () {};
+    var scrollOpenedEditor = deps.scrollOpenedEditor || function () {};
     var resourceClient = deps.resourceClient;
     if (!resourceClient || typeof resourceClient.get !== 'function'
         || typeof resourceClient.authorizedPost !== 'function'
@@ -71,8 +76,14 @@
     var modelServices = [];
     var agentSettings = null;
     var modelEditingServiceId = '';
+    var modelEditorOpen = false;
+    var modelEditorDirty = false;
+    var modelContextBaseline = '';
+    var draftService = null;
     var loading = false;
+    var loadError = '';
     var mutating = false;
+    var pendingReload = false;
     var loadRevision = 0;
     var modelTestRevision = 0;
     var modelTestTimer = 0;
@@ -115,6 +126,7 @@
     }
 
     function currentService() {
+      if (draftService) return draftService;
       var service = findService(modelEditingServiceId);
       if (!service) {
         service = modelServices[0] || null;
@@ -136,6 +148,55 @@
 
     function displayName(service) {
       return text(service && service.name) || text(service && service.model) || text(service && service.baseUrl) || '未命名服务';
+    }
+
+    function renderServiceList() {
+      var list = $('#model-services-list');
+      var focusedCard = document.activeElement.closest('.model-service-card');
+      var focusedId = focusedCard && list.contains(focusedCard) ? focusedCard.dataset.id : '';
+      var focusedCopy = document.activeElement.matches('[data-action="copy-id"]');
+      var defaultServiceId = text(agentSettings && agentSettings.defaultModelServiceId);
+      list.innerHTML = modelServices.map(function (service) {
+        var expanded = modelEditorOpen && service.id === modelEditingServiceId;
+        var configured = !!(text(service.baseUrl) && text(service.model));
+        var description = (PROTOCOLS[service.protocol] || service.protocol || '未选择协议')
+          + ' · ' + (service.model || '未设置模型') + ' · ' + (service.baseUrl || '未设置地址');
+        return '<div role="button" tabindex="0" class="item-card connection-card model-service-card' + (expanded ? ' selected' : '')
+          + '" data-id="' + esc(service.id) + '" aria-expanded="' + expanded + '" aria-controls="model-service-editor"'
+          + (loading || mutating ? ' aria-disabled="true"' : '') + '>'
+          + '<span class="connection-summary"><span class="item-title" title="' + esc(displayName(service)) + '">' + esc(displayName(service)) + '</span>'
+          + '<span class="item-sub" title="' + esc(description) + '">' + esc(description) + '</span>'
+          + deps.itemIdHtml(service.id) + '</span>'
+          + (service.id === defaultServiceId ? '<span class="badge">全局默认</span>' : '')
+          + '<span class="badge' + (configured ? ' on' : '') + '">' + (configured ? '已配置' : '待配置') + '</span>'
+          + '</div>';
+      }).join('') || (modelEditorOpen && !loading && !loadError ? ''
+        : '<div class="placeholder">' + esc(loading ? '正在加载模型服务…' : loadError || '还没有模型服务，点击「新增服务」配置') + '</div>');
+      if (focusedId) {
+        var focused = Array.from(list.children).find(function (item) { return item.dataset.id === focusedId; });
+        if (focused) (focusedCopy ? focused.querySelector('.item-id') : focused).focus({ preventScroll: true });
+      }
+    }
+
+    function setEditorOpen(open) {
+      var editor = $('#model-service-editor');
+      var restoreFocus = editor.contains(document.activeElement);
+      modelEditorOpen = open && !!currentService();
+      editor.classList.toggle('hidden', !modelEditorOpen);
+      renderServiceList();
+      if (modelEditorOpen) scrollOpenedEditor(editor);
+      else if (restoreFocus) {
+        var card = Array.from($('#model-services-list').children).find(function (item) {
+          return item.dataset.id === modelEditingServiceId;
+        }) || $('#btn-model-add-service');
+        card.focus({ preventScroll: true });
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+
+    async function confirmEditorChange() {
+      if (loading || mutating) return false;
+      return !modelEditorDirty || await deps.confirm('有未保存的修改，是否放弃？');
     }
 
     function readAllModelServices() {
@@ -204,6 +265,12 @@
       };
     }
 
+    function contextSignature() {
+      return JSON.stringify(['#model-max-context-tokens', '#model-auto-compact-token-limit', '#model-context-compression'].map(function (selector) {
+        return $(selector).value;
+      }));
+    }
+
     function parseMaxRetriesInput(value) {
       if (text(value) === '') return maxRetriesDefault;
       var retries = Math.floor(Number(value));
@@ -248,8 +315,9 @@
         var element = $(selector);
         if (element) element.disabled = loading || mutating || !agentSettings;
       });
-      var select = $('#model-service-select');
-      if (select) select.disabled = loading || mutating || !modelServices.length;
+      Array.from($('#model-services-list').children).forEach(function (card) {
+        if (card.classList.contains('model-service-card')) card.setAttribute('aria-disabled', String(loading || mutating));
+      });
       var addButton = $('#btn-model-add-service');
       if (addButton) addButton.disabled = loading || mutating;
       ['#btn-model-copy-service', '#btn-model-delete-service', '#btn-model-save', '#btn-model-test', '#btn-model-set-default']
@@ -257,33 +325,39 @@
           var element = $(selector);
           if (element) element.disabled = loading || mutating || !hasService;
         });
+      ['#btn-model-copy-service', '#btn-model-delete-service', '#btn-model-set-default'].forEach(function (selector) {
+        if (draftService) $(selector).disabled = true;
+      });
+      $('#btn-model-cancel').disabled = loading || mutating;
       var clearButton = $('#btn-model-clear-key');
       var service = currentService();
+      var defaultButton = $('#btn-model-set-default');
+      if (defaultButton && service && agentSettings && service.id === agentSettings.defaultModelServiceId) {
+        defaultButton.disabled = true;
+      }
       if (clearButton) {
         clearButton.disabled = loading || mutating || !hasService
           || !(service.credentialMetadata && service.credentialMetadata.apiKeyConfigured === true);
       }
     }
 
+    function renderCredentialStatus() {
+      var service = currentService() || {};
+      var hasSecret = (service.credentialMetadata || {}).hasSecret === true;
+      $('#model-api-key').placeholder = hasSecret ? '已配置；留空保持不变' : '输入 API Key';
+      $('#model-api-key-help').textContent = hasSecret ? '密钥已配置' : '尚未配置密钥';
+    }
+
     function render() {
-      var select = $('#model-service-select');
       var defaultServiceId = text(agentSettings && agentSettings.defaultModelServiceId);
-      if (!findService(modelEditingServiceId)) {
+      if (!draftService && !findService(modelEditingServiceId)) {
         modelEditingServiceId = findService(defaultServiceId)
           ? defaultServiceId
           : (modelServices[0] && modelServices[0].id || '');
       }
-      if (select) {
-        select.innerHTML = modelServices.map(function (service) {
-          var label = displayName(service);
-          if (service.id === defaultServiceId) label += '（全局默认）';
-          return '<option value="' + esc(service.id) + '">' + esc(label) + '</option>';
-        }).join('');
-        select.value = modelEditingServiceId;
-      }
-
       var service = currentService() || {};
-      var hasService = !!service.id;
+      var hasService = !!(draftService || service.id);
+      $('#model-editor-title').textContent = draftService ? '新建模型服务' : '编辑模型服务';
       $('#model-service-name').value = service.name || '';
       $('#model-base-url').value = service.baseUrl || '';
       $('#model-user-agent').value = service.userAgent || '';
@@ -295,19 +369,8 @@
         ? '' : String(Math.max(0, Math.floor(Number(service.maxRetries) || 0)));
       $('#model-protocol').value = PROTOCOLS[service.protocol] ? service.protocol : 'chat_completions';
 
-      var apiKeyInput = $('#model-api-key');
-      var secretMetadata = service.credentialMetadata || {};
-      var hasSecret = secretMetadata.hasSecret === true;
-      apiKeyInput.value = '';
-      apiKeyInput.placeholder = hasSecret
-        ? '凭据已配置；留空保持不变'
-        : '输入 API Key';
-      var apiKeyHelp = $('#model-api-key-help');
-      if (apiKeyHelp) {
-        apiKeyHelp.textContent = hasSecret
-          ? '已配置凭据。服务端只返回 hasSecret；留空不会修改，清除 API Key 需点击“清除密钥”。'
-          : '尚未配置密钥。输入值只会作为 secret 写入，不会回显。';
-      }
+      $('#model-api-key').value = '';
+      renderCredentialStatus();
 
       var budget = agentSettings && agentSettings.contextBudget || {};
       var contextTokens = Math.max(0, Number(budget.maxContextTokens) || 0);
@@ -321,16 +384,34 @@
         ? agentSettings.contextCompression
         : '';
 
-      var defaultService = findService(defaultServiceId);
-      $('#model-default-service-name').textContent = defaultService ? displayName(defaultService) : '未配置';
+      modelEditorDirty = false;
+      modelContextBaseline = contextSignature();
+      modelEditorOpen = modelEditorOpen && hasService;
+      $('#model-service-editor').classList.toggle('hidden', !modelEditorOpen);
+      renderServiceList();
       setControlsDisabled(hasService);
+      refreshPendingModelSettings();
+    }
+
+    function refreshPendingModelSettings() {
+      if (!pendingReload || loading || mutating || deps.lifecycle.isDestroyed()
+          || modelEditorOpen && (modelEditorDirty || draftService)) return;
+      loadModelSettings().catch(function () {});
     }
 
     function loadModelSettings(options) {
       options = options || {};
+      if (mutating || modelEditorOpen && (modelEditorDirty || draftService)) {
+        pendingReload = true;
+        return Promise.resolve(null);
+      }
+      pendingReload = false;
       var revision = ++loadRevision;
       retireModelTest();
       loading = true;
+      loadError = '';
+      renderServiceList();
+      setControlsDisabled(!!currentService());
       return Promise.all([readAllModelServices(), readAgentSettings()]).then(function (values) {
         if (revision !== loadRevision) return null;
         modelServices = values[0];
@@ -344,7 +425,10 @@
         }
         return { services: clone(modelServices), agentSettings: clone(agentSettings) };
       }).catch(function (error) {
-        if (revision === loadRevision) toast('模型资源加载失败: ' + errorText(error), true);
+        if (revision === loadRevision) {
+          loadError = '模型资源加载失败: ' + errorText(error);
+          toast(loadError, true);
+        }
         throw error;
       }).finally(function () {
         if (revision !== loadRevision) return;
@@ -369,24 +453,34 @@
       options = options || {};
       var service = currentService();
       if (!service) return Promise.reject(new Error('没有可保存的模型服务'));
-      var uri = itemUri(service.id);
+      var creating = !service.id;
       var servicePatch = servicePatchFromControls();
       var contextPatch = options.includeContext === false ? null : contextPatchFromControls();
-      $('#model-api-key').value = '';
-      return resourceClient.get(uri).then(function () {
-        return resourceClient.authorizedPatch(uri, servicePatch, mutationOptions('model-service', {
-          ifMatch: 'cached',
-        }));
-      }).then(function (envelope) {
+      var request = service.id
+        ? resourceClient.get(itemUri(service.id)).then(function () {
+          return resourceClient.authorizedPatch(itemUri(service.id), servicePatch, mutationOptions('model-service', { ifMatch: 'cached' }));
+        })
+        : resourceClient.authorizedPost(MODEL_COLLECTION_URI, servicePatch, mutationOptions('model-services'));
+      return request.then(function (envelope) {
         var saved = envelopeData(envelope, '模型服务');
         replaceService(saved);
-        if (!contextPatch) return saved;
-        return patchAgentSettings(contextPatch).then(function () { return saved; });
+        draftService = null;
+        modelEditingServiceId = saved.id;
+        $('#model-api-key').value = '';
+        modelEditorDirty = contextSignature() !== modelContextBaseline;
+        if (!contextPatch) {
+          return creating ? readAgentSettings().then(function (settings) { agentSettings = settings; return saved; }) : saved;
+        }
+        return patchAgentSettings(contextPatch).then(function () {
+          modelContextBaseline = contextSignature();
+          modelEditorDirty = false;
+          return saved;
+        });
       });
     }
 
     function runMutation(operation, successMessage) {
-      if (mutating) return Promise.reject(new Error('模型配置正在更新'));
+      if (loading || mutating) return Promise.reject(new Error('模型配置正在更新'));
       mutating = true;
       setControlsDisabled(!!currentService());
       return Promise.resolve().then(operation).then(function (value) {
@@ -397,7 +491,10 @@
         throw error;
       }).finally(function () {
         mutating = false;
-        render();
+        renderServiceList();
+        renderCredentialStatus();
+        setControlsDisabled(!!currentService());
+        refreshPendingModelSettings();
       });
     }
 
@@ -460,8 +557,10 @@
       if (!service) return Promise.reject(new Error('没有可测试的模型服务'));
       var revision = retireModelTest();
       $('#model-test-result').textContent = '⏳ 正在保存并创建连接测试…';
-      return persistCurrentService({ includeContext: false }).then(function () {
-        var uri = itemUri(service.id) + '/connection-attempts';
+      return Promise.resolve().then(function () {
+        return persistCurrentService({ includeContext: false });
+      }).then(function (saved) {
+        var uri = itemUri(saved.id) + '/connection-attempts';
         return resourceClient.authorizedPost(uri, {}, mutationOptions('model-service-connection-attempts'));
       }).then(function (envelope) {
         var attempt = envelopeData(envelope, '连接测试');
@@ -476,36 +575,53 @@
       });
     }
 
-    $('#model-service-select').addEventListener('change', function (event) {
+    $('#model-services-list').addEventListener('click', async function (event) {
+      var card = event.target.closest('.model-service-card');
+      if (!card || loading || mutating || !findService(card.dataset.id) || !await confirmEditorChange()) return;
+      var open = !modelEditorOpen || modelEditingServiceId !== card.dataset.id;
       retireModelTest();
-      modelEditingServiceId = text(event.target.value);
+      draftService = null;
+      modelEditingServiceId = card.dataset.id;
       $('#model-test-result').textContent = '';
       render();
+      setEditorOpen(open);
     });
 
-    $('#model-protocol').addEventListener('change', function () {
+    ['input', 'change'].forEach(function (eventName) {
+      $('#model-service-editor').addEventListener(eventName, function (event) {
+        if (!event.target.matches('input, select')) return;
+        modelEditorDirty = true;
+        retireModelTest();
+        $('#model-test-result').textContent = '';
+      });
+    });
+
+    $('#btn-model-add-service').addEventListener('click', async function () {
+      if (!await confirmEditorChange()) return;
       retireModelTest();
+      draftService = createServiceBody({}, '');
+      draftService.name = '';
+      draftService.maxRetries = maxRetriesDefault;
+      modelEditingServiceId = '';
       $('#model-test-result').textContent = '';
-      setControlsDisabled(!!currentService());
+      render();
+      setEditorOpen(true);
     });
 
-    $('#btn-model-add-service').addEventListener('click', function () {
+    function discardEditor() {
       retireModelTest();
-      runMutation(function () {
-        return resourceClient.authorizedPost(
-          MODEL_COLLECTION_URI,
-          createServiceBody({}, '新服务 ' + (modelServices.length + 1)),
-          mutationOptions('model-services')
-        ).then(function (envelope) {
-          var service = envelopeData(envelope, '模型服务');
-          replaceService(service);
-          modelEditingServiceId = service.id;
-          return readAgentSettings().then(function (settings) { agentSettings = settings; return service; });
-        });
-      }, '模型服务已创建').catch(function () {});
+      draftService = null;
+      modelEditorDirty = false;
+      setEditorOpen(false);
+      render();
+    }
+
+    $('#btn-model-cancel').addEventListener('click', async function () {
+      if (await confirmEditorChange()) discardEditor();
     });
 
-    $('#btn-model-copy-service').addEventListener('click', function () {
+    $('#btn-model-copy-service').addEventListener('click', async function () {
+      if (!await confirmEditorChange()) return;
       retireModelTest();
       var source = currentService();
       if (!source) return;
@@ -517,16 +633,21 @@
         ).then(function (envelope) {
           var service = envelopeData(envelope, '模型服务');
           replaceService(service);
-          modelEditingServiceId = service.id;
           return service;
         });
-      }, '模型服务已复制；密钥不会被复制').catch(function () {});
+      }, '模型服务已复制；密钥不会被复制').then(function (service) {
+        modelEditingServiceId = service.id;
+        $('#model-test-result').textContent = '';
+        render();
+        setEditorOpen(true);
+      }).catch(function () {});
     });
 
-    $('#btn-model-delete-service').addEventListener('click', function () {
+    $('#btn-model-delete-service').addEventListener('click', async function () {
       retireModelTest();
       var service = currentService();
-      if (!service || !root.confirm('确定删除模型服务“' + displayName(service) + '”？相关助手和对话会解除该服务绑定。')) return;
+      if (!service || !await deps.confirm('确定删除模型服务“' + displayName(service) + '”？相关助手和对话会解除该服务绑定。')) return;
+      var deleted = false;
       runMutation(function () {
         var uri = itemUri(service.id);
         return resourceClient.get(uri).then(function () {
@@ -534,14 +655,24 @@
         }).then(function () {
           modelServices = modelServices.filter(function (item) { return item && item.id !== service.id; });
           modelEditingServiceId = modelServices[0] && modelServices[0].id || '';
+          deleted = true;
           return readAgentSettings().then(function (settings) { agentSettings = settings; });
         });
-      }, '模型服务已删除').catch(function () {});
+      }, '模型服务已删除').catch(function () {}).finally(function () {
+        if (!deleted) return;
+        setEditorOpen(false);
+        render();
+        $('#model-test-result').textContent = '';
+      });
     });
 
     $('#btn-model-save').addEventListener('click', function () {
       retireModelTest();
       runMutation(function () { return persistCurrentService({ includeContext: true }); }, '模型与 Agent 上下文设置已保存')
+        .then(function () {
+          render();
+          setEditorOpen(false);
+        })
         .catch(function () {});
     });
 
@@ -555,10 +686,10 @@
     });
 
     var clearKeyButton = $('#btn-model-clear-key');
-    if (clearKeyButton) clearKeyButton.addEventListener('click', function () {
+    if (clearKeyButton) clearKeyButton.addEventListener('click', async function () {
       retireModelTest();
       var service = currentService();
-      if (!service || !root.confirm('确定清除“' + displayName(service) + '”的 API Key？')) return;
+      if (!service || !await deps.confirm('确定清除“' + displayName(service) + '”的 API Key？')) return;
       runMutation(function () {
         var uri = itemUri(service.id);
         return resourceClient.get(uri).then(function () {
@@ -567,23 +698,34 @@
           }));
         }).then(function (envelope) {
           replaceService(envelopeData(envelope, '模型服务'));
+          $('#model-api-key').value = '';
+          $('#model-test-result').textContent = '';
         });
       }, 'API Key 已清除').catch(function () {});
     });
 
     $('#btn-model-test').addEventListener('click', function () {
-      if (mutating) return;
+      if (loading || mutating) return;
       mutating = true;
       setControlsDisabled(!!currentService());
       startConnectionAttempt().catch(function () {}).finally(function () {
         mutating = false;
-        render();
+        renderServiceList();
+        renderCredentialStatus();
+        setControlsDisabled(!!currentService());
+        refreshPendingModelSettings();
       });
     });
 
+    deps.lifecycle.subscribe(root.chrome.storage.onChanged, function (changes, area) {
+      if (area !== 'local' || !changes[root.ModelSettings.SETTINGS_KEY]) return;
+      pendingReload = true;
+      refreshPendingModelSettings();
+    });
 
     activePanel = {
       reload: loadModelSettings,
+      discard: discardEditor,
       getState: function () {
         return {
           services: clone(modelServices),
@@ -591,6 +733,7 @@
           editingServiceId: modelEditingServiceId,
           loading: loading,
           mutating: mutating,
+          dirty: modelEditorOpen && modelEditorDirty,
         };
       },
     };
@@ -601,6 +744,7 @@
     init: init,
     reload: reload,
     getState: getState,
+    discard: discard,
     PROTOCOLS: PROTOCOLS,
     API_STYLES: PROTOCOLS,
   });

@@ -1,551 +1,368 @@
-// WebSocket Client - Extension 端 ARP/1 transport。
-(function attachWebSocketClient(root, factory) {
+(function (root) {
   'use strict';
-  root.WebSocketClient = factory(root);
-})(globalThis, function (root) {
-  'use strict';
-
-  var ARP_METHODS = Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
-  var CORRELATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
-
-  function isRecord(value) {
-    return !!(value && typeof value === 'object' && !Array.isArray(value));
-  }
-
+  var c = root.McpContract;
   function createWebSocketClient(deps) {
-    deps = deps || {};
-    var dispatchResource = deps.dispatchResource;
-    var createTrustedContext = deps.createTrustedContext;
-    var arp = deps.arp || root.AgentResourceProtocol;
-    if (typeof dispatchResource !== 'function') {
-      throw new Error('WebSocketClient requires canonical ARP dispatchResource()');
+    var config = deps.connection, clientInfo = deps.clientInfo, socket = null, identity = null, serverInfo = null;
+    var state = 'disconnected', reason = null, retryCount = 0, retryLimit = 20, retryTimer, heartbeatTimer, handshakeTimer;
+    var pending = new Map(), inbound = new Map(), seen = new Set(), logs = [], waiters = [];
+    var observations = { memory: null, disks: {} };
+    var reconnect = true, generation = 0, acknowledged = null, configureQueue = Promise.resolve();
+    var authRequestId = null, helloRequestId = null, helloPending = false, helloInfo = null, authStarted = false;
+    var cipher = null, sendQueue = Promise.resolve();
+    function hello() {
+      if (helloPending) return;
+      helloPending = true; helloInfo = JSON.stringify(clientInfo); helloRequestId = crypto.randomUUID();
+      send({ type: 'hello', requestId: helloRequestId, protocol: 'arp/1', clientInfo: clientInfo });
     }
-    if (typeof createTrustedContext !== 'function') {
-      throw new Error('WebSocketClient requires createTrustedContext()');
+    function log(level, message) { logs.push({ timestamp: Date.now(), level: level, message: message }); if (logs.length > 80) logs.shift(); }
+    function transition(next, detail) {
+      state = next; reason = detail || null; log(next === 'ready' ? 'success' : 'info', next + (detail ? ': ' + detail : ''));
+      if (deps.onChange) deps.onChange();
     }
-    if (!arp || typeof arp.createErrorResponse !== 'function' || typeof arp.arpError !== 'function') {
-      throw new Error('AgentResourceProtocol must load before WebSocketClient');
+    function status() { return { state: state, reason: reason, connected: !!socket && socket.readyState === WebSocket.OPEN,
+      connecting: state === 'connecting', ready: state === 'ready', url: config.url, retryCount: retryCount, retryLimit: retryLimit,
+      clientInfo: clientInfo, serverInfo: serverInfo, serverId: identity && identity.serverId,
+      transportSessionId: identity && identity.transportSessionId, configured: acknowledged, observations: observations, logs: logs.slice() }; }
+    function settleWaiters(error) {
+      waiters.splice(0).forEach(function (waiter) { clearTimeout(waiter.timer); if (error) waiter.reject(error); else waiter.resolve(status()); });
     }
-
-    var ws = null;
-    var connected = false;
-    var wsUrl = deps.wsUrl || 'ws://127.0.0.1:9999';
-    var retryCount = 0;
-    var maxRetries = Math.max(1, Number(deps.maxRetries) || 20);
-    var baseDelay = Math.max(250, Number(deps.baseDelayMs) || 1000);
-    var shouldReconnect = true;
-    var reconnectTimer = null;
-    var heartbeatTimer = null;
-    var heartbeatIntervalMs = deps.heartbeatIntervalMs || 20000;
-    var maxLogEntries = deps.maxLogEntries || 80;
-    var logs = [];
-    var clientInfo = normalizeClientInfo(deps.clientInfo || {});
-    var serverInfo = null;
-    var connectionWaiters = [];
-    var localRequestSequence = 0;
-    var mailRequests = new Map();
-    var localToolsEnabled = deps.localToolsEnabled !== false;
-    var localWorkingDirectory = String(deps.localWorkingDirectory || '').trim();
-    var localRequests = new Map();
-
-    function effectiveLocalDirectory() {
-      return localWorkingDirectory || String(serverInfo && serverInfo.workingDirectory || '').trim();
+    function send(body, expectedSocket) {
+      var current = expectedSocket || socket;
+      if (!current || current !== socket || current.readyState !== WebSocket.OPEN || !identity || !cipher) c.fail('CONNECTION_NOT_READY', '连接未就绪', 'TEMPORARILY_UNAVAILABLE');
+      var text = JSON.stringify(Object.assign({}, body, { transportProtocol: c.TRANSPORT, serverId: identity.serverId,
+        clientId: identity.clientId, transportSessionId: identity.transportSessionId, requestId: body.requestId || crypto.randomUUID() }));
+      var currentCipher = cipher, epoch = generation;
+      sendQueue = sendQueue.then(async function () {
+        if (epoch !== generation || current !== socket || current.readyState !== WebSocket.OPEN) return;
+        var encrypted = await currentCipher.encrypt(text);
+        if (epoch === generation && current === socket && current.readyState === WebSocket.OPEN) current.send(encrypted);
+      }).catch(function (error) { if (epoch === generation && current === socket) failConnection(error); });
     }
-
-    function finishLocal(requestId, error, result, cancel) {
-      var pending = localRequests.get(requestId);
-      if (!pending) return;
-      localRequests.delete(requestId);
-      clearTimeout(pending.timer);
-      if (pending.signal) pending.signal.removeEventListener('abort', pending.onAbort);
-      if (cancel && pending.socket.readyState === WebSocket.OPEN) {
-        try { pending.socket.send(JSON.stringify({ type: 'local.cancel', requestId: requestId })); } catch (_) {}
-      }
-      if (error) { error.retryable = false; pending.reject(error); }
-      else pending.resolve(result);
-    }
-
-    function rejectLocalRequests() {
-      localRequests.forEach(function (_, requestId) {
-        finishLocal(requestId, new Error('本地操作已停用或连接中断；执行结果可能未知，请确认后再重试'), null, true);
-      });
-    }
-
-    function configureLocalTools(value, directory) {
-      var enabled = value === true;
-      var nextDirectory = String(directory || '').trim();
-      if (localToolsEnabled === enabled && localWorkingDirectory === nextDirectory) return;
-      if (!enabled || localWorkingDirectory !== nextDirectory) rejectLocalRequests();
-      localToolsEnabled = enabled;
-      localWorkingDirectory = nextDirectory;
-      sendHello();
-    }
-
-    function callLocal(operation, input, options) {
-      options = options || {};
-      return new Promise(function (resolve, reject) {
-        if (!localToolsEnabled || !effectiveLocalDirectory() || !connected || !ws || ws.readyState !== WebSocket.OPEN
-            || !serverInfo || serverInfo.localOperations !== 'local/1') {
-          reject(new Error('请在连接配置中启用本地文件与命令操作，并连接支持该能力的 MCP Server'));
-          return;
-        }
-        var url = new URL(wsUrl);
-        if (url.protocol !== 'wss:' && ['127.0.0.1', 'localhost', '[::1]'].indexOf(url.hostname) < 0) {
-          reject(new Error('远程本地操作必须使用 wss:// 连接 MCP Server'));
-          return;
-        }
-        var requestId = nextLocalRequestId();
-        var pending = { socket: ws, resolve: resolve, reject: reject, signal: options.signal };
-        pending.onAbort = function () {
-          finishLocal(requestId, new Error('本地操作已取消；已经完成的修改不会撤销'), null, true);
-        };
-        pending.timer = setTimeout(function () {
-          finishLocal(requestId, new Error('等待本地操作结果超时；执行结果可能未知，请确认后再重试'), null, true);
-        }, 75000);
-        localRequests.set(requestId, pending);
-        if (pending.signal) {
-          pending.signal.addEventListener('abort', pending.onAbort, { once: true });
-          if (pending.signal.aborted) { pending.onAbort(); return; }
-        }
-        try {
-          pending.socket.send(JSON.stringify({ type: 'local.call', requestId: requestId, operation: operation,
-            workingDirectory: effectiveLocalDirectory(), input: input }));
-        } catch (error) { finishLocal(requestId, error); }
-      });
-    }
-
-    function finishMail(requestId, error, result, cancel) {
-      var pending = mailRequests.get(requestId);
-      if (!pending) return;
-      mailRequests.delete(requestId);
-      clearTimeout(pending.timer);
-      if (pending.signal) pending.signal.removeEventListener('abort', pending.onAbort);
-      pending.payload = null;
-      if (cancel && pending.sent && pending.socket.readyState === WebSocket.OPEN) {
-        try { pending.socket.send(JSON.stringify({ type: 'mail.cancel', requestId: requestId })); } catch (_) {}
-      }
+    function unknown(message) { return Object.assign(new Error(message), { code: 'UPSTREAM_FAILED', reason: 'RESULT_UNKNOWN', performed: 'unknown', retryable: false,
+      execution: { outcome: 'unknown', termination: 'unconfirmed', finishedAt: null }, receipt: { performed: 'unknown' } }); }
+    function finish(id, error, value) {
+      var entry = pending.get(id); if (!entry) return;
+      pending.delete(id); clearTimeout(entry.timer); clearTimeout(entry.stopTimer);
+      if (entry.signal) entry.signal.removeEventListener('abort', entry.abort);
+      if (entry.stopping && deps.onExecutionState) deps.onExecutionState({ connectionId: config.id, requestId: id,
+        conversationId: entry.body.caller && entry.body.caller.conversationId,
+        state: error && error.reason === 'RESULT_UNKNOWN' ? 'unknown' : 'settled' });
       if (error) {
-        error.retryable = false;
-        pending.reject(error);
-      } else pending.resolve(result);
+        error.requestId = id; error.transportSessionId = entry.transportSessionId;
+        entry.reject(error);
+      } else entry.resolve(value);
     }
-
-    function rejectMailRequests() {
-      mailRequests.forEach(function (pending, requestId) {
-        finishMail(requestId, new Error(pending.sent
-          ? 'MCP 连接中断，邮件投递结果未知，请确认后再重试'
-          : 'MCP 连接中断，邮件尚未发送'));
-      });
+    function cancel(id, stopReason) {
+      var entry = pending.get(id); if (!entry || entry.stopping) return;
+      entry.stopping = true; clearTimeout(entry.timer);
+      try { send({ type: entry.type === 'arp.call' ? 'arp.call.cancel' : entry.type === 'mail.send' ? 'mail.cancel' : 'local.cancel', requestId: id, reason: stopReason }, entry.socket); } catch (_) {}
+      if (deps.onExecutionState) deps.onExecutionState({ connectionId: config.id, requestId: id, state: 'stopping', conversationId: entry.body.caller && entry.body.caller.conversationId });
+      entry.stopTimer = setTimeout(function () { finish(id, unknown('停止请求已发送，但未确认执行结束；请勿自动重试')); }, c.LIMITS.stopWaitMs);
     }
-
-    function postMail(requestId, pending) {
-      if (!serverInfo || pending.sent || pending.socket !== ws) return;
-      if (serverInfo.mail !== 'smtp/1') {
-        finishMail(requestId, new Error('当前 MCP Server 不支持邮件发送，请更新服务端后重新连接'));
-        return;
-      }
-      try {
-        var frame = JSON.stringify({ type: 'mail.send', requestId: requestId, payload: pending.payload });
-        if (new TextEncoder().encode(frame).length > root.PageAutomationMailSettings.MAX_REQUEST_BYTES) throw new Error('邮件请求超过 32MB，请减小附件或正文');
-        pending.socket.send(frame);
-        pending.sent = true;
-        pending.payload = null;
-        clearTimeout(pending.timer);
-        pending.timer = setTimeout(function () {
-          finishMail(requestId, new Error('等待邮件排队及发送结果超过 150 秒，投递结果未知，请确认后再重试'), null, true);
-        }, root.PageAutomationMailSettings.DELIVERY_LIMITS.resultTimeoutMs);
-      } catch (_) {
-        finishMail(requestId, new Error('邮件请求无法发送或超过 32MB，请检查连接和附件大小'));
-      }
-    }
-
-    function sendMail(payload, options) {
+    function request(type, body, options) {
       options = options || {};
+      if (state !== 'ready' && type !== 'local.configure') return Promise.reject(Object.assign(new Error('连接未就绪'), { code: 'TEMPORARILY_UNAVAILABLE', reason: 'CONNECTION_NOT_READY', performed: 'no' }));
+      if (options.signal && options.signal.aborted) return Promise.reject(Object.assign(new Error('请求已取消，尚未发送'), { performed: 'no' }));
       return new Promise(function (resolve, reject) {
-        if (!connected || !ws || ws.readyState !== WebSocket.OPEN) {
-          reject(new Error('请先连接 MCP Server，邮件尚未发送'));
-          return;
-        }
-        var url = new URL(wsUrl);
-        if (url.protocol !== 'wss:' && ['127.0.0.1', 'localhost', '[::1]'].indexOf(url.hostname) < 0) {
-          reject(new Error('远程邮件发送必须使用 wss:// 连接 MCP Server，以保护邮箱授权码'));
-          return;
-        }
-        var requestId = nextLocalRequestId();
-        var pending = { socket: ws, payload: payload, resolve: resolve, reject: reject, signal: options.signal, sent: false };
-        pending.onAbort = function () {
-          finishMail(requestId, new Error(pending.sent
-            ? '邮件发送已取消；如已提交 SMTP，邮件仍可能送达，请确认后再重试'
-            : '邮件发送已取消'), null, true);
-        };
-        pending.timer = setTimeout(function () {
-          finishMail(requestId, new Error('MCP Server 尚未确认邮件发送能力，请检查连接或更新服务端'));
-        }, 5000);
-        mailRequests.set(requestId, pending);
-        if (pending.signal) {
-          pending.signal.addEventListener('abort', pending.onAbort, { once: true });
-          if (pending.signal.aborted) { pending.onAbort(); return; }
-        }
-        postMail(requestId, pending);
-      });
-    }
-
-    function normalizeClientInfo(info) {
-      info = info || {};
-      return {
-        clientId: String(info.clientId || '').trim(),
-        clientName: String(info.clientName || info.name || '').trim(),
-        extensionId: String(info.extensionId || '').trim(),
-        extensionName: String(info.extensionName || '').trim(),
-        extensionVersion: String(info.extensionVersion || '').trim(),
-        browser: String(info.browser || detectBrowser()).trim(),
-        profile: String(info.profile || '').trim(),
-        os: String(info.os || (typeof navigator !== 'undefined' && navigator.platform) || '').trim(),
-        language: String(info.language || (typeof navigator !== 'undefined' && navigator.language) || '').trim(),
-        userAgent: String(info.userAgent || (typeof navigator !== 'undefined' && navigator.userAgent) || '').trim(),
-        incognito: info.incognito === true || info.incognitoContext === true,
-        incognitoContext: info.incognito === true || info.incognitoContext === true,
-        incognitoAccess: info.incognitoAccess === true,
-        protocol: 'arp/1',
-      };
-    }
-
-    function detectBrowser() {
-      var ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
-      if (/Edg\//.test(ua)) return 'edge';
-      if (/OPR\//.test(ua)) return 'opera';
-      if (/Firefox\//.test(ua)) return 'firefox';
-      if (/Chrome\//.test(ua)) return 'chrome';
-      if (/Safari\//.test(ua)) return 'safari';
-      return 'browser';
-    }
-
-    function previewValue(value, maxLen) {
-      var output = '';
-      try { output = typeof value === 'string' ? value : JSON.stringify(value); }
-      catch (_) { output = String(value); }
-      maxLen = maxLen || 500;
-      return output.length > maxLen ? output.slice(0, maxLen) + '...' : output;
-    }
-
-    function addLog(level, message, detail) {
-      var entry = { timestamp: Date.now(), level: level || 'info', message: message || '' };
-      if (detail !== undefined) entry.detail = previewValue(detail, 700);
-      logs.push(entry);
-      while (logs.length > maxLogEntries) logs.shift();
-    }
-
-    function getLogs() { return logs.slice(); }
-    function clearLogs() { logs = []; }
-
-    function settleConnectionWaiters(error) {
-      var waiters = connectionWaiters.splice(0);
-      waiters.forEach(function (waiter) {
-        clearTimeout(waiter.timer);
-        if (error) waiter.reject(error);
-        else waiter.resolve(getStatus());
-      });
-    }
-
-    function nextLocalRequestId() {
-      localRequestSequence += 1;
-      return 'arp_ws_' + Date.now().toString(36) + '_' + localRequestSequence.toString(36);
-    }
-
-    function errorEnvelope(error, code) {
-      var message = String(error && error.message || error || 'ARP WebSocket dispatch failed');
-      var normalized = error instanceof arp.ArpError
-        ? error
-        : arp.arpError(code || 'INTERNAL_ERROR', message, {
-          retryable: code === 'TEMPORARILY_UNAVAILABLE',
-          performed: 'no',
-        });
-      return arp.createErrorResponse(nextLocalRequestId(), normalized, { performed: 'no' });
-    }
-
-    function isArpEnvelope(value) {
-      return !!(isRecord(value)
-        && value.protocol === 'arp/1'
-        && typeof value.requestId === 'string'
-        && isRecord(value.status)
-        && Number.isInteger(Number(value.status.code)));
-    }
-
-    function safeCorrelationContext(value) {
-      value = isRecord(value) ? value : {};
-      var sessionId = String(value.sessionId || '').trim();
-      var conversationId = String(value.conversationId || sessionId).trim();
-      if (!CORRELATION_ID.test(sessionId)) throw new TypeError('context.sessionId is invalid');
-      if (!CORRELATION_ID.test(conversationId)) throw new TypeError('context.conversationId is invalid');
-      // actor、permissions、origin、tab/window 等安全字段即使出现在帧中也不会被复制。
-      return { sessionId: sessionId, conversationId: conversationId };
-    }
-
-    function normalizeRequestFrame(message) {
-      if (!isRecord(message)) throw new TypeError('WebSocket frame must be an object');
-      if (message.requestId === undefined || message.requestId === null || String(message.requestId).length > 200) {
-        throw new TypeError('requestId is missing or too long');
-      }
-      var method = String(message.method || '');
-      if (ARP_METHODS.indexOf(method) === -1) throw new TypeError('Unsupported ARP method: ' + (method || '(empty)'));
-      if (!isRecord(message.request)) throw new TypeError('request must be an object');
-      return {
-        requestId: message.requestId,
-        method: method,
-        request: message.request,
-        correlation: safeCorrelationContext(message.context),
-      };
-    }
-
-    function stopHeartbeat() {
-      clearInterval(heartbeatTimer);
-      heartbeatTimer = null;
-    }
-
-    function startHeartbeat() {
-      stopHeartbeat();
-      if (!heartbeatIntervalMs || heartbeatIntervalMs < 5000) return;
-      heartbeatTimer = setInterval(function () {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        try {
-          ws.send(JSON.stringify({ type: 'heartbeat', sentAt: Date.now(), clientId: clientInfo.clientId }));
-        } catch (error) {
-          addLog('error', 'MCP heartbeat 发送失败', { error: error.message });
-        }
-      }, heartbeatIntervalMs);
-    }
-
-    function sendHello() {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      try {
-        ws.send(JSON.stringify({ type: 'hello', protocol: 'arp/1', clientInfo: clientInfo,
-          localToolsEnabled: localToolsEnabled, localWorkingDirectory: effectiveLocalDirectory(), sentAt: Date.now() }));
-      } catch (error) {
-        addLog('error', '发送 MCP 客户端 hello 失败', { error: error.message });
-      }
-    }
-
-    function sendResponse(requestId, envelope) {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        addLog('error', 'ARP 响应发送失败：连接不可用', { requestId: requestId });
-        return;
-      }
-      try {
-        ws.send(JSON.stringify({ requestId: requestId, envelope: envelope }));
-      } catch (error) {
-        addLog('error', 'ARP 响应发送异常', { requestId: requestId, error: error.message });
-      }
-    }
-
-    function handleRequest(message) {
-      var frame;
-      try {
-        frame = normalizeRequestFrame(message);
-      } catch (error) {
-        if (message && message.requestId !== undefined && message.requestId !== null) {
-          sendResponse(message.requestId, errorEnvelope(error, 'INVALID_REQUEST'));
-        }
-        addLog('error', '拒绝无效 ARP 请求帧', { error: error.message });
-        return;
-      }
-
-      var startedAt = Date.now();
-      addLog('info', '收到 ARP 请求: ' + frame.method + ' ' + String(frame.request.uri || ''), {
-        requestId: frame.requestId,
-      });
-
-      Promise.resolve().then(function () {
-        return createTrustedContext(frame.correlation, {
-          method: frame.method,
-          request: frame.request,
-          connectionUrl: wsUrl,
-          clientInfo: clientInfo,
-        });
-      }).then(function (trustedContext) {
-        if (!isRecord(trustedContext)) throw new Error('createTrustedContext() did not return an object');
-        return dispatchResource(frame.method, frame.request, trustedContext);
-      }).then(function (envelope) {
-        if (!isArpEnvelope(envelope)) throw new Error('Canonical resource runtime returned an invalid ARP/1 Envelope');
-        addLog(Number(envelope.status.code) >= 400 ? 'warn' : 'success', '完成 ARP 请求: ' + frame.method + ' ' + String(frame.request.uri || ''), {
-          requestId: frame.requestId,
-          status: envelope.status.code,
-          elapsedMs: Date.now() - startedAt,
-        });
-        sendResponse(frame.requestId, envelope);
-      }).catch(function (error) {
-        addLog('error', 'ARP 请求派发失败: ' + frame.method + ' ' + String(frame.request.uri || ''), {
-          requestId: frame.requestId,
-          elapsedMs: Date.now() - startedAt,
-          error: error.message,
-        });
-        sendResponse(frame.requestId, errorEnvelope(error, 'INTERNAL_ERROR'));
-      });
-    }
-
-    function reconnect() {
-      if (!shouldReconnect) return;
-      if (retryCount >= maxRetries) {
-        addLog('error', 'MCP WebSocket 已达到最大重试次数', { maxRetries: maxRetries });
-        retryCount = 0;
-        return;
-      }
-      var delay = Math.min(baseDelay * Math.pow(2, retryCount), 30000);
-      retryCount += 1;
-      addLog('info', '准备重连 MCP Server', { url: wsUrl, delayMs: delay, attempt: retryCount });
-      clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(function () {
-        reconnectTimer = null;
-        if (shouldReconnect) connect();
-      }, delay);
-    }
-
-    function connect() {
-      shouldReconnect = true;
-      if (connected || (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN))) return;
-      try {
-        addLog('info', '准备连接 MCP Server', { url: wsUrl, protocol: 'arp/1' });
-        var socket = new WebSocket(wsUrl);
-        ws = socket;
-        serverInfo = null;
-
-        socket.onopen = function () {
-          if (ws !== socket) { try { socket.close(); } catch (_) {} return; }
-          connected = true;
-          retryCount = 0;
-          addLog('success', '已连接 MCP Server', { url: wsUrl, protocol: 'arp/1' });
-          sendHello();
-          startHeartbeat();
-          settleConnectionWaiters(null);
-        };
-
-        socket.onmessage = function (event) {
-          if (ws !== socket) return;
-          try {
-            var message = JSON.parse(event.data);
-            if (message && message.type === 'hello') {
-              var firstHello = !serverInfo;
-              serverInfo = message;
-              if (firstHello && localToolsEnabled && !localWorkingDirectory && effectiveLocalDirectory()) sendHello();
-              mailRequests.forEach(function (pending, requestId) { postMail(requestId, pending); });
-              addLog('success', 'MCP Server 已确认 ARP 客户端', {
-                clientId: message.clientId || clientInfo.clientId,
-                connectedClients: message.connectedClients,
-                protocol: message.protocol || '',
-              });
-              return;
-            }
-            if (message && message.type === 'mail.result') {
-              var result = message.result;
-              if (message.ok === true && result && typeof result.messageId === 'string'
-                  && Number.isInteger(result.acceptedCount) && result.acceptedCount > 0 && result.rejectedCount === 0) {
-                finishMail(message.requestId, null, result);
-              } else {
-                finishMail(message.requestId, new Error(message.error || 'MCP Server 返回无效邮件结果，请确认投递情况后再重试'));
-              }
-              return;
-            }
-            if (message && message.type === 'local.result') {
-              finishLocal(message.requestId, message.ok === true && isRecord(message.result)
-                ? null : new Error(message.error || 'MCP Server 返回无效的本地操作结果'), message.result);
-              return;
-            }
-            handleRequest(message);
-          } catch (error) {
-            addLog('error', '解析 MCP Server 消息失败', { error: error.message });
+        var id = crypto.randomUUID();
+        var entry = { type: type, body: body, resolve: resolve, reject: reject, socket: socket,
+          transportSessionId: identity && identity.transportSessionId, signal: options.signal, stopping: false };
+        entry.abort = function () { cancel(id, 'user'); };
+        entry.timer = setTimeout(function () {
+          if (type === 'local.configure') {
+            var error = Object.assign(new Error('目录同步超时'), { reason: 'CONFIGURE_TIMEOUT', code: 'TEMPORARILY_UNAVAILABLE' });
+            finish(id, error); failConnection(error);
           }
-        };
-
-        socket.onclose = function (event) {
-          if (ws !== socket) return;
-          connected = false;
-          ws = null;
-          serverInfo = null;
-          rejectMailRequests();
-          rejectLocalRequests();
-          stopHeartbeat();
-          addLog('warn', 'MCP Server 连接已断开', {
-            url: wsUrl,
-            code: event && event.code,
-            reason: event && event.reason,
-            wasClean: !!(event && event.wasClean),
-          });
-          settleConnectionWaiters(new Error('MCP WebSocket connection closed before the attempt completed'));
-          if (shouldReconnect) reconnect();
-        };
-
-        socket.onerror = function () {
-          if (ws !== socket) return;
-          addLog('error', 'MCP WebSocket 连接错误', { url: wsUrl, readyState: socket.readyState });
-          settleConnectionWaiters(new Error('MCP WebSocket connection attempt failed'));
-        };
+          else cancel(id, 'client_timeout');
+        }, type === 'local.configure' ? c.LIMITS.configureTimeoutMs : type === 'arp.call' ? 180000 : type === 'mail.send' ? 150000 : c.LIMITS.clientWaitMs);
+        pending.set(id, entry); if (entry.signal) entry.signal.addEventListener('abort', entry.abort, { once: true });
+        try { send(Object.assign({ type: type, requestId: id }, body)); }
+        catch (error) { error.performed = 'no'; finish(id, error); }
+      });
+    }
+    function synchronize() {
+      var epoch = generation;
+      var work = configureQueue.then(async function () {
+        if (epoch !== generation || !identity || !serverInfo) return;
+        transition('configuring');
+        var current = config;
+        var response = await request('local.configure', { grantRevision: current.grantRevision, desktopEnabled: current.desktopEnabled,
+          workspaces: current.workspaces.map(function (workspace) { return { id: workspace.id, kind: workspace.kind,
+            permissions: workspace.permissions, ...(workspace.kind === 'custom' ? { path: workspace.path } : {}) }; }) });
+        if (epoch !== generation) return;
+        var confirmation = await deps.confirm(response, serverInfo.environment.runtime.pathStyle, identity.serverId, config.url, serverInfo.serverName);
+        if (epoch !== generation) return;
+        config = confirmation.connection;
+        if (confirmation.resync || response.acceptedRevision !== config.grantRevision) {
+          // Queue the new complete snapshot after the current configure has settled.
+          Promise.resolve().then(synchronize).catch(failConnection); return;
+        }
+        Object.keys(observations.disks).forEach(function (id) {
+          var observed = observations.disks[id], workspace = response.workspaces.find(function (item) { return item.id === id; });
+          if (!workspace || workspace.state !== 'ready' || !Object.values(workspace.effectivePermissions).some(Boolean) || observed.resolvedPath !== workspace.resolvedPath || observed.grantRevision !== response.acceptedRevision) delete observations.disks[id];
+        });
+        acknowledged = response; reconnect = config.enabled; transition('ready'); retryCount = 0; settleWaiters();
+      });
+      work = work.catch(function (error) { if (epoch === generation) throw error; });
+      configureQueue = work.catch(function () {}); return work;
+    }
+    function connectionClosed(current, detail) {
+      if (!current || current !== socket) return;
+      generation++;
+      socket = null; identity = null; cipher = null; acknowledged = null;
+      clearInterval(heartbeatTimer); clearTimeout(handshakeTimer); clearTimeout(retryTimer);
+      pending.forEach(function (_, id) { finish(id, unknown('连接中断，执行结果未知；请勿自动重试')); });
+      inbound.forEach(function (controller) { controller.abort('连接断开'); }); inbound.clear(); seen.clear();
+      if (detail === 'CREDENTIAL_REVOKED') { reconnect = false; transition('revoked', detail); }
+      else if (!['auth-failed', 'pairing-required', 'identity-conflict', 'incompatible', 'revoked'].includes(state)) transition('disconnected', detail || 'NETWORK_DISCONNECTED');
+      if (reconnect && config.enabled) {
+        if (retryCount < retryLimit) retryTimer = setTimeout(function () { connect(); }, Math.min(30000, 1000 * Math.pow(2, retryCount++)));
+        else { reconnect = false; transition('disconnected', 'RETRY_LIMIT_REACHED'); }
+      }
+      settleWaiters(new Error(reason || '连接断开'));
+    }
+    function failConnection(error) {
+      var current = socket;
+      var transient = ['AUTH_TIMEOUT', 'HELLO_TIMEOUT', 'CONFIGURE_TIMEOUT'].includes(error.reason)
+        || identity && ['TEMPORARILY_UNAVAILABLE', 'RESOURCE_BUSY'].includes(error.code);
+      if (!transient) {
+        reconnect = false;
+        transition(error.reason === 'SERVER_ID_CHANGED' || error.reason === 'SERVER_ALREADY_CONFIGURED' ? 'identity-conflict'
+          : error.reason === 'PROTOCOL_INCOMPATIBLE' ? 'incompatible' : error.reason === 'CREDENTIAL_REVOKED' ? 'revoked'
+            : ['INVALID_CREDENTIAL', 'INVALID_COMMUNICATION_KEY'].includes(error.reason) ? 'pairing-required' : 'auth-failed', error.reason || 'CONFIGURATION_FAILED');
+      }
+      settleWaiters(error);
+      // Retire this generation immediately so a late hello/configured response
+      // cannot make a timed-out connection ready while close is in progress.
+      if (current) { connectionClosed(current, transient ? error.reason || 'NETWORK_DISCONNECTED' : null); current.close(); }
+    }
+    function update(next, info) {
+      var previous = config; config = next; clientInfo = info || clientInfo;
+      var previousPermissions = c.arpPermissions(previous.arpPermissions), nextPermissions = c.arpPermissions(next.arpPermissions);
+      if (Object.keys(previousPermissions).some(function (key) { return previousPermissions[key] && !nextPermissions[key]; })) {
+        inbound.forEach(function (controller) {
+          controller.abort(Object.assign(new Error('连接的远程操作权限已收紧'), {
+            code: 'FORBIDDEN', reason: 'CONNECTION_PERMISSION_REVOKED', performed: 'unknown', retryable: false,
+          }));
+        });
+      }
+      if (next.runTabMode !== previous.runTabMode && deps.onResetTargets) deps.onResetTargets();
+      pending.forEach(function (entry, id) {
+        if (!['local.call', 'environment.get'].includes(entry.type)) return;
+        var body = entry.body, workspace = next.workspaces.find(function (item) { return item.id === body.workspaceId; });
+        var old = previous.workspaces.find(function (item) { return item.id === body.workspaceId; });
+        var permission = c.DIRECTORY_OPERATIONS[body.operation];
+        if (!next.enabled || (root.LocalResource.OPERATIONS[body.operation] && root.LocalResource.OPERATIONS[body.operation].desktop && !next.desktopEnabled)
+          || body.workspaceId && (!workspace || !old || workspace.path !== old.path || permission && !workspace.permissions[permission]
+            || entry.type === 'environment.get' && !Object.values(workspace.permissions).some(Boolean))) cancel(id, 'grant_revoked');
+      });
+      if (!next.enabled) { disconnect('disabled', 'grant_revoked'); return; }
+      if (next.url !== previous.url) { disconnect(); connect(); return; }
+      if (identity && serverInfo && next.grantRevision !== previous.grantRevision) { transition('configuring'); synchronize().catch(failConnection); }
+      if (identity && info) hello();
+    }
+    async function handleInbound(message, current, epoch) {
+      var controller;
+      try {
+        if (state !== 'ready') c.fail('CONNECTION_NOT_READY', '连接正在同步配置，尚未执行请求', 'TEMPORARILY_UNAVAILABLE');
+        if (seen.has(message.requestId)) throw Object.assign(new Error('重复请求，原执行结果不可推断'), {
+          code: 'RESOURCE_CONFLICT', reason: 'DUPLICATE_REQUEST', performed: 'unknown' });
+        if (seen.size >= c.LIMITS.seenRequests) c.fail('SESSION_REQUEST_LIMIT', '此会话的请求容量已满', 'RESOURCE_BUSY');
+        seen.add(message.requestId); controller = new AbortController(); inbound.set(message.requestId, controller);
+        var context = await deps.createTrustedContext(message.context, { method: message.method, request: message.request,
+          connectionId: config.id, connection: config, principal: message.principal, identity: identity, abortSignal: controller.signal });
+        if (controller.signal.aborted) c.fail('REQUEST_CANCELLED', '请求已取消，尚未执行', 'UPSTREAM_FAILED');
+        var envelope = await deps.dispatchResource(message.method, message.request, context);
+        if (epoch === generation && current === socket) send({ type: 'arp.result', requestId: message.requestId, envelope: envelope }, current);
       } catch (error) {
-        addLog('error', '创建 MCP WebSocket 连接失败', { url: wsUrl, error: error.message });
-        settleConnectionWaiters(error);
-        reconnect();
+        if (epoch === generation && current === socket) send({ type: 'arp.result', requestId: message.requestId,
+          envelope: deps.arp.createErrorResponse(crypto.randomUUID(), deps.arp.arpError(error.code || 'UPSTREAM_FAILED', error.message,
+            { performed: error.performed || 'unknown', retryable: false, details: { reason: error.reason } })) }, current);
+      } finally { if (controller && inbound.get(message.requestId) === controller) inbound.delete(message.requestId); }
+    }
+    async function message(value, current, epoch, passwordHolder) {
+      if (epoch !== generation || current !== socket) return;
+      if (!identity) {
+        c.authFrame(value);
+        if (value.type === 'auth.required') {
+          if (authStarted) c.fail('DUPLICATE_AUTH'); authStarted = true;
+          transition('authenticating'); var credential = await deps.getCredential();
+          if (passwordHolder.value !== undefined) await deps.validatePairing(value.serverId);
+          if (epoch !== generation || current !== socket) return;
+          authRequestId = crypto.randomUUID();
+          var payload = { transportProtocol: c.TRANSPORT, authProtocol: c.AUTH, requestId: authRequestId,
+            pairingVersion: c.PAIRING,
+            clientId: clientInfo.clientId, clientInfo: clientInfo,
+            expectedServerId: passwordHolder.value !== undefined ? value.serverId : config.expectedServerId };
+          if (passwordHolder.value !== undefined) { payload.type = 'auth.pair'; payload.password = passwordHolder.value; passwordHolder.value = undefined; }
+          else if (credential && credential.clientId === clientInfo.clientId && credential.serverId === config.expectedServerId) {
+            if (credential.pairingVersion === undefined && credential.communicationKey === undefined) {
+              var key = btoa(String.fromCharCode.apply(null, crypto.getRandomValues(new Uint8Array(32))))
+                .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+              credential = Object.assign({}, credential, { pairingVersion: c.PAIRING, communicationKey: key, communicationKeyPending: true });
+              // Persist before sending so interrupted upgrades retry the same key.
+              await deps.saveCredential(credential);
+              if (epoch !== generation || current !== socket) return;
+            }
+            if (credential.pairingVersion !== c.PAIRING) c.fail('PROTOCOL_INCOMPATIBLE');
+            c.communicationKey(credential.communicationKey); passwordHolder.credential = credential;
+            Object.assign(payload, { type: 'auth.resume', pairingId: credential.pairingId, token: credential.token });
+            if (credential.communicationKeyPending) payload.communicationKey = credential.communicationKey;
+          } else { reconnect = false; transition('pairing-required', 'PAIRING_REQUIRED'); settleWaiters(new Error('需要配对')); current.close(); return; }
+          current.send(JSON.stringify(payload)); delete payload.password; delete payload.token; delete payload.communicationKey; return;
+        }
+        if (value.type === 'auth.error') {
+          reconnect = false; transition(value.reason === 'CREDENTIAL_REVOKED' ? 'revoked' : value.reason === 'SERVER_ID_CHANGED' ? 'identity-conflict'
+            : value.reason === 'PROTOCOL_INCOMPATIBLE' ? 'incompatible'
+              : value.reason === 'AUTH_FAILED' && passwordHolder.credential ? 'pairing-required' : 'auth-failed', value.reason);
+          settleWaiters(Object.assign(new Error(value.reason), { code: value.code, reason: value.reason })); current.close(); return;
+        }
+        if (value.type !== 'auth.ok' || value.requestId !== authRequestId || value.clientId !== clientInfo.clientId) c.fail('IDENTITY_MISMATCH');
+        c.id(value.serverId); c.id(value.transportSessionId); c.id(value.pairingId);
+        var resumed = passwordHolder.credential;
+        if (resumed ? value.token !== undefined || value.pairingId !== resumed.pairingId : !value.token) c.fail('INVALID_CREDENTIAL');
+        var nextCipher;
+        try {
+          nextCipher = await root.WebSocketEncryption.create(value.communicationKey || resumed && resumed.communicationKey, value, true);
+          if (epoch !== generation || current !== socket) return;
+          config = await deps.bind(value);
+          if (epoch !== generation || current !== socket) return;
+          if (value.token || resumed && resumed.communicationKeyPending) await deps.saveCredential({ serverId: value.serverId, clientId: value.clientId,
+            pairingId: value.pairingId, token: value.token || resumed.token,
+            pairingVersion: c.PAIRING, communicationKey: value.communicationKey || resumed.communicationKey });
+        } finally { delete value.token; delete value.communicationKey; passwordHolder.credential = null; }
+        if (epoch !== generation || current !== socket) return;
+        // Pairing while disabled only saves credentials; the switch controls the live session.
+        if (!config.enabled) { settleWaiters(); disconnect('disabled', 'grant_revoked'); return; }
+        cipher = nextCipher;
+        identity = { serverId: value.serverId, clientId: value.clientId, transportSessionId: value.transportSessionId };
+        // Pairing credentials have been saved; recovery can now resume with
+        // those credentials without retaining or replaying the password.
+        reconnect = config.enabled;
+        clearTimeout(handshakeTimer); transition('configuring');
+        // Pairing succeeds once the new credentials are saved; connection setup has its own status.
+        if (!resumed) settleWaiters();
+        hello();
+        handshakeTimer = setTimeout(function () { failConnection(Object.assign(new Error('能力握手超时'), { reason: 'HELLO_TIMEOUT' })); }, c.LIMITS.configureTimeoutMs);
+        heartbeatTimer = setInterval(function () { if (identity) try { send({ type: 'heartbeat', sentAt: Date.now() }); } catch (_) {} }, 20000);
+        return;
+      }
+      c.frame(value, identity);
+      if (value.type === 'hello') {
+        if (value.requestId !== helloRequestId || !value.capabilities || value.capabilities.localProtocol !== c.LOCAL) c.fail('PROTOCOL_INCOMPATIBLE');
+        helloPending = false;
+        clearTimeout(handshakeTimer); var first = !serverInfo; serverInfo = value;
+        if (helloInfo !== JSON.stringify(clientInfo)) hello();
+        if (first) await synchronize(); else if (deps.onChange) deps.onChange(); return;
+      }
+      if (value.type === 'server.status') {
+        if (serverInfo) serverInfo.capabilities.audit.available = value.audit.available;
+        if (serverInfo && value.environmentRevision > serverInfo.environment.revision) {
+          serverInfo.environment = Object.assign({}, serverInfo.environment, { stale: true, reason: 'ENVIRONMENT_CHANGED' });
+          hello();
+        }
+        if (deps.onChange) deps.onChange(); return;
+      }
+      if (value.type === 'arp.cancel') { var controller = inbound.get(value.requestId); if (controller) controller.abort('远端入口已取消'); return; }
+      if (value.type === 'arp.request') { handleInbound(value, current, epoch).catch(failConnection); return; }
+      if (value.type === 'local.cancel.ack') {
+        var cancelled = pending.get(value.requestId);
+        if (cancelled && deps.onExecutionState) deps.onExecutionState({ connectionId: config.id, requestId: value.requestId, state: 'stopping', cancelStatus: value.status,
+          conversationId: cancelled.body.caller && cancelled.body.caller.conversationId });
+        return;
+      }
+      var entry = pending.get(value.requestId);
+      if (!entry || entry.socket !== current) return;
+      var expectedType = { 'arp.call': 'arp.response', 'local.call': 'local.result', 'local.configure': 'local.configured', 'environment.get': 'environment.result', 'mail.send': 'mail.result' }[entry.type];
+      if (value.type !== expectedType) c.fail('RESPONSE_TYPE_MISMATCH');
+      if (entry.type === 'arp.call') { finish(value.requestId, null, value.envelope); return; }
+      if (value.type === 'local.result' && (value.operation !== entry.body.operation || value.grantRevision !== entry.body.grantRevision
+          || (value.workspaceId || null) !== (entry.body.workspaceId || null) || (value.workingDirectory || null) !== (entry.body.workingDirectory || null))) c.fail('RESPONSE_TARGET_MISMATCH');
+      if (value.ok === true) {
+        if (entry.type === 'local.configure') finish(value.requestId, null, value);
+        else if (entry.type === 'environment.get') {
+          if (value.scope !== entry.body.scope) c.fail('RESPONSE_TARGET_MISMATCH');
+          if (value.scope === 'workspace' && (!value.data.disk || value.data.disk.workspaceId !== entry.body.workspaceId || value.data.disk.resolvedPath !== entry.body.workingDirectory || value.data.disk.grantRevision !== entry.body.grantRevision)) c.fail('RESPONSE_TARGET_MISMATCH');
+          if (value.data.environment && serverInfo) serverInfo.environment = value.data.environment;
+          if (value.data.memory) observations.memory = value.data.memory;
+          if (value.data.disk) observations.disks[entry.body.workspaceId] = value.data.disk;
+          finish(value.requestId, null, Object.assign({}, value.data, { audit: value.audit }));
+        }
+        else finish(value.requestId, null, Object.assign({}, value.result, { execution: value.execution, receipt: value.receipt, audit: value.audit,
+          target: { connectionId: config.id, serverId: identity.serverId, workspaceId: value.workspaceId || null, resolvedPath: value.workingDirectory || null,
+            alias: config.alias, workspaceAlias: (config.workspaces.find(function (entry) { return entry.id === value.workspaceId; }) || {}).alias || null },
+          transportSessionId: identity.transportSessionId, requestId: value.requestId }));
+      } else {
+        var error = Object.assign(new Error(value.error && value.error.message || '操作失败'), value.error || {}, {
+          performed: value.receipt && value.receipt.performed || (entry.type === 'mail.send' ? 'unknown' : 'no'), receipt: value.receipt, execution: value.execution, result: value.result, audit: value.audit });
+        finish(value.requestId, error);
+        if (['WORKSPACE_CHANGED', 'GRANT_REVISION_CHANGED'].includes(error.reason)) { transition('configuring'); synchronize().catch(failConnection); }
       }
     }
-
+    async function connect(password) {
+      if (!config.enabled && password === undefined) { disconnect('disabled', 'grant_revoked'); return; }
+      if (socket) return;
+      clearTimeout(retryTimer);
+      reconnect = password === undefined; var epoch = ++generation;
+      try {
+        c.url(config.url);
+        var credential = password === undefined ? await deps.getCredential() : null;
+        if (epoch !== generation) return;
+        if (password === undefined && (!credential || credential.clientId !== clientInfo.clientId || credential.serverId !== config.expectedServerId)) {
+          reconnect = false; transition('pairing-required', 'PAIRING_REQUIRED'); settleWaiters(new Error('需要配对')); return;
+        }
+        identity = null; cipher = null; sendQueue = Promise.resolve(); serverInfo = null; acknowledged = null; observations = { memory: null, disks: {} }; authStarted = false; helloPending = false; authRequestId = null; helloRequestId = null;
+        transition('connecting'); var current = new WebSocket(config.url); socket = current;
+        var passwordHolder = { value: password, credential: null }, receiveQueue = Promise.resolve(); password = undefined;
+        handshakeTimer = setTimeout(function () {
+          if (epoch === generation && current === socket) failConnection(Object.assign(new Error('认证握手超时'), { reason: 'AUTH_TIMEOUT' }));
+        }, c.LIMITS.authTimeoutMs);
+        current.onopen = function () { if (epoch === generation) transition('authenticating'); };
+        current.onmessage = function (event) {
+          receiveQueue = receiveQueue.then(async function () {
+            if (epoch !== generation || current !== socket) return;
+            var authenticating = !identity;
+            if (typeof event.data !== 'string' || event.data.length > (authenticating ? c.LIMITS.authBytes : root.WebSocketEncryption.MAX_FRAME_BYTES)) c.fail('INVALID_FRAME');
+            var value = JSON.parse(event.data);
+            if (!authenticating) value = JSON.parse(await cipher.decrypt(value));
+            var work = message(value, current, epoch, passwordHolder);
+            // A hello handler waits for a later configuration reply; do not block message delivery on it.
+            if (authenticating) await work;
+            else work.catch(function (error) { if (epoch === generation && current === socket) failConnection(error); });
+          }).catch(function (error) {
+            if (epoch !== generation || current !== socket) return;
+            failConnection(error);
+          });
+        };
+        current.onclose = function (event) {
+          passwordHolder.value = undefined; passwordHolder.credential = null; connectionClosed(current, event.reason === 'CREDENTIAL_REVOKED' ? event.reason : null);
+        };
+        current.onerror = function () { log('error', 'WebSocket 连接失败'); };
+      } catch (error) { if (epoch === generation) failConnection(error); }
+    }
+    function disconnect(nextState, stopReason) {
+      reconnect = false; generation++; clearTimeout(retryTimer); clearTimeout(handshakeTimer); clearInterval(heartbeatTimer);
+      if (deps.onResetTargets) deps.onResetTargets();
+      pending.forEach(function (_, id) { cancel(id, stopReason || 'user'); finish(id, unknown('连接已关闭，执行结果可能未知')); });
+      inbound.forEach(function (controller) { controller.abort('连接关闭'); }); inbound.clear(); seen.clear();
+      var old = socket; socket = null; if (old) old.close(); identity = null; cipher = null; acknowledged = null; serverInfo = null;
+      transition(nextState || 'disconnected'); settleWaiters(new Error('连接已关闭'));
+    }
     function connectAttempt(options) {
-      options = options || {};
-      if (connected) return Promise.resolve(getStatus());
-      var timeoutMs = Math.min(120000, Math.max(1000, Number(options.timeoutMs) || 30000));
+      options = options || {}; if (state === 'ready') return Promise.resolve(status());
+      if (!socket) retryCount = 0;
       return new Promise(function (resolve, reject) {
         var waiter = { resolve: resolve, reject: reject, timer: null };
-        waiter.timer = setTimeout(function () {
-          var index = connectionWaiters.indexOf(waiter);
-          if (index !== -1) connectionWaiters.splice(index, 1);
-          reject(new Error('MCP WebSocket connection attempt timed out after ' + timeoutMs + 'ms'));
-        }, timeoutMs);
-        connectionWaiters.push(waiter);
-        connect();
+        waiter.timer = setTimeout(function () { waiters = waiters.filter(function (item) { return item !== waiter; }); reject(new Error('连接尝试超时')); }, options.timeoutMs || 30000);
+        waiters.push(waiter); connect(options.password);
       });
     }
-
-    function disconnect() {
-      shouldReconnect = false;
-      rejectMailRequests();
-      rejectLocalRequests();
-      serverInfo = null;
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-      stopHeartbeat();
-      addLog('info', '主动断开 MCP Server 连接', { url: wsUrl });
-      if (ws) {
-        try { ws.close(); } catch (_) {}
-        ws = null;
-      }
-      connected = false;
-      retryCount = 0;
-      settleConnectionWaiters(new Error('MCP WebSocket connection attempt was cancelled'));
-    }
-
-    function getStatus() {
-      return {
-        connected: connected,
-        connecting: !!(ws && ws.readyState === WebSocket.CONNECTING),
-        url: wsUrl,
-        protocol: 'arp/1',
-        clientInfo: clientInfo,
-        serverInfo: serverInfo,
-        localToolsEnabled: localToolsEnabled,
-        localWorkingDirectory: effectiveLocalDirectory(),
-        retryCount: retryCount,
-        logs: getLogs(),
-      };
-    }
-
-    return {
-      connect: connect,
-      connectAttempt: connectAttempt,
-      disconnect: disconnect,
-      isConnected: function () { return connected; },
-      getStatus: getStatus,
-      clearLogs: clearLogs,
-      sendMail: sendMail,
-      callLocal: callLocal,
-      configureLocalTools: configureLocalTools,
-    };
+    return { connect: connect, connectAttempt: connectAttempt, disconnect: disconnect, update: update, getStatus: status,
+      isConnected: function () { return state === 'ready'; }, clearLogs: function () { logs = []; },
+      callLocal: function (operation, input, options) { return request('local.call', Object.assign({ operation: operation, input: input }, options.frame), options); },
+      getEnvironment: function (body, options) { return request('environment.get', body, options); },
+      callArp: function (method, input, options) { return request('arp.call', { method: method, request: input, caller: options.caller }, options); },
+      sendMail: function (payload, options) { return request('mail.send', { payload: payload, caller: options.caller }, options); } };
   }
-
-  return Object.freeze({ createWebSocketClient: createWebSocketClient });
-});
+  root.WebSocketClient = Object.freeze({ createWebSocketClient: createWebSocketClient });
+})(globalThis);

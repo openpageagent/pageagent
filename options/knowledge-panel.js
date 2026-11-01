@@ -9,6 +9,8 @@
   var deps = {};
   var resourceClient = null;
   var renderSequence = 0;
+  var loading = false;
+  var pendingReload = false;
   var searchTimer = 0;
   var composingSearch = null;
   var knowledgeLoadSequence = 0;
@@ -98,9 +100,8 @@
     if (deps.toast) deps.toast(message, isError);
   }
 
-  function confirmAction(message) {
-    if (typeof deps.confirm === 'function') return deps.confirm(message) === true;
-    return typeof root.confirm !== 'function' || root.confirm(message) === true;
+  async function confirmAction(message) {
+    return typeof deps.confirm === 'function' && await deps.confirm(message) === true;
   }
 
   function errorText(error, fallback) {
@@ -139,6 +140,7 @@
   function beginTask(label, total) {
     root.clearTimeout(searchTimer);
     renderSequence += 1;
+    loading = false;
     knowledgeLoadSequence += 1;
     skillLoadSequence += 1;
     activeTask = { label: label, total: total, done: 0, succeeded: 0, failures: [], cancelled: false, running: true, detail: '' };
@@ -556,9 +558,10 @@
       + '<input type="search" id="knowledge-search" placeholder="搜索知识" value="' + esc(queryState.q) + '">'
       + '<select id="knowledge-filter-type">' + renderTypeOptions(queryState.type, true) + '</select>'
       + '<select id="knowledge-filter-source">' + renderSourceOptions(queryState.sourceKind) + '</select>'
+      + '<div class="knowledge-filter-options">'
       + '<label class="switch-label"><input type="checkbox" id="knowledge-include-archived"' + (queryState.includeArchived ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">包含归档</span></label>'
       + '<label class="switch-label"><input type="checkbox" id="knowledge-include-stale"' + (queryState.includeStale ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">包含陈旧和拒绝项</span></label>'
-      + '</div>';
+      + '</div></div>';
   }
 
   function renderPageSizeOptions(selected) {
@@ -595,6 +598,9 @@
     var source = item.source || {};
     var sourceKind = item.sourceKind || source.kind || 'auto';
     var readonly = knowledgeReadonly(item);
+    var title = item.title || '未命名知识';
+    var summary = item.summary || item.snippet || '';
+    var metadata = '使用 ' + (item.useCount || 0) + ' 次 · 更新 ' + fmtTime(item.updatedAt);
     var badges = '<span class="badge">' + esc(item.typeLabel || TYPE_LABELS[item.type] || item.type || '知识') + '</span>'
       + '<span class="badge">' + esc(item.sourceLabel || SOURCE_LABELS[sourceKind] || sourceKind) + '</span>';
     if (item.pinned) badges += '<span class="badge on">置顶</span>';
@@ -603,14 +609,13 @@
       var danger = item.verificationState === 'stale' || item.verificationState === 'rejected';
       badges += '<span class="badge' + (item.verificationState === 'verified' ? ' on' : (danger ? ' danger' : '')) + '">' + esc(item.verificationState) + '</span>';
     }
-    return '<div class="item-card knowledge-card' + (knowledgeDraft && knowledgeDraft.id === item.id ? ' selected' : '') + '">'
+    return '<div class="item-card knowledge-card' + (knowledgeDraft && knowledgeDraft.id === item.id ? ' selected' : '') + '" role="button" tabindex="0" data-knowledge-action="edit" data-id="' + esc(item.id) + '">'
       + (!readonly ? '<input type="checkbox" data-knowledge-select="' + esc(item.id) + '" aria-label="选择 ' + esc(item.title || item.id) + '"' + (selectedKnowledge.has(item.id) ? ' checked' : '') + '>' : '')
-      + '<div class="knowledge-card-main" data-knowledge-action="edit" data-id="' + esc(item.id) + '">'
-      + '<span class="item-title">' + esc(item.title || '未命名知识') + '</span>'
-      + '<span class="item-sub">' + esc(item.summary || item.snippet || '') + '</span>'
-      + '<span class="knowledge-meta">使用 ' + esc(item.useCount || 0) + ' 次 · 更新 ' + esc(fmtTime(item.updatedAt)) + '</span>'
-      + '</div>' + badges
-      + '<button class="btn-small" data-knowledge-action="edit" data-id="' + esc(item.id) + '">' + (readonly ? '查看' : '编辑') + '</button>'
+      + '<div class="knowledge-card-main">'
+      + '<span class="item-title" title="' + esc(title) + '">' + esc(title) + '</span>'
+      + '<span class="item-sub" title="' + esc(summary) + '">' + esc(summary) + '</span>'
+      + '<span class="knowledge-meta" title="' + esc(metadata) + '">' + esc(metadata) + '</span>'
+      + '</div>' + badges + deps.itemIdHtml(item.id)
       + '<button class="btn-small btn-danger-outline" data-knowledge-action="delete" data-id="' + esc(item.id) + '"' + (readonly ? ' disabled' : '') + '>删除</button>'
       + '</div>';
   }
@@ -667,7 +672,7 @@
       + renderToolbar() + renderSettings() + renderStats() + renderPagination()
       + renderSelectionToolbar('knowledge', selectedKnowledge.size, '全选本页可删除项')
       + '<div class="item-list knowledge-list">'
-      + (items.length ? items.map(renderKnowledgeItem).join('') : '<div class="placeholder">没有匹配的知识。</div>')
+      + (items.length ? items.map(renderKnowledgeItem).join('') : knowledgeDraft ? '' : '<div class="placeholder">没有匹配的知识。</div>')
       + '</div>' + renderPagination()
       + '<div id="knowledge-editor-wrap">' + renderKnowledgeEditor() + '</div>'
       + '</div>';
@@ -684,18 +689,22 @@
   function renderSkillCard(item) {
     var builtin = isBuiltinSkill(item);
     var readonly = skillReadonly(item);
-    return '<div class="item-card knowledge-skill-card">'
+    var title = item.name || item.id || 'Skill';
+    var description = item.description || '';
+    var directory = item.source && item.source.packageRoot || '';
+    var metadata = '资源 ' + (item.resourceCount || (item.resources || []).length) + ' 个 · 更新 ' + fmtTime(item.updatedAt)
+      + (directory ? ' · 目录：' + directory : '');
+    return '<div class="item-card knowledge-skill-card' + (skillDraft && skillDraft.id === item.id ? ' selected' : '') + '" role="button" tabindex="0" data-skill-action="edit" data-id="' + esc(item.id) + '">'
       + (!readonly ? '<input type="checkbox" data-skill-select="' + esc(item.id) + '" aria-label="选择 ' + esc(item.name || item.id) + '"' + (selectedSkills.has(item.id) ? ' checked' : '') + '>' : '')
-      + '<div class="knowledge-card-main" data-skill-action="edit" data-id="' + esc(item.id) + '">'
-      + '<span class="item-title">' + esc(item.name || item.id || 'Skill') + '</span>'
-      + '<span class="item-sub">' + esc(item.description || '') + '</span>'
-      + (item.source && item.source.packageRoot ? '<span class="knowledge-meta">目录：' + esc(item.source.packageRoot) + '</span>' : '')
-      + '<span class="knowledge-meta">资源 ' + esc(item.resourceCount || (item.resources || []).length) + ' 个 · 更新 ' + esc(fmtTime(item.updatedAt)) + '</span>'
+      + '<div class="knowledge-card-main">'
+      + '<span class="item-title" title="' + esc(title) + '">' + esc(title) + '</span>'
+      + '<span class="item-sub" title="' + esc(description) + '">' + esc(description) + '</span>'
+      + '<span class="knowledge-meta" title="' + esc(metadata) + '">' + esc(metadata) + '</span>'
       + '</div>'
       + (builtin ? '<span class="badge builtin">内置</span>' : '<span class="badge">用户</span>')
       + (item.enabled === false ? '<span class="badge">停用</span>' : '')
       + (item.archived ? '<span class="badge">归档</span>' : '')
-      + '<button class="btn-small" data-skill-action="edit" data-id="' + esc(item.id) + '">查看</button>'
+      + deps.itemIdHtml(item.id)
       + (!item.archived && !readonly ? '<button class="btn-small btn-danger-outline" data-skill-action="archive" data-id="' + esc(item.id) + '">归档</button>' : '')
       + (!readonly ? '<button class="btn-small btn-danger-outline" data-skill-action="delete" data-id="' + esc(item.id) + '">删除</button>' : '')
       + '</div>';
@@ -1016,8 +1025,8 @@
       + '<input type="search" id="skill-search" aria-label="搜索 Skill" placeholder="搜索 Skill 名称、说明、标签或目录" value="' + esc(skillFilter.q) + '">'
       + renderSelectionToolbar('skill', selectedSkills.size, '全选搜索结果中可删除项')
       + '<div class="item-list knowledge-skill-list">'
-      + (skills.length ? '' : '<div class="placeholder">没有匹配的 Skill。可以导入 Skill 或修改搜索条件。</div>')
-      + renderSkillTree(skills, 'skill', skillFilter, renderSkillCard)
+      + (skills.length || skillDraft || skillImportDraft ? '' : '<div class="placeholder">没有匹配的 Skill。可以导入 Skill 或修改搜索条件。</div>')
+      + (skills.length ? renderSkillTree(skills, 'skill', skillFilter, renderSkillCard) : '')
       + '</div>'
       + '<div id="skill-import-editor-wrap">' + renderSkillImportEditor() + '</div>'
       + '<div id="skill-editor-wrap">' + renderSkillEditor() + '</div>'
@@ -1162,7 +1171,8 @@
 
   function renderMcpTool(server, tool) {
     return '<div class="item-card knowledge-mcp-tool-card">'
-      + '<div class="knowledge-card-main"><span class="item-title">' + esc(tool.name) + '</span><span class="item-sub">' + esc(tool.description || '') + '</span></div>'
+      + '<div class="knowledge-card-main"><span class="item-title" title="' + esc(tool.name) + '">' + esc(tool.name) + '</span>'
+      + '<span class="item-sub" title="' + esc(tool.description || '') + '">' + esc(tool.description || '') + '</span></div>'
       + '<button class="btn-small" data-http-mcp-action="call-tool" data-id="' + esc(server.id) + '" data-tool="' + esc(tool.name) + '">调用</button>'
       + '</div>';
   }
@@ -1180,13 +1190,17 @@
   function renderMcpServerCard(server) {
     var lastStatus = server.lastStatus === 'ok' ? '可用' : (server.lastStatus === 'error' ? '异常' : '未检查');
     var statusClass = server.lastStatus === 'ok' ? ' on' : (server.lastStatus === 'error' ? ' danger' : '');
+    var title = server.name || server.id;
+    var metadata = '工具 ' + (server.toolCount || 0) + ' 个 · 最近更新 ' + fmtTime(server.syncedAt || server.updatedAt)
+      + (server.lastError ? ' · ' + server.lastError : '');
     return '<div class="knowledge-mcp-server-block">'
-      + '<div class="item-card knowledge-mcp-card">'
-      + '<div class="knowledge-card-main"><span class="item-title">' + esc(server.name || server.id) + '</span><span class="item-sub">' + esc(server.url || '') + '</span>'
-      + '<span class="knowledge-meta">工具 ' + esc(server.toolCount || 0) + ' 个 · 最近更新 ' + esc(fmtTime(server.syncedAt || server.updatedAt)) + (server.lastError ? ' · ' + esc(server.lastError) : '') + '</span></div>'
+      + '<div class="item-card knowledge-mcp-card' + (mcpDraft && mcpDraft.id === server.id ? ' selected' : '') + '" role="button" tabindex="0" data-http-mcp-action="edit" data-id="' + esc(server.id) + '">'
+      + '<div class="knowledge-card-main"><span class="item-title" title="' + esc(title) + '">' + esc(title) + '</span>'
+      + '<span class="item-sub" title="' + esc(server.url || '') + '">' + esc(server.url || '') + '</span>'
+      + '<span class="knowledge-meta" title="' + esc(metadata) + '">' + esc(metadata) + '</span></div>'
       + '<span class="badge' + statusClass + '">' + esc(lastStatus) + '</span>'
       + (server.enabled ? '' : '<span class="badge">停用</span>')
-      + '<button class="btn-small" data-http-mcp-action="edit" data-id="' + esc(server.id) + '">编辑</button>'
+      + deps.itemIdHtml(server.id)
       + '<button class="btn-small" data-http-mcp-action="test" data-id="' + esc(server.id) + '">检查连接</button>'
       + '<button class="btn-small" data-http-mcp-action="discover" data-id="' + esc(server.id) + '">刷新工具</button>'
       + '<button class="btn-small" data-http-mcp-action="tools" data-id="' + esc(server.id) + '">查看工具</button>'
@@ -1224,7 +1238,7 @@
       + '<div class="knowledge-mcp-head"><div><h3>HTTP MCP 服务器</h3><p>管理外部工具服务器，检查连接，刷新工具目录，并在允许后发起工具调用。</p></div><button class="btn-secondary" data-http-mcp-action="new">添加服务器</button></div>'
       + renderError(viewState.errors.mcp)
       + '<div class="item-list knowledge-mcp-list">'
-      + (viewState.mcpServers.length ? viewState.mcpServers.map(renderMcpServerCard).join('') : '<div class="placeholder">尚未配置 HTTP MCP 服务器。</div>')
+      + (viewState.mcpServers.length ? viewState.mcpServers.map(renderMcpServerCard).join('') : mcpDraft ? '' : '<div class="placeholder">尚未配置 HTTP MCP 服务器。</div>')
       + '</div>'
       + '<div id="http-mcp-editor-wrap">' + renderMcpEditor() + '</div>'
       + '<div id="http-mcp-call-editor-wrap">' + renderToolCallEditor() + '</div>'
@@ -1237,6 +1251,48 @@
     captureSkillImportDraft();
     captureMcpDraft();
     captureToolCallDraft();
+  }
+
+  var draftBaselines = Object.create(null);
+  var draftOpenSequence = { knowledge: 0, skill: 0, mcp: 0 };
+  var saving = false;
+
+  function setSaving(value) {
+    saving = value;
+    var fields = $('#knowledge-root .knowledge-content');
+    if (fields) fields.disabled = value || taskRunning();
+    refreshPendingResources();
+  }
+
+  function draftValue(kind) {
+    return kind === 'knowledge' ? knowledgeDraft : kind === 'skill' ? skillDraft : kind === 'import' ? skillImportDraft : mcpDraft;
+  }
+
+  function rememberDraft(kind) {
+    captureDrafts();
+    draftBaselines[kind] = JSON.stringify(draftValue(kind));
+  }
+
+  function isDraftDirty(kind) {
+    captureDrafts();
+    var draft = draftValue(kind);
+    return !!draft && JSON.stringify(draft) !== draftBaselines[kind];
+  }
+
+  async function confirmDraftChange(kind) {
+    if (taskRunning() || saving) return false;
+    return !isDraftDirty(kind) || await confirmAction('有未保存的修改，是否放弃？');
+  }
+
+  function getState() {
+    return { dirty: ['knowledge', 'skill', 'import', 'mcp'].some(isDraftDirty), busy: taskRunning() || saving };
+  }
+
+  function discard() {
+    Object.keys(draftOpenSequence).forEach(function (kind) { draftOpenSequence[kind]++; });
+    knowledgeDraft = skillDraft = skillImportDraft = mcpDraft = toolCallDraft = null;
+    draftBaselines = Object.create(null);
+    renderCurrentState(true);
   }
 
   function renderCurrentState(skipCapture, section) {
@@ -1253,7 +1309,7 @@
     if (skillSection) skillSection.outerHTML = renderSkillSection();
     else if (knowledgeSection) knowledgeSection.outerHTML = renderKnowledgeSection();
     else element.innerHTML = '<div id="knowledge-task-status">' + renderTaskStatus() + '</div>'
-        + '<fieldset class="knowledge-content"' + (taskRunning() ? ' disabled' : '') + '>'
+        + '<fieldset class="knowledge-content"' + (taskRunning() || saving ? ' disabled' : '') + '>'
         + renderMcpSection() + renderSkillSection() + renderKnowledgeSection() + '</fieldset>';
     element.querySelectorAll('[data-indeterminate]').forEach(function (input) { input.indeterminate = true; });
     var toolArguments = $('#http-mcp-call-arguments');
@@ -1265,12 +1321,21 @@
         try { search.setSelectionRange(caret, caret); } catch (_) {}
       }
     }
+    refreshPendingResources();
+  }
+
+  function refreshPendingResources() {
+    if (!pendingReload || loading || saving || taskRunning() || deps.lifecycle.isDestroyed()
+        || !deps.isActive() || composingSearch || knowledgeDraft || skillDraft || skillImportDraft || mcpDraft || toolCallDraft) return;
+    render();
   }
 
   function render() {
     if (!initialized) init(deps);
     if (taskRunning()) return Promise.resolve();
     var sequence = ++renderSequence;
+    loading = true;
+    pendingReload = false;
     captureDrafts();
     return loadAll().then(function () {
       if (sequence !== renderSequence) return;
@@ -1279,6 +1344,10 @@
       if (sequence !== renderSequence) return;
       var element = $('#knowledge-root');
       if (element) element.innerHTML = '<div class="placeholder">加载失败：' + esc(errorText(error)) + '</div>';
+    }).finally(function () {
+      if (sequence !== renderSequence) return;
+      loading = false;
+      refreshPendingResources();
     });
   }
 
@@ -1292,20 +1361,27 @@
     });
   }
 
-  function newKnowledge() {
-    if (taskRunning()) return;
+  async function newKnowledge() {
+    if (!await confirmDraftChange('knowledge')) return;
+    draftOpenSequence.knowledge++;
     knowledgeDraft = {
       type: 'custom', title: '', summary: '', content: '', tags: [], sourceKind: 'auto',
       source: { kind: 'auto' }, pinned: false, archived: false, confidence: 0.8,
     };
     renderCurrentState(true);
+    rememberDraft('knowledge');
     scrollIntoView('#knowledge-editor-wrap .knowledge-editor');
   }
 
-  function editKnowledge(id) {
+  async function editKnowledge(id) {
+    if (knowledgeDraft && knowledgeDraft.id === id) return;
+    if (!await confirmDraftChange('knowledge')) return;
+    var sequence = ++draftOpenSequence.knowledge;
     return ensureClient().get(knowledgeUri(id)).then(function (envelope) {
+      if (sequence !== draftOpenSequence.knowledge) return;
       knowledgeDraft = envelopeData(envelope, '知识');
       renderCurrentState(true);
+      rememberDraft('knowledge');
       scrollIntoView('#knowledge-editor-wrap .knowledge-editor');
     }).catch(function (error) { toast(errorText(error), true); });
   }
@@ -1329,11 +1405,13 @@
   }
 
   function saveKnowledge() {
+    if (saving) return Promise.resolve();
     var payload = knowledgeWritePayload();
     if (!payload.title || !payload.content) {
       toast('标题和内容不能为空', true);
       return Promise.resolve();
     }
+    setSaving(true);
     var request = payload.id
       ? ensureClient().authorizedPut(knowledgeUri(payload.id), payload, mutationOptions({ ifMatch: 'cached' }))
       : ensureClient().authorizedPost('/knowledge', payload, mutationOptions());
@@ -1341,15 +1419,15 @@
       knowledgeDraft = null;
       toast('知识已保存');
       return render();
-    }).catch(function (error) { toast(errorText(error), true); });
+    }).catch(function (error) { toast(errorText(error), true); }).finally(function () { setSaving(false); });
   }
 
   function deleteKnowledge(id) {
     return deleteItems('knowledge', id ? [id] : []);
   }
 
-  function deleteItems(kind, ids) {
-    if (taskRunning() || !ids.length || !confirmAction('删除所选的 ' + ids.length + ' 个' + (kind === 'skill' ? ' Skill' : '知识条目') + '？此操作不可恢复。')) return Promise.resolve();
+  async function deleteItems(kind, ids) {
+    if (taskRunning() || !ids.length || !await confirmAction('删除所选的 ' + ids.length + ' 个' + (kind === 'skill' ? ' Skill' : '知识条目') + '？此操作不可恢复。')) return;
     var selection = kind === 'skill' ? selectedSkills : selectedKnowledge;
     var names = new Map((kind === 'skill' ? viewState.skills : viewState.knowledgePage.items).map(function (item) {
       return [item.id, item.name || item.title];
@@ -1397,10 +1475,15 @@
     return settingsSaveChain.catch(function () {});
   }
 
-  function editSkill(id) {
+  async function editSkill(id) {
+    if (skillDraft && skillDraft.id === id) return;
+    if (!await confirmDraftChange('skill')) return;
+    var sequence = ++draftOpenSequence.skill;
     return ensureClient().get(skillUri(id)).then(function (envelope) {
+      if (sequence !== draftOpenSequence.skill) return;
       skillDraft = envelopeData(envelope, 'Skill');
       renderCurrentState(true);
+      rememberDraft('skill');
       scrollIntoView('#skill-editor-wrap .knowledge-skill-editor');
     }).catch(function (error) { toast(errorText(error), true); });
   }
@@ -1426,6 +1509,7 @@
   }
 
   function saveSkill() {
+    if (saving) return Promise.resolve();
     captureSkillDraft();
     if (!skillDraft || !skillDraft.id) return Promise.resolve();
     var patch = {
@@ -1441,15 +1525,16 @@
       toast('Skill 名称和指令不能为空', true);
       return Promise.resolve();
     }
+    setSaving(true);
     return ensureClient().authorizedPatch(skillUri(skillDraft.id), patch, mutationOptions({ ifMatch: 'cached' })).then(function () {
       skillDraft = null;
       toast('Skill 已保存');
       return render();
-    }).catch(function (error) { toast(errorText(error), true); });
+    }).catch(function (error) { toast(errorText(error), true); }).finally(function () { setSaving(false); });
   }
 
-  function archiveSkill(id) {
-    if (!id || !confirmAction('归档这个 Skill？')) return Promise.resolve();
+  async function archiveSkill(id) {
+    if (!id || !await confirmAction('归档这个 Skill？')) return;
     var uri = skillUri(id);
     return ensureClient().get(uri).then(function () {
       return ensureClient().authorizedPatch(uri, { archived: true }, mutationOptions({ ifMatch: 'cached' }));
@@ -1542,26 +1627,35 @@
     });
   }
 
-  function newMcpServer() {
+  async function newMcpServer() {
+    if (!await confirmDraftChange('mcp')) return;
+    draftOpenSequence.mcp++;
     mcpDraft = {
       name: '', url: '', timeoutMs: 120000, protocolVersion: '2025-11-25',
       enabled: true, useBrowserCookies: false, _bearerToken: '', _headersText: '',
     };
     renderCurrentState(true);
+    rememberDraft('mcp');
     scrollIntoView('#http-mcp-editor-wrap .knowledge-mcp-editor');
   }
 
-  function editMcpServer(id) {
+  async function editMcpServer(id) {
+    if (mcpDraft && mcpDraft.id === id) return;
+    if (!await confirmDraftChange('mcp')) return;
+    var sequence = ++draftOpenSequence.mcp;
     return ensureClient().get(mcpServerUri(id)).then(function (envelope) {
+      if (sequence !== draftOpenSequence.mcp) return;
       mcpDraft = envelopeData(envelope, 'HTTP MCP 服务器');
       mcpDraft._bearerToken = '';
       mcpDraft._headersText = '';
       renderCurrentState(true);
+      rememberDraft('mcp');
       scrollIntoView('#http-mcp-editor-wrap .knowledge-mcp-editor');
     }).catch(function (error) { toast(errorText(error), true); });
   }
 
   function saveMcpServer() {
+    if (saving) return Promise.resolve();
     captureMcpDraft();
     if (!mcpDraft) return Promise.resolve();
     var body = {
@@ -1582,6 +1676,7 @@
     if (!mcpDraft.id || mcpDraft._headersText || mcpDraft._clearHeaders) {
       body.headersText = mcpDraft._clearHeaders ? '' : String(mcpDraft._headersText || '').trim();
     }
+    setSaving(true);
     var request = mcpDraft.id
       ? ensureClient().authorizedPatch(mcpServerUri(mcpDraft.id), body, mutationOptions({ ifMatch: 'cached' }))
       : ensureClient().authorizedPost('/mcp-servers', body, mutationOptions());
@@ -1589,11 +1684,11 @@
       mcpDraft = null;
       toast('HTTP MCP 服务器已保存');
       return render();
-    }).catch(function (error) { toast(errorText(error), true); });
+    }).catch(function (error) { toast(errorText(error), true); }).finally(function () { setSaving(false); });
   }
 
-  function deleteMcpServer(id) {
-    if (!id || !confirmAction('删除这个 HTTP MCP 服务器？相关托管知识会归档。')) return Promise.resolve();
+  async function deleteMcpServer(id) {
+    if (!id || !await confirmAction('删除这个 HTTP MCP 服务器？相关托管知识会归档。')) return;
     var uri = mcpServerUri(id);
     return ensureClient().get(uri).then(function () {
       return ensureClient().authorizedDelete(uri, mutationOptions({ ifMatch: 'cached' }));
@@ -1719,7 +1814,7 @@
     }).catch(function (error) { toast(errorText(error), true); });
   }
 
-  function handleClick(event) {
+  async function handleClick(event) {
     var stopTarget = event.target && event.target.closest && event.target.closest('[data-knowledge-action="stop-task"]');
     if (stopTarget && taskRunning()) {
       event.preventDefault();
@@ -1728,10 +1823,11 @@
       updateTaskStatus();
       return;
     }
-    if (taskRunning() && event.target && event.target.closest && event.target.closest('.knowledge-content')) {
+    if ((taskRunning() || saving) && event.target && event.target.closest && event.target.closest('.knowledge-content')) {
       event.preventDefault();
       return;
     }
+    if (event.target.closest('.item-card') && event.target.closest('input, select, textarea, label, [data-action="copy-id"]')) return;
     var mcpTarget = event.target && event.target.closest && event.target.closest('[data-http-mcp-action]');
     if (mcpTarget) {
       event.preventDefault();
@@ -1741,7 +1837,7 @@
       if (mcpAction === 'new') newMcpServer();
       else if (mcpAction === 'edit') editMcpServer(serverId);
       else if (mcpAction === 'save') saveMcpServer();
-      else if (mcpAction === 'cancel') { mcpDraft = null; renderCurrentState(); }
+      else if (mcpAction === 'cancel' && await confirmDraftChange('mcp')) { mcpDraft = null; renderCurrentState(); }
       else if (mcpAction === 'delete') deleteMcpServer(serverId);
       else if (mcpAction === 'test') testMcpServer(serverId);
       else if (mcpAction === 'discover') discoverMcpTools(serverId);
@@ -1759,11 +1855,13 @@
       var skillAction = skillTarget.dataset.skillAction;
       var skillId = skillTarget.dataset.id || '';
       if (skillAction === 'new-import') {
+        if (!await confirmDraftChange('import')) return;
         skillImportDraft = { sourceUri: '', markdown: '', packages: [], page: 0, limit: DEFAULT_PAGE_SIZE };
         treeExpansion.import.clear();
         renderCurrentState(true);
+        rememberDraft('import');
         scrollIntoView('#skill-import-editor-wrap .knowledge-skill-editor');
-      } else if (skillAction === 'cancel-import') { skillImportDraft = null; renderCurrentState(); }
+      } else if (skillAction === 'cancel-import' && await confirmDraftChange('import')) { skillImportDraft = null; renderCurrentState(); }
       else if (skillAction === 'tree-toggle') {
         var treeKind = skillTarget.dataset.treeKind;
         var treePath = skillTarget.dataset.treePath;
@@ -1788,7 +1886,7 @@
       else if (skillAction === 'edit') editSkill(skillId);
       else if (skillAction === 'view-resource') viewSkillResource(skillTarget);
       else if (skillAction === 'save') saveSkill();
-      else if (skillAction === 'cancel-edit') { skillDraft = null; renderCurrentState(); }
+      else if (skillAction === 'cancel-edit' && await confirmDraftChange('skill')) { skillDraft = null; renderCurrentState(); }
       else if (skillAction === 'archive') archiveSkill(skillId);
       else if (skillAction === 'delete') deleteSkill(skillId);
       return;
@@ -1820,8 +1918,9 @@
     else if (action === 'edit') editKnowledge(id);
     else if (action === 'save') saveKnowledge();
     else if (action === 'delete') deleteKnowledge(id);
-    else if (action === 'cancel') { knowledgeDraft = null; renderCurrentState(); }
+    else if (action === 'cancel' && await confirmDraftChange('knowledge')) { knowledgeDraft = null; renderCurrentState(); }
     else if (action === 'page-prev' || action === 'page-next') {
+      if (!await confirmDraftChange('knowledge')) return;
       queryState.cursor = normalizeCursor(knowledgeTarget.dataset.cursor);
       knowledgeDraft = null;
       loadKnowledgePage().then(function () { renderCurrentState(false, 'knowledge'); });
@@ -1899,7 +1998,6 @@
     if (target.matches && target.matches('[data-knowledge-page-size]')) {
       queryState.limit = normalizePageSize(target.value);
       queryState.cursor = 0;
-      knowledgeDraft = null;
       loadKnowledgePage().then(function () { renderCurrentState(false, 'knowledge'); });
       return;
     }
@@ -1916,7 +2014,6 @@
         || target.id === 'knowledge-include-archived' || target.id === 'knowledge-include-stale') {
       currentKnowledgeQuery();
       queryState.cursor = 0;
-      knowledgeDraft = null;
       selectedKnowledge.clear();
       loadKnowledgePage().then(function () { renderCurrentState(false, 'knowledge'); });
       return;
@@ -1942,7 +2039,16 @@
     var newButton = $('#btn-knowledge-new');
     if (refreshButton) refreshButton.addEventListener('click', function () { render(); });
     if (newButton) newButton.addEventListener('click', newKnowledge);
+    var mcpStorageKey = root.chrome.extension.inIncognitoContext ? 'mcp_http_servers_incognito' : 'mcp_http_servers';
+    deps.lifecycle.subscribe(root.chrome.storage.onChanged, function (changes, area) {
+      if (area !== 'local' || !Object.keys(changes).some(function (key) {
+        return key === root.Knowledge.STORAGE_KEY || key === mcpStorageKey
+          || key === 'arp_skill_catalog' || key.indexOf('arp_skill_catalog:item:') === 0;
+      })) return;
+      pendingReload = true;
+      refreshPendingResources();
+    });
   }
 
-  return Object.freeze({ init: init, render: render });
+  return Object.freeze({ init: init, render: render, getState: getState, discard: discard });
 });

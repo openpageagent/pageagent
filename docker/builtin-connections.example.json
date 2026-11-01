@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "connections": [
+    {
+      "id": "primary",
+      "alias": "配置同步源",
+      "url": "wss://config.example.com",
+      "password": "REPLACE_WITH_PAIRING_PASSWORD",
+      "arpPermissions": {
+        "read": true,
+        "write": true,
+        "delete": true,
+        "execute": false
+      },
+      "bucket": "team-a",
+      "autoSync": true,
+      "backup": true
+    },
+    {
+      "id": "secondary",
+      "alias": "额外配置备份",
+      "url": "wss://backup.example.com",
+      "password": "REPLACE_WITH_PAIRING_PASSWORD",
+      "arpPermissions": {
+        "read": true,
+        "write": false,
+        "delete": false,
+        "execute": false
+      },
+      "bucket": "team-a",
+      "autoSync": false,
+      "backup": true
+    }
+  ]
+}

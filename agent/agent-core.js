@@ -6,10 +6,12 @@
     arp: require('../resources/protocol/index.js'),
     projection: require('./tool-result-projection.js'),
     runtimePermissions: require('../shared/system-runtime-permissions.js'),
+    serverInfoDescription: require('../shared/server-info-description.js'),
   } : {
     arp: root.AgentResourceProtocol,
     projection: root.AgentToolResultProjection,
     runtimePermissions: root.SystemRuntimePermissions,
+    serverInfoDescription: root.ServerInfoDescription,
   });
   if (commonJs) module.exports = api;
   else root.AgentCore = api;
@@ -19,7 +21,7 @@
   var API_VERSION = 1;
   var arp = deps.arp;
   var projection = deps.projection;
-  var CORE_PERMISSION_SCOPE = deps.runtimePermissions.permissions;
+  var CORE_PERMISSION_SCOPE = deps.runtimePermissions.permissions.filter(function (permission) { return permission !== 'local.execute'; });
   var CORE_ROOT_METHODS = Object.freeze(Object.assign({}, deps.runtimePermissions.rootMethods, {
     // /current is an internal, permission-free ground-truth clock resource;
     // it is intentionally not an editable Assistant resource root.
@@ -128,7 +130,7 @@
       });
       if (rootUri === '/recordings' && output[rootUri].indexOf('GET') === -1) output[rootUri].push('GET');
       if (output[rootUri].indexOf('OPTIONS') === -1) output[rootUri].push('OPTIONS');
-      (CORE_ROOT_METHODS[rootUri] || []).forEach(function (method) {
+      (rootUri === '/local' ? ['GET'] : CORE_ROOT_METHODS[rootUri] || []).forEach(function (method) {
         if (output[rootUri].indexOf(method) === -1) output[rootUri].push(method);
       });
       output[rootUri] = RESOURCE_METHODS.filter(function (method) {
@@ -382,7 +384,16 @@
         incognito: surface.incognito === true,
         profileId: text(assistant.profileId || 'default'),
         assistantInvocationKind: text(surface.assistantInvocationKind),
+        localTarget: clone(input.localTarget || null),
+        sourceConnectionId: surface.localCallerContext && surface.localCallerContext.sourceConnectionId || null,
+        parentRequest: clone(surface.localCallerContext && surface.localCallerContext.parentRequest || null),
+        appAuthorization: clone(surface.localCallerContext && surface.localCallerContext.appAuthorization || null),
+        appResourceSession: clone(surface.localCallerContext && surface.localCallerContext.appResourceSession || null),
       };
+      var callerScope = surface.localCallerContext && surface.localCallerContext.permissionScope;
+      if (Array.isArray(callerScope) && !callerScope.includes('*') && !callerScope.includes('local.execute')) {
+        context.permissionScope = context.permissionScope.filter(function (permission) { return permission !== 'local.execute'; });
+      }
       context.allowedRouteMethods = deriveAllowedRouteMethods(
         resourceRuntime,
         assistant,
@@ -688,7 +699,29 @@
         },
         resolveRuntimeContext: async function () {
           var selectedResources = await selectedResourceContext();
+          var localTargets = null, selectedLocalTarget = null;
+          if (context.permissionScope.includes('local.execute') && resourceRuntime.localOperations) {
+            var targets = await resourceRuntime.localOperations.discover(context);
+            localTargets = { discovery: '/local', total: targets.length, items: targets.slice(0, 8).map(function (connection) {
+              return { connectionId: connection.id, alias: connection.alias, serverId: connection.serverId, platform: connection.platform,
+                state: connection.state, reason: connection.reason, grantRevision: connection.grantRevision, links: connection.links,
+                workspaces: connection.workspaces.slice(0, 8).map(function (workspace) { return { workspaceId: workspace.id, alias: workspace.alias,
+                  resolvedPath: workspace.resolvedPath, state: workspace.state, reason: workspace.reason, operations: workspace.operations, links: workspace.links }; }) };
+            }) };
+            if (context.localTarget) {
+              var chosen = targets.find(function (connection) { return connection.id === context.localTarget.connectionId; });
+              var directory = chosen && chosen.workspaces.find(function (workspace) { return workspace.id === context.localTarget.workspaceId; });
+              var description = deps.serverInfoDescription;
+              var disk = chosen && chosen.ready && chosen.observations && directory ? chosen.observations.disks[directory.id] : null;
+              selectedLocalTarget = { ...context.localTarget, valid: !!chosen && chosen.allowed && chosen.serverId === context.localTarget.serverId
+                && (!context.localTarget.workspaceId || !!directory && directory.state === 'ready' && directory.resolvedPath === context.localTarget.resolvedPath && Object.values(directory.effectivePermissions).some(Boolean)),
+                description: chosen ? description.text(description.environment(chosen).concat(description.disk(disk))) : null,
+                links: directory ? directory.links : chosen && chosen.links };
+            }
+          }
           return {
+            localTargets: localTargets,
+            selectedLocalTarget: selectedLocalTarget,
             currentResource: context.currentResource,
             assistantPrompt: assistant.prompt || '',
             modelService: canReadModelService ? clone(input.modelService || null) : null,

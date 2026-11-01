@@ -448,14 +448,6 @@
     return describeOperation(data.method || data.name, data.requestTarget || args.uri || data.canonicalUri);
   }
 
-  function isReadOnlyToolOperation(data) {
-    var method = trimmed(data.method || data.name).toUpperCase();
-    if (method === 'GET' || method === 'OPTIONS') return true;
-    var args = isRecord(data.arguments) ? data.arguments : {};
-    var uri = trimmed(data.requestTarget || args.uri || data.canonicalUri).split(/[?#]/)[0].replace(/\/+$/, '');
-    return method === 'POST' && /^\/local\/(?:read|grep)$/.test(uri);
-  }
-
   function updateToolCardValue(projected) {
     var value = {};
     if (hasOwn(projected, 'call')) value.call = clone(projected.call);
@@ -478,6 +470,44 @@
     var images = api ? api.imageParts(modelContent) : fallbackImageParts(modelContent);
     if (images.length) projected.attachments = images;
     return modelValue;
+  }
+
+  function applyCompletedToolProjection(projected, event) {
+    var data = payload(event);
+    var modelValue = applyModelToolProjection(projected, event);
+    // Use canonical receipts when available; model projections can omit them.
+    var resultValue = isRecord(data.result) && data.result.protocol === 'arp/1'
+      ? data.result : isRecord(modelValue) ? modelValue : {};
+    var operation = isRecord(resultValue.primary && resultValue.primary.data) ? resultValue.primary.data
+      : isRecord(resultValue.result) ? resultValue.result : resultValue;
+    var receipt = resultValue.receipt || operation.receipt || operation.actionReceipt
+      || operation.interaction && (operation.interaction.receipt || operation.interaction)
+      || (isRecord(operation.verification) ? operation : null) || data.receipt || {};
+    var verificationStatus = trimmed(receipt.verificationStatus || receipt.status || receipt.verification && receipt.verification.status);
+    var state = trimmed(receipt.state);
+    var performed = trimmed(receipt.performed || data.performed);
+    var execution = resultValue.execution || operation.execution || {};
+    var code = Number(resultValue.status && resultValue.status.code) || 0;
+    if (code >= 400 || resultValue.ok === false || verificationStatus === 'failed'
+        || state === 'failed' || execution.outcome === 'failed' || execution.outcome === 'rejected') {
+      projected.kind = 'error';
+      projected.status = 'failed';
+    } else if (state === 'cancelled' || execution.outcome === 'cancelled' || execution.outcome === 'timed_out') {
+      projected.kind = 'error';
+      projected.status = execution.outcome === 'timed_out' ? 'timed_out' : 'cancelled';
+    } else if (performed === 'unknown' || execution.outcome === 'unknown') {
+      projected.kind = 'warn';
+      projected.status = 'unknown';
+    } else if (verificationStatus === 'unconfirmed' || state === 'unconfirmed') {
+      projected.kind = 'warn';
+      projected.status = 'unconfirmed';
+    } else if (state === 'queued' || state === 'running') projected.status = state;
+    else if (code === 202 || resultValue.accepted === true) projected.status = 'pending';
+    else if (verificationStatus === 'confirmed') projected.status = 'confirmed';
+    else if (trimmed(data.name).toUpperCase() === 'ASK_USER') projected.status = 'answered';
+    // performed describes side effects, not request completion. Successful
+    // reads and no-op writes complete even through a POST forwarding route.
+    else projected.status = 'completed';
   }
 
   function projectDurableEvent(event, options) {
@@ -556,8 +586,7 @@
       if (type === 'tool/result') {
         projected.kind = 'tool-result';
         var normalizedTerminal = Object.assign({}, event, { type: 'tool_execution_completed', payload: data });
-        applyModelToolProjection(projected, normalizedTerminal);
-        projected.status = 'completed';
+        applyCompletedToolProjection(projected, normalizedTerminal);
       } else {
         projected.kind = 'tool';
         projected.call = { name: slashName, arguments: clone(slashArguments || {}) };
@@ -584,7 +613,7 @@
           : /deferred$/.test(type) ? 'deferred' : type === 'tool_call_started' ? 'running' : 'planned';
       if (/completed|result$/.test(type)) {
         projected.kind = 'tool-result';
-        applyModelToolProjection(projected, Object.assign({}, event, {
+        applyCompletedToolProjection(projected, Object.assign({}, event, {
           type: 'tool_execution_completed', payload: data,
         }));
       }
@@ -600,27 +629,7 @@
       projected.kind = 'tool-result';
       projected.operation = toolOperation(data);
       projected.title = projected.operation || toolTitle(data.name);
-      var modelValue = applyModelToolProjection(projected, event);
-      var resultValue = modelValue && typeof modelValue === 'object' && !Array.isArray(modelValue) ? modelValue : {};
-      var projectedResult = isRecord(resultValue.result) ? resultValue.result : resultValue;
-      var receipt = resultValue.receipt || projectedResult.receipt || projectedResult.actionReceipt
-        || projectedResult.interaction && (projectedResult.interaction.receipt || projectedResult.interaction)
-        || resultValue.primary && resultValue.primary.data && resultValue.primary.data.actionReceipt || null;
-      var verificationStatus = trimmed(receipt && (receipt.verificationStatus || receipt.status || receipt.verification && receipt.verification.status));
-      var performed = trimmed(receipt && receipt.performed || data.performed);
-      if (trimmed(data.name).toUpperCase() === 'ASK_USER') projected.status = 'answered';
-      else if (verificationStatus === 'failed') {
-        projected.kind = 'error';
-        projected.status = 'failed';
-      } else if (verificationStatus === 'unconfirmed') {
-        projected.kind = 'warn';
-        projected.status = 'unconfirmed';
-      } else if (verificationStatus === 'confirmed') projected.status = 'confirmed';
-      // A successful read has no side effects, but the tool did run. This also
-      // corrects existing journal entries without changing their receipts.
-      else if (performed === 'no' && isReadOnlyToolOperation(data)
-          && resultValue.ok !== false && !resultValue.error) projected.status = 'completed';
-      else projected.status = performed === 'unknown' ? 'unknown' : (performed === 'no' ? 'not_performed' : 'completed');
+      applyCompletedToolProjection(projected, event);
     } else if (type === 'tool_execution_failed') {
       projected.kind = 'error';
       projected.operation = toolOperation(data);

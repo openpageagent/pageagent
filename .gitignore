@@ -1,13 +1,15 @@
 .vscode
 
 .npm-test.log
-/node_modules
-/dist
+node_modules/
+/dist/
 
 # macOS
 .DS_Store
 
 # MCP Server
+data/
+mcp-server/data/
 mcp-server/node_modules/
 mcp-server/dist/
 *.log
@@ -18,3 +20,6 @@ mcp-server/dist/
 *.iws
 *.ipr
 *~
+
+# Docker
+docker/.env

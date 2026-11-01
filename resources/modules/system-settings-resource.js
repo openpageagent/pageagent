@@ -12,6 +12,8 @@
   'use strict';
   var PROPERTIES = Object.freeze({
     floatingEntryDisabled: { type: 'boolean', description: '是否隐藏网页上的悬浮入口' },
+    sidebarAppsFavoritesOnly: { type: 'boolean', description: '侧边栏应用默认只显示收藏；输入搜索词时搜索全部应用' },
+    popupAppsFavoritesOnly: { type: 'boolean', description: '左键菜单仅显示收藏列表，顺序与应用入口的收藏列表一致；关闭时显示最近使用' },
     userAgent: { type: 'string', maxLength: 512, description: '用于流程 HTTP 请求、资源下载和 MCP 连接；留空时使用浏览器默认值' },
     proxyServer: { type: 'string', maxLength: 2048, description: '浏览器代理，支持 HTTP / SOCKS5，作用于网页、模型和 MCP 连接；留空关闭系统代理' },
     proxyUsername: { type: 'string', maxLength: 1024, description: 'HTTP / HTTPS 代理用户名，SOCKS 代理不支持用户名密码认证' },
@@ -30,7 +32,7 @@
   var ROUTES = Object.freeze([
     support.route({
       template: '/system-settings', resourceType: 'SystemSettings', relation: 'system-settings',
-      summary: '读取或修改系统配置：网页悬浮入口、User-Agent 与浏览器代理',
+      summary: '读取或修改系统配置：网页悬浮入口、侧边栏应用、左键菜单、User-Agent 与浏览器代理',
       aliases: ['系统设置', '系统配置', 'User-Agent', '代理', '悬浮入口'], tags: ['settings', 'system'],
       entryWeights: { global: 20, 'system-settings': 35 },
       methods: {

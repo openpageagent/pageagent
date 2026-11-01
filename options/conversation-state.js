@@ -748,7 +748,25 @@
   }
 
   function queueStateOperation(operation) {
-    var result = writeQueue.then(operation);
+    var result = writeQueue.then(function () {
+      if (ConversationProfileSchema.hasResourcePermissionCatalog()) return;
+      return new Promise(function (resolve, reject) {
+        chrome.runtime.sendMessage({ type: 'GET_CONVERSATION_PERMISSION_CATALOG' }, function (response) {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          if (!response || !response.ok) {
+            reject(new Error(response && response.error || '无法加载资源权限目录'));
+            return;
+          }
+          try {
+            ConversationProfileSchema.installResourcePermissionCatalog(response.payload);
+            resolve();
+          } catch (error) { reject(error); }
+        });
+      });
+    }).then(operation);
     writeQueue = result.catch(function () {});
     return result;
   }
@@ -1102,7 +1120,7 @@
     });
   }
 
-  function createAssistant(input) {
+  function createAssistant(input, restoredId) {
     input = input && typeof input === 'object' && !Array.isArray(input)
       ? ConversationProfileSchema.safeMerge(input)
       : {};
@@ -1111,7 +1129,7 @@
       // read it fresh before a catalog mutation to avoid cross-context lost updates.
       invalidateCache();
       return loadDirect({ persistMigration: false }).then(function (state) {
-        assistantStateRuntime.createAssistant(state, input);
+        assistantStateRuntime.createAssistant(state, input, restoredId);
         state.updatedAt = Date.now();
         var assistantId = state.activeAssistantId;
         var assistant = state.assistants[assistantId];

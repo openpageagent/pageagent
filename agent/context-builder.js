@@ -588,6 +588,8 @@
         assistantPrompt: dynamic.assistantPrompt,
         selectedSkills: dynamic.selectedSkills || input.selectedSkills,
         selectedMcpContext: dynamic.selectedMcpContext || input.selectedMcpContext,
+        localTargets: dynamic.localTargets,
+        selectedLocalTarget: dynamic.selectedLocalTarget,
         selectedResourceWarnings: dynamic.selectedResourceWarnings || input.selectedResourceWarnings,
         currentTime: Number(clock()),
         recovery: dynamic.recovery || input.recovery,

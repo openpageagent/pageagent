@@ -7,6 +7,7 @@ const limits = settings.DELIVERY_LIMITS;
 function queueError(message) {
   const error = new Error(message);
   error.retryable = false;
+  error.performed = 'no';
   return error;
 }
 
@@ -54,7 +55,12 @@ function createMailQueue() {
     accounts.add(job.account);
     const payload = job.payload;
     job.payload = null;
-    Promise.resolve().then(() => sendMail(payload, { signal: job.controller.signal })).then(
+    Promise.resolve().then(async () => {
+      if (job.controller.signal.aborted) throw queueError('邮件请求已取消，邮件尚未发送');
+      if (job.beforeSend) await job.beforeSend(job.controller.signal);
+      if (job.controller.signal.aborted) throw queueError('邮件请求已取消，邮件尚未发送');
+      return sendMail(payload, { signal: job.controller.signal });
+    }).then(
       result => complete(job, null, result),
       error => complete(job, error)
     );
@@ -100,7 +106,7 @@ function createMailQueue() {
       const job = {
         payload, bytes, account, resolve, reject,
         state: 'queued', deadline: Date.now() + limits.queueWaitMs,
-        signal: options.signal, controller: new AbortController(),
+        signal: options.signal, controller: new AbortController(), beforeSend: options.beforeSend,
       };
       job.onAbort = () => {
         if (job.state === 'queued') {

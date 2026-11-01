@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "116",
   "name": "Page Agent",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Page Agent 从对话到可复用的产出",
   "permissions": [
     "sidePanel",
@@ -38,6 +38,26 @@
   "side_panel": {
     "default_path": "sidepanel/sidepanel.html"
   },
+  "commands": {
+    "open-sidepanel": {
+      "suggested_key": {
+        "default": "Alt+Shift+Comma"
+      },
+      "description": "打开侧边栏"
+    },
+    "close-sidepanel": {
+      "suggested_key": {
+        "default": "Alt+Shift+Period"
+      },
+      "description": "关闭侧边栏"
+    },
+    "open-options": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "打开配置项"
+    }
+  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
@@ -60,7 +80,8 @@
     }
   ],
   "action": {
-    "default_title": "运行面板",
+    "default_title": "Page Agent",
+    "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",

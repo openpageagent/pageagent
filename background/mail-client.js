@@ -35,19 +35,34 @@
       }
       var message = settings.prepareMessage(input);
       var config = settings.validate(options.config || stored);
-      var client = typeof getWebSocketClient === 'function' ? getWebSocketClient() : null;
+      if (!config.connectionId) throw new Error('请明确选择用于发送邮件的服务端连接');
+      if (options.context && options.context.sourceConnectionId && options.context.sourceConnectionId !== config.connectionId) throw new Error('CROSS_CONNECTION_FORWARDING_DISABLED');
+      var client = typeof getWebSocketClient === 'function' ? getWebSocketClient(config.connectionId) : null;
       if (!client || !client.isConnected()) throw new Error('请先在「连接配置」中启用并连接 MCP Server');
-      return client.sendMail({ config: config, message: message }, { signal: options.signal });
+      var status = client.getStatus();
+      if (!status.serverInfo.capabilities.mail.supported) throw new Error('所选服务端不支持邮件');
+      if (!status.serverInfo.capabilities.audit.available) throw root.AgentResourceProtocol.arpError('TEMPORARILY_UNAVAILABLE', '服务端审计不可用，邮件尚未发送', { performed: 'no', retryable: false, details: { reason: 'AUDIT_UNAVAILABLE' } });
+      var context = options.context || {};
+      async function correlation(value) { if (!value) return null; return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(String(value)) ? String(value) : root.AgentResourceProtocol.sha256(String(value)); }
+      var caller = { kind: context.sourceConnectionId ? 'external' : context.runId ? 'flow' : 'ui', actorId: context.actorId || 'mail:runtime',
+        conversationId: context.conversationId || null, runId: context.runId || null, parentRequest: context.parentRequest || null };
+      caller.actorId = await correlation(caller.actorId); caller.conversationId = await correlation(caller.conversationId); caller.runId = await correlation(caller.runId);
+      var smtpConfig = Object.assign({}, config); delete smtpConfig.connectionId;
+      try { return await client.sendMail({ config: smtpConfig, message: message }, { signal: options.signal, caller: caller }); }
+      catch (error) { throw root.AgentResourceProtocol.arpError(error.code || 'UPSTREAM_FAILED', error.message, { performed: error.performed || 'unknown', retryable: false,
+        details: { reason: error.reason, audit: error.audit, target: { connectionId: config.connectionId, serverId: status.serverId } } }); }
     }
 
     async function getStatus() {
       var config = await load();
-      var client = typeof getWebSocketClient === 'function' ? getWebSocketClient() : null;
+      var client = config.connectionId && typeof getWebSocketClient === 'function' ? getWebSocketClient(config.connectionId) : null;
       var status = client && client.getStatus();
       return {
         enabled: config.enabled,
-        connected: !!(status && status.connected),
-        supported: !!(status && status.connected && status.serverInfo && status.serverInfo.mail === 'smtp/1'),
+        connectionId: config.connectionId,
+        reason: !config.connectionId ? 'TARGET_REQUIRED' : status && status.reason || (status && status.ready ? null : 'CONNECTION_NOT_READY'),
+        connected: !!(status && status.ready),
+        supported: !!(status && status.ready && status.serverInfo && status.serverInfo.capabilities.mail.supported),
       };
     }
 

@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const native = require('./desktop-native.js');
+const { terminateChild, observeChild } = require('./execution-control');
 
 const MAX_TEXT_BYTES = 64 * 1024;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -283,11 +284,12 @@ function command(executable, args, signal, input = '', cwd) {
     const grouped = process.platform !== 'win32';
     const child = spawn(executable, args, { cwd, windowsHide: true, detached: grouped, stdio: ['pipe', 'pipe', 'pipe'],
       env: process.platform === 'darwin' ? Object.assign({}, process.env, { LC_ALL: 'en_US.UTF-8' }) : process.env });
+    observeChild(signal, child);
     const chunks = [], errors = [];
     let bytes = 0, errorBytes = 0, failure;
     const stop = error => {
       failure = failure || error;
-      try { if (grouped) process.kill(-child.pid, 'SIGKILL'); else child.kill(); } catch (_) {}
+      terminateChild(child, signal).catch(() => {});
     };
     const abort = () => stop(new Error('桌面操作已取消；实际结果可能未知，请确认后再重试'));
     const timer = setTimeout(() => stop(new Error('桌面操作超过 30 秒；实际结果可能未知，请确认后再重试')), 30000);
@@ -302,7 +304,7 @@ function command(executable, args, signal, input = '', cwd) {
       errorBytes += chunk.length;
     });
     child.stdin.on('error', () => {});
-    child.once('error', error => { cleanup(); reject(new Error('无法启动系统命令：' + error.message)); });
+    child.once('error', error => { failure = failure || new Error('无法启动系统命令：' + error.message); });
     child.once('close', code => {
       cleanup();
       if (failure) { reject(failure); return; }
@@ -394,8 +396,15 @@ async function openApplication(input, signal, directory) {
     checkCancelled(signal);
     await new Promise((resolve, reject) => {
       const child = spawn(application, args, { cwd: directory, detached: true, stdio: 'ignore' });
-      child.once('error', reject);
-      child.once('spawn', () => { child.unref(); resolve(); });
+      observeChild(signal, child);
+      const abort = () => { terminateChild(child, signal).catch(() => {}); };
+      signal.addEventListener('abort', abort, { once: true });
+      child.once('error', error => { signal.removeEventListener('abort', abort); reject(error); });
+      child.once('spawn', () => {
+        if (signal.aborted) {
+          abort(); child.once('close', () => { signal.removeEventListener('abort', abort); reject(new Error('应用启动已请求取消')); });
+        } else { signal.removeEventListener('abort', abort); child.unref(); resolve(); }
+      });
     });
   } else throw new Error('桌面操作仅支持 macOS 和 Windows');
   return { application, launchRequested: true };
@@ -424,4 +433,4 @@ async function executeDesktop(operation, input, signal, directory) {
   } finally { busy = false; }
 }
 
-module.exports = { executeDesktop };
+module.exports = { executeDesktop, capabilities };

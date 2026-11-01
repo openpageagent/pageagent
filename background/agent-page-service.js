@@ -112,7 +112,7 @@
     var turnArtifactCounts = new Map();
 
     function actionOwner(context) {
-      return String(context && (context.generationId || context.turnId || context.topicId || context.conversationId) || '');
+      return String(context && (context.pageActionOwner || context.generationId || context.turnId || context.topicId || context.conversationId) || '');
     }
 
     function operationTiming(input, fallbackMs) {

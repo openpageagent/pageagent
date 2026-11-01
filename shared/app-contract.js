@@ -405,6 +405,6 @@
     unsupportedNodes: unsupportedNodes, assertNode: assertNode,
     checkPermission: checkPermission,
     guidance: '创建、修改或修复应用前，先读取 /apps 或目标应用资源，再完整 GET /knowledge/builtin_app_generation_guide；摘要或检索片段不能代替正文。__builtin=true 的应用只读；编辑前带 If-Match 调用 POST /apps/{appId}/copy，后续修改返回的应用副本。内置应用声明的本地 JS/CSS 存入 code.files，复制、发布和导出携带原文；GET /apps/{appId}/{slot}/files 列出文件，GET /apps/{appId}/{slot}/files/{fileName} 按行读取或搜索，slot 为 draft 或 published，无需访问插件安装目录。',
-    limits: Object.freeze({ nameLength: 32, messageBytes: 256 * 1024, inFlight: 8, requestsPerSecond: 30, timeoutMs: 60000 })
+    limits: Object.freeze({ recentApps: 5, nameLength: 32, messageBytes: 256 * 1024, inFlight: 8, requestsPerSecond: 30, timeoutMs: 60000 })
   });
 })(globalThis);

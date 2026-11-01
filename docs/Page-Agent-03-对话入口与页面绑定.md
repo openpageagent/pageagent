@@ -8,10 +8,12 @@ Conversation 是持久话题，generation 是话题中的一次运行。连续�
 | --- | --- | --- | --- |
 | 配置中心 | 使用当前话题；新建话题时创建 | `/conversations/{id}`，也可关联 Run/Flow | 无 |
 | 网页内对话面板 | 按 `tabId + assistantId` 复用；点击“新对话”后创建 | `/page/current` | 打开面板的网页 Tab |
-| Sidepanel | 每次点击运行创建独立话题 | `/page/current` | 启动时的活动网页 Tab |
+| Sidepanel | 每次运行助手时创建独立话题 | `/page/current` | 启动时的活动网页 Tab |
 | 定时任务 | 每次触发创建独立话题 | `/schedules/{id}` | 无 |
 | Flow `runAssistant` | 未指定 ID 时创建；指定 ID 时复用 | `/flows/{flowId}` 或 `/assistants/{assistantId}` | 节点传入的 `tabId`（可选） |
-| ARP/MCP | `POST /conversations` 创建；向已有 ID 发消息时复用 | `/conversations/{id}` | 请求 `tabId`，其次是话题的 `activeTabId` |
+| 扩展内 ARP | `POST /conversations` 创建；向已有 ID 发消息时复用 | `/conversations/{id}` | 请求 `tabId`，其次是话题的 `activeTabId` |
+
+外部 MCP 入口可读取已授权资源，不能创建、修改或启动对话；其页面目标规则见 [MCP 浏览器目标](./Page-Agent-11-MCP服务.md#浏览器目标)。
 
 ## 什么时候是新对话
 
@@ -27,7 +29,7 @@ Conversation 是持久话题，generation 是话题中的一次运行。连续�
 
 页面绑定指定页面工具的默认目标。
 
-页面 DOM、文本和截图只有模型显式读取 `/page` 资源后才进入上下文。
+绑定页面不会自动读取 DOM、文本或截图，页面内容需通过 `/page` 资源显式获取。
 
 没有默认目标时，页面服务返回 `PAGE_CONTEXT_REQUIRED`，不会自动选择浏览器中的其他标签页。
 
@@ -41,7 +43,7 @@ Conversation 是持久话题，generation 是话题中的一次运行。连续�
 
 目标优先级是入口显式 `tabId`，其次是已验证的网页或 Sidepanel 入口；配置中心和定时任务不把自身 UI Tab 当作目标。
 
-## ARP/MCP 对话调用
+## ARP 对话调用
 
 ```text
 POST /conversations

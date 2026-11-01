@@ -11,6 +11,8 @@
   var PROXY_FIELDS = Object.freeze(['proxyServer', 'proxyUsername', 'proxyPassword', 'proxyHostPatterns', 'proxyBypassList']);
   var DEFAULTS = Object.freeze({
     floatingEntryDisabled: false,
+    sidebarAppsFavoritesOnly: false,
+    popupAppsFavoritesOnly: false,
     userAgent: '',
     proxyServer: '',
     proxyUsername: '',
@@ -23,6 +25,8 @@
     raw = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
     return {
       floatingEntryDisabled: raw.floatingEntryDisabled === true,
+      sidebarAppsFavoritesOnly: raw.sidebarAppsFavoritesOnly === true,
+      popupAppsFavoritesOnly: raw.popupAppsFavoritesOnly === true,
       userAgent: String(raw.userAgent || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 512),
       proxyServer: String(raw.proxyServer || '').trim(),
       proxyUsername: String(raw.proxyUsername || ''),

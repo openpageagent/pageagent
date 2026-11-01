@@ -21,6 +21,7 @@
     'knowledge.read', 'knowledge.write', 'skills.read', 'assistants.read',
     'system-settings.read', 'system-settings.write',
     'mail-settings.read', 'mail-settings.write', 'mail-settings.execute',
+    'connections.read',
     'local.execute',
     'utilities.read', 'utilities.execute',
   ]);
@@ -41,7 +42,8 @@
     '/scripts': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
     '/apps': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
     '/schedules': Object.freeze(['GET', 'POST', 'PATCH', 'OPTIONS']),
-    '/local': Object.freeze(['POST', 'OPTIONS']),
+    '/local': Object.freeze(['GET', 'POST', 'OPTIONS']),
+    '/connections': Object.freeze(['GET', 'OPTIONS']),
     '/system-settings': Object.freeze(['GET', 'PATCH', 'OPTIONS']),
     '/mail-settings': Object.freeze(['GET', 'PATCH', 'POST', 'OPTIONS']),
   });

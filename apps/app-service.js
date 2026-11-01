@@ -40,7 +40,11 @@
       });
       return result;
     }
-    async function fingerprint(value) {
+    async function fingerprint(value, kind) {
+      if (kind === 'connections') value = { id: value.id, url: value.url, expectedServerId: value.expectedServerId || null,
+        runTabMode: value.runTabMode, workspaces: (value.workspaces || []).map(function (workspace) {
+          return { id: workspace.id, kind: workspace.kind, ...(workspace.kind === 'custom' ? { path: workspace.path } : {}) };
+        }).sort(function (left, right) { return left.id.localeCompare(right.id); }) };
       var bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(stable(value))));
       return Array.from(new Uint8Array(bytes), function (byte) { return byte.toString(16).padStart(2, '0'); }).join('');
     }
@@ -51,8 +55,11 @@
         ['apiKey', 'headers', 'customHeaders', 'authorization', 'secret', 'credentialMetadata', 'hasApiKey', 'maskedApiKey', 'apiStyle', 'providerType', 'provider_type', 'reasoningProviderType'].forEach(function (key) { delete value[key]; });
       }
       if (kind === 'connections') {
-        value = Object.assign({}, value);
-        ['connected', 'connecting', 'retryCount', 'owner', 'lastError', 'logs'].forEach(function (key) { delete value[key]; });
+        value = { id: value.id, alias: value.alias, url: value.url, enabled: value.enabled === true,
+          expectedServerId: value.expectedServerId || null, runTabMode: value.runTabMode, desktopEnabled: value.desktopEnabled === true,
+          workspaces: (value.workspaces || []).map(function (workspace) { return { id: workspace.id, kind: workspace.kind,
+            alias: workspace.alias, ...(workspace.kind === 'custom' ? { path: workspace.path } : {}),
+            ...(workspace.lastResolvedPath ? { lastResolvedPath: workspace.lastResolvedPath } : {}), permissions: workspace.permissions }; }) };
       }
       return value;
     }
@@ -72,7 +79,7 @@
         else value = await options.readResource(uri);
       }
       value = dependencyValue(kind, value);
-      return { uri: uri, kind: kind, id: id, value: value, fingerprint: await fingerprint(value), builtin: builtin || !!(value.__builtin || value.builtIn || value.protected) };
+      return { uri: uri, kind: kind, id: id, value: value, fingerprint: await fingerprint(value, kind), builtin: builtin || !!(value.__builtin || value.builtIn || value.protected) };
     }
     function references(item) {
       var result = [], map = { flowId: 'flows', subFlowId: 'flows', flowGroupId: 'flow-groups', scriptId: 'scripts', pageId: 'pages', pageSourceId: 'pages', assistantId: 'assistants', serviceId: 'model-services', modelServiceId: 'model-services', knowledgeId: 'knowledge', connectionId: 'connections', appId: 'apps' };
@@ -392,7 +399,7 @@
       if (!binding || binding.active === false) return null;
       try { return Object.assign(await summary(binding.appId), { editingSlot: 'draft' }); } catch (error) { return { appId: binding.appId, name: binding.name, unavailable: error.message }; }
     }
-    async function preflightImport(item, modules, scope, plan) {
+    async function preflightImport(item, modules, scope, plan, rebindConnections) {
       store.assertEditable(await store.get('app_meta', item.appId));
       var aliasOwner = await store.findBySlug(item.slug);
       if (aliasOwner && aliasOwner.appId !== item.appId) throw C.error('ADDRESS_CONFLICT', '导入应用别名“' + C.slug(item.slug) + '”已被应用“' + aliasOwner.name + '”使用，请先修改应用别名');
@@ -414,7 +421,7 @@
         if (kind === 'apps' && value) value = { appId: id, name: value.name, slots: value.slots };
         if (!value) return readDependency(uri);
         value = dependencyValue(kind, value);
-        var hash = await fingerprint(value);
+        var hash = await fingerprint(value, kind);
         try {
           var local = await readDependency(uri);
           if (local.builtin && local.fingerprint !== hash) throw C.error('DEPENDENCY_CHANGED', '内置依赖不兼容: ' + uri);
@@ -423,14 +430,26 @@
         } catch (error) { if (error.code !== 'RESOURCE_NOT_FOUND') throw error; }
         return { uri: uri, kind: kind, id: id, value: value, fingerprint: hash };
       }
+      if (rebindConnections) {
+        // Remapped resources establish new fingerprints only from selected package content.
+        for (var dependency of dependencies) {
+          var match = /^\/([^/]+)\/([^/]+)$/.exec(dependency.uri);
+          if (!match) continue;
+          var kind = match[1], id = decodeURIComponent(match[2]), moduleId = { 'flow-groups': 'flowGroups', 'model-services': 'modelSettings', connections: 'mcpSettings' }[kind] || kind;
+          var source = modules[moduleId], selectedId = kind === 'model-services' ? 'service:' + id : id;
+          if (!source || !plan || !Object.prototype.hasOwnProperty.call(plan, moduleId) || plan[moduleId] !== null && !plan[moduleId].includes(selectedId)) continue;
+          if (source.items && Object.prototype.hasOwnProperty.call(source.items, id) || kind === 'model-services' && source.value && (source.value.services || []).some(function (service) { return service.id === id; })) dependency.fingerprint = (await lookup(dependency.uri)).fingerprint;
+        }
+      }
       checkSupported(await collect(dependencies, lookup));
-      var bindings = {};
+      var bindings = {}, actions = {};
       for (var slot of Object.keys(item.slots)) {
         var code = await checkCode(item.slots[slot], scope, lookup);
         bindings[slot] = code.dependencies;
+        actions[slot] = code.actions;
       }
       var old = await store.get('app_meta', item.appId);
-      return { revision: old ? old.revision : null, dataRevision: old && old.dataRevision || null, conflicts: Array.from(new Set(conflicts.concat(old ? ['/apps/' + item.appId] : []))), reuse: reuse, bindings: bindings };
+      return { revision: old ? old.revision : null, dataRevision: old && old.dataRevision || null, conflicts: Array.from(new Set(conflicts.concat(old ? ['/apps/' + item.appId] : []))), reuse: reuse, bindings: bindings, actions: actions };
     }
     async function remapImported(item, idMap, modules, committedApps) {
       // Normalizing an earlier app changes its content hash. Rebind only after
@@ -473,7 +492,7 @@
         var module = modules[moduleId], expected = module && module.items && module.items[oldId];
         if (expected) {
           expected = dependencyValue(kind, remap(expected)); if (kind === 'assistants') expected.id = id;
-          if (await fingerprint(expected) !== current.fingerprint) throw C.error('DEPENDENCY_CHANGED', '重映射后的依赖与已写入内容不一致: ' + uri);
+          if (await fingerprint(expected, kind) !== current.fingerprint) throw C.error('DEPENDENCY_CHANGED', '重映射后的依赖与已写入内容不一致: ' + uri);
         } else if (dependency.fingerprint && dependency.fingerprint !== current.fingerprint) throw C.error('DEPENDENCY_CHANGED', '依赖已变化: ' + uri);
         fingerprints.set(dependency.uri, { uri: uri, fingerprint: current.fingerprint });
       }
@@ -488,7 +507,8 @@
       for (var code of Object.values(item.slots)) await checkCode(code, item.generationScope);
       return item;
     }
-    async function openApp(appId, slot, input, expectedRevision) {
+    async function openApp(appId, slot, input, expectedRevision, openOptions) {
+      openOptions = openOptions || {};
       var meta = store.required(await store.get('app_meta', appId));
       slot = slot || (meta.slots.published ? 'published' : 'draft');
       if (!meta.slots[slot]) throw C.error(slot === 'draft' ? 'DRAFT_NOT_FOUND' : 'NOT_PUBLISHED', slot === 'draft' ? '此应用只有发布内容，请编辑并保存草稿后预览' : '请先发布应用');
@@ -497,26 +517,27 @@
       if (input !== undefined) url += C.launchHash(input);
       var sessionTabs = root.PageAgentAppBridge ? root.PageAgentAppBridge.tabIds(appId, slot) : [];
       var connectedTabs = root.PageAgentAppBridge ? root.PageAgentAppBridge.tabIds() : [];
-      var tabs = await chrome.tabs.query({});
+      var tabs = await chrome.tabs.query(Number.isInteger(openOptions.windowId) ? { windowId: openOptions.windowId } : {});
       var tab = tabs.find(function (item) {
-        if (input !== undefined) return false;
+        if (input !== undefined || openOptions.newTab) return false;
         if (!!item.incognito !== !!options.incognito) return false;
         if (!item.pendingUrl && connectedTabs.includes(item.id)) return sessionTabs.includes(item.id);
         return [url, legacyUrl].includes(String(item.pendingUrl || item.url || '').split(/[?#]/)[0]);
       });
       if (tab) { await chrome.tabs.update(tab.id, { active: true }); await chrome.windows.update(tab.windowId, { focused: true }); }
       else {
+        var active = openOptions.active !== false;
         var windows = (await chrome.windows.getAll({ windowTypes: ['normal'] })).filter(function (item) { return !!item.incognito === !!options.incognito; });
-        var targetWindow = windows.find(function (item) { return item.focused; }) || windows[0];
-        if (targetWindow) tab = await chrome.tabs.create({ windowId: targetWindow.id, url: url });
+        var targetWindow = windows.find(function (item) { return item.id === openOptions.windowId; }) || windows.find(function (item) { return item.focused; }) || windows[0];
+        if (targetWindow) tab = await chrome.tabs.create({ windowId: targetWindow.id, url: url, active: active });
         else {
-          targetWindow = await chrome.windows.create({ url: url, incognito: !!options.incognito });
+          targetWindow = await chrome.windows.create({ url: url, incognito: !!options.incognito, focused: active });
           tab = targetWindow.tabs && targetWindow.tabs[0] || (await chrome.tabs.query({ windowId: targetWindow.id }))[0];
         }
-        await chrome.windows.update(targetWindow.id, { focused: true });
+        if (active) await chrome.windows.update(targetWindow.id, { focused: true });
       }
-      await store.touch(appId);
-      return { tabId: tab.id, url: url };
+      var usage = await store.touch(appId, true);
+      return Object.assign({ tabId: tab.id, url: url }, usage);
     }
     return {
       store: store, summary: summary, fingerprint: fingerprint, readDependency: readDependency, collect: collect, codeDependencies: codeDependencies, checkCode: checkCode,

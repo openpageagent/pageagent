@@ -1,0 +1,29 @@
+:root {
+  --drag-border: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  --drag-bg: color-mix(in srgb, var(--accent) 4%, var(--bg));
+  --drag-shadow: 0 4px 12px rgba(15, 23, 42, .12);
+  --drag-source-opacity: .35;
+}
+
+.sort-layout {
+  isolation: isolate;
+  user-select: none;
+}
+
+:root .sort-layout > .sort-item {
+  transform: translate3d(var(--sort-shift-x, 0px), var(--sort-shift-y, 0px), 0);
+  transition: transform 150ms cubic-bezier(.22, 1, .36, 1), opacity 150ms ease;
+  will-change: transform;
+}
+
+:root .sort-drag-preview[aria-hidden="true"] {
+  position: fixed;
+  z-index: 300;
+  overflow: hidden;
+  pointer-events: none;
+  border-color: var(--drag-border);
+  background: var(--drag-bg);
+  box-shadow: var(--drag-shadow);
+  opacity: 1;
+  will-change: transform;
+}

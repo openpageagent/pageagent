@@ -1010,6 +1010,14 @@
         if (key !== 'options') runOptions[key] = clone(body[key]);
       });
       runOptions.assistantInvocationKind = isRunAssistantInvocation(context) ? 'runAssistant' : '';
+      delete runOptions.localCallerContext;
+      if (context) runOptions.localCallerContext = {
+        sourceConnectionId: context.sourceConnectionId, sourcePrincipal: context.sourcePrincipal,
+        parentRequest: context.parentRequest || null, actorId: context.actorId, runTabMode: context.runTabMode,
+        ...(Array.isArray(context.permissionScope) ? { permissionScope: context.permissionScope } : {}),
+        ...(context.appAuthorization ? { appAuthorization: clone(context.appAuthorization) } : {}),
+        ...(context.appResourceSession ? { appResourceSession: clone(context.appResourceSession) } : {}),
+      };
       // Application authorization is stamped by the app service, never inferred from run input.
       if (context && context.appAuthorization) runOptions.appAuthorization = clone(context.appAuthorization);
       else { delete runOptions.appAuthorization; delete runOptions.appConfig; delete runOptions.appNodeSets; }
@@ -1055,6 +1063,7 @@
               resetContext: body.resetContext !== false,
               runTabMode: body.runTabMode,
               assistantInvocationKind: isRunAssistantInvocation(context) ? 'runAssistant' : '',
+              localCallerContext: runOptionsFromBody({}, context).localCallerContext,
             });
           }, body);
         });
@@ -1328,7 +1337,7 @@
         var executor = options.runScript || options.scriptRunner && options.scriptRunner.runScript;
         requireFunction(executor, 'scriptRunner.runScript');
         return rememberTransientRun('script', scriptId, function (runId, signal) {
-          return executor.call(options.scriptRunner || null, script.code || script.source || '', Object.assign({}, body || {}, { scriptId: scriptId, runId: runId, signal: signal }));
+          return executor.call(options.scriptRunner || null, script.code || script.source || '', Object.assign(runOptionsFromBody(body, context), { scriptId: scriptId, runId: runId, signal: signal }));
         }, body);
       });
     }
@@ -1590,14 +1599,16 @@
       CONVERSATION_ACTIVE: 'RESOURCE_CONFLICT',
     });
 
-    function dispatchConversationCommand(command, input) {
+    function dispatchConversationCommand(command, input, context) {
       var bus = typeof conversationCommands === 'function' ? conversationCommands() : conversationCommands;
       if (!bus || typeof bus.dispatchInternal !== 'function') {
         fail('TEMPORARILY_UNAVAILABLE', 'Conversation command bus is not wired to AgentResourceService');
       }
       return Promise.resolve(bus.dispatchInternal(
         { command: command, input: input },
-        { type: 'mcp', instanceId: 'mcp:conversation-resource' }
+        Object.assign({ type: 'mcp', instanceId: 'mcp:conversation-resource' }, context ? {
+          localCallerContext: runOptionsFromBody({}, context).localCallerContext,
+        } : {})
       )).then(function (response) {
         if (response && response.ok === true) return clone(response.result);
         var error = response && response.error || {};
@@ -1655,7 +1666,7 @@
               contextCompression: settings.contextCompression === 'off' ? 'off' : 'auto',
             },
             requestedAt: Date.now(),
-          }).then(function (result) {
+          }, context).then(function (result) {
             return Object.assign({ conversationId: conversationId, commandId: commandId }, result || {});
           });
         });
@@ -2426,6 +2437,12 @@
       patchFlow: patchFlow,
       deleteFlow: function (id) { return deleteSectionItem('flows', id); },
       validateFlow: validateFlow,
+      validateConfiguration: function (config) {
+        Object.keys(config.flows || {}).forEach(function (id) {
+          assertFlowRepresentation(id, normalizeFlowRepresentation(config.flows[id], true), config);
+        });
+        return config;
+      },
       createFlowNode: createFlowNode,
       getFlowNode: getFlowNode,
       replaceFlowNode: replaceFlowNode,

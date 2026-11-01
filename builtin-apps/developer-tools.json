@@ -17,6 +17,9 @@
             "views.js": "builtin-apps/developer-tools/views.js",
             "crontab.js": "builtin-apps/developer-tools/crontab.js",
             "feedback.js": "builtin-apps/shared/feedback.js",
+            "drag-preview.js": "builtin-apps/shared/drag-preview.js",
+            "sort-layout.js": "builtin-apps/shared/sort-layout.js",
+            "drag-preview.css": "builtin-apps/shared/drag-preview.css",
             "app.css": "builtin-apps/developer-tools/app.css",
             "theme.css": "apps/default-theme.css"
           },
@@ -37,7 +40,7 @@
               "customBehavior": [
                 "界面与主题源码通过 sourceFiles 安装到 code.files，复制和导出携带这些文件；通过 PageAgent.resources.request 调用 /utilities，需 utilities.read、utilities.execute。实时工具随输入更新，生成工具按页面默认值或用户选项生成；文件仅在用户选择后读取。只持久保存常用工具及顺序，不保存输入历史。公共接口及流程记录沿用宿主策略。目标插件仍需提供公共 UI、字体及工具服务。",
                 "对话可调用 POST /apps/{appId}/open，body 为 {input:{toolId,input,operation?}}；应用 SDK 对应 PageAgent.apps.open(appId,{toolId,input,operation?})。toolId 和文本 input 必填（input 可为空字符串），operation 可省略，默认使用该入口的首个接收操作；不接受其他字段。打开发布页后直接选择工具和操作并填入，不弹选择框。带参数新建标签页，URL 编码后最多 16 KiB；需 apps.execute。此应用原版 ID 为 app_developer_tools，副本用自己的 ID。",
-                "toolId 使用 /utilities 的工具 ID，支持 ascii、radix、zhNumber、time、unit、json、color、jwt、urlParse、ipcalc、text、hash、hmac、aes、des、tripleDes、rc4、rabbit、sm2、sm4、rsa、sign、base64、base64Image、url、unicode、hexString、html、gzip、asn1、punycode、backslash、pinyin、serialize、regex、diffs、binary、dataValidation、qrCode、barcode、sqlFillParameter、httpSnippet、dockerCompose、variableConversion、code、bcrypt、uuid、ulid、crontab、svgToCss。专用页面接收操作固定为 ascii/zhNumber/unit/color=convert、radix=all、time=timestamp、json=format、jwt=decode、urlParse=parse、ipcalc=ipv4/ipv6、text=statistics、crontab=next、base64Image=decode、uuid=v3/v5、regex=match；其余使用 /utilities 中的操作，排除无输入的生成操作。",
+                "toolId 使用 /utilities 的工具 ID，支持 ascii、radix、zhNumber、time、unit、json、color、jwt、urlParse、ipcalc、text、hash、hmac、aes、des、tripleDes、rc4、rabbit、sm2、sm4、rsa、sign、base64、base64Image、url、unicode、hexString、html、gzip、asn1、punycode、backslash、pinyin、serialize、regex、diffs、binary、dataValidation、qrCode、barcode、sqlFillParameter、httpSnippet、dockerCompose、variableConversion、code、bcrypt、uuid、ulid、crontab、svgToCss、htmlToJsx、markdown、certificate、stringInspect。专用页面接收操作固定为 ascii/zhNumber/unit/color=convert、radix=all、time=timestamp、json=format、jwt=decode、urlParse=parse、ipcalc=ipv4/ipv6、text=statistics、crontab=next、base64Image=decode、uuid=v3/v5、regex=match；其余使用 /utilities 中的操作，排除无输入的生成操作。",
                 "多个工具串联时，对话直接调用 /utilities 的操作，将前一步响应 primary.data.value 作为下一步的 input；最后用 /open 的 input.input 填入文本，结构化结果先转为 JSON 字符串。打开页面只返回 tabId/url，不返回页面计算结果。启动参数仅填入一次；工具选项在页面调整，接收后沿用既有实时处理行为。"
               ],
               "externalResources": [],

@@ -38,6 +38,8 @@
     httpRequest: 'http-response',
     webhook: 'http-response',
     sendEmail: 'mail-delivery',
+    localEnvironment: 'local-environment',
+    localDisk: 'local-disk',
     localRead: 'local-file',
     localWrite: 'local-file',
     localDelete: 'local-file',
@@ -333,7 +335,7 @@
       assertNode(node);
       requireParamApis();
       var typeDefinition = typeof NodeTypes.getType === 'function' && NodeTypes.getType(node.type);
-      if (/^local(?:Read|Write|Delete|Grep|Bash)$/.test(node.type) || typeDefinition && typeDefinition.utilityId) {
+      if (/^local(?:Read|Write|Delete|Grep|Bash|Environment|Disk)$/.test(node.type) || typeDefinition && typeDefinition.utilityId) {
         // File content and commands inserted from variables must not be interpolated again.
         return normalizePreservingExtraParams(node.type, Template.interpolateParams(copyOwnDataParams(node), ctx));
       }

@@ -1,0 +1,84 @@
+@font-face {
+  font-family: AppFontAwesome;
+  src: url('../assets/ui-fonts/font-awesome/fonts/fontawesome-webfont.woff2') format('woff2');
+  font-display: swap;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  width: 208px;
+  margin: 0;
+  padding: 6px;
+  background: #fff;
+  color: #303638;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.menu-panel {
+  animation: menu-enter 140ms ease-out;
+}
+h1 { margin: 5px 8px 6px; color: #6c7779; font-size: 11px; font-weight: 400; }
+/* 先预留最近应用的行高，避免常用列表加载后突然撑开弹窗。 */
+#recent-content[aria-busy="true"] { min-height: calc(var(--recent-limit, 5) * 34px); }
+#status { margin: 0; padding: 10px 8px; color: #6c7779; font-size: 12px; overflow-wrap: anywhere; }
+#status.error { color: #ba554a; }
+#retry {
+  margin: 0 8px 8px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: #eef2f2;
+  color: inherit;
+}
+#retry:not(:disabled):hover { background: #e2e9e9; }
+#recent-apps { max-height: 400px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+#recent-apps > li { animation: app-enter 120ms ease-out; }
+button {
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.menu-item:not(:disabled):hover,
+.menu-item:focus-visible { background: #eef2f2; }
+.menu-item:not(:disabled):active { background: #e2e9e9; }
+button:focus-visible { outline: 2px solid #347d76; outline-offset: -2px; }
+button:disabled { opacity: 0.55; cursor: wait; }
+.app-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 18px;
+  height: 18px;
+  color: #446563;
+  font: 16px/1 AppFontAwesome;
+}
+.app-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-builtin { flex-shrink: 0; padding: 0 4px; border: 1px solid #d0dbe0; border-radius: 3px; color: #6c7779; font-size: 10px; line-height: 16px; white-space: nowrap; }
+.menu-item > svg { flex: 0 0 18px; width: 18px; height: 18px; color: #6c7779; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+#open-sidepanel > span, #open-options > span { white-space: nowrap; }
+.menu-item > kbd { min-width: 0; margin-left: auto; overflow: hidden; color: #6c7779; font: inherit; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+hr { margin: 5px 8px; border: 0; border-top: 1px solid rgba(0, 40, 40, 0.09); }
+@keyframes menu-enter {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes app-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .menu-panel, #recent-apps > li { animation: none; }
+  button { transition: none; }
+}

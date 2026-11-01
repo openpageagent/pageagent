@@ -27,9 +27,61 @@
     manual: '手动', sidepanel: '侧边栏', schedule: '定时运行', urlTrigger: 'URL 触发',
     webhook: 'Webhook', mcp: 'MCP', flowGroup: '流程组合',
   };
-  var REPORT_DISCLOSURE_STYLE = 'details>summary{display:flex;align-items:center;gap:10px;min-height:30px;list-style:none;cursor:pointer;color:#004849;}details>summary::-webkit-details-marker{display:none;}'
+  var REPORT_DISCLOSURE_STYLE = 'details>summary{display:flex;align-items:center;gap:8px;min-height:30px;padding:0 4px;list-style:none;cursor:pointer;color:#004849;}details>summary::-webkit-details-marker{display:none;}'
     + 'details>summary::before{content:"";box-sizing:border-box;flex:0 0 8px;width:8px;height:8px;border:solid currentColor;border-width:0 2px 2px 0;color:#728e9b;transform:translateX(-2px) rotate(-45deg);}details[open]>summary::before{transform:translateY(-2px) rotate(45deg);}'
     + 'details>summary:hover{background:rgba(0,72,73,.08);}details>summary:hover::before{color:#004849;}details>summary:focus-visible{outline:2px solid #004849;outline-offset:2px;}';
+  var REPORT_LAYOUT_STYLE = '.report-dashboard{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.report-charts{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.report-insights{grid-template-columns:minmax(0,1fr);gap:12px}.report-metric,.report-chart,.report-insight{min-width:0}'
+    + '.trend-chart{display:block;width:100%;height:160px}.chart-axis{fill:#728e9b;font-size:11px}.chart-caption{margin-top:8px;line-height:1.6}.chart-empty{padding:12px 0}.chart-bar-row{grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) auto}.chart-bar-row em{white-space:nowrap}.history-trend-row{grid-template-columns:48px minmax(0,1fr) auto}.history-trend-track{min-width:0}.trend-running{background:#4086e0}.trend-other{background:#728e9b}'
+    + '.report-insight h3{display:flex;align-items:center;gap:8px}.report-insight>.chart-caption{margin:0 0 12px}.report-insight table{table-layout:fixed;min-width:680px;margin-bottom:0}.report-insight th,.report-insight td{padding:8px 10px;vertical-align:middle}.report-insight th{white-space:nowrap}.report-count-column{width:64px}.report-rate-column{width:128px}.report-time-column{width:156px}.report-number{text-align:right;font-variant-numeric:tabular-nums}.report-passed{color:#1a9964}.report-time{white-space:nowrap;font-size:11px;color:#728e9b}'
+    + '.report-reason{font-weight:500;overflow-wrap:anywhere}.report-error-preview{max-height:72px;overflow:auto;margin-top:4px;color:#ba554a;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;line-height:1.5}.report-object{display:flex;align-items:center;gap:8px;min-width:0}.report-object>.badge{flex-shrink:0}.report-object>b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}.report-object-flow{margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.report-rate{display:flex;align-items:center;gap:8px}.report-rate>.chart-bar-track{flex:1;min-width:0}.status-success{background:#1a9964;color:#fff}.status-stopped{background:#9b6a6c;color:#fff}'
+    + '.flaky-table .report-time-column{width:240px}.report-latest{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}.report-latest>.badge{box-sizing:border-box;flex:0 0 52px;padding:2px 7px;font-size:11px;line-height:16px;text-align:center}.report-latest>.report-time{line-height:20px;font-variant-numeric:tabular-nums}'
+    + '.status-distribution{display:flex;align-items:center;flex-wrap:wrap;gap:12px 20px}.status-chart{display:block;flex:0 0 160px;width:160px;max-width:100%;height:auto;background:none;border-radius:0}.status-legend{display:grid;grid-template-columns:minmax(0,1fr) auto 48px;align-items:center;gap:10px 12px;flex:1 1 160px;font-size:11px;color:#728e9b;font-variant-numeric:tabular-nums}.status-legend-label{display:flex;align-items:center;gap:8px;white-space:nowrap}.status-legend-label i{flex:0 0 8px;height:8px;border-radius:2px}.status-legend>b{text-align:right;font-weight:500;color:#262626}.status-legend-pct{text-align:right}'
+    + '.status-distribution{position:relative}.status-slice:hover{filter:brightness(1.12)}.status-slice:focus-visible{outline:none;stroke:#004849;stroke-width:2}.chart-tooltip{position:absolute;z-index:5;box-sizing:border-box;width:max-content;max-width:calc(100% - 16px);padding:6px 10px;border-radius:4px;background:#004849;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.15);font-size:12px;line-height:18px;overflow-wrap:anywhere;pointer-events:none}.chart-tooltip[hidden]{display:none}'
+    + '@media(max-width:760px){.report-dashboard{grid-template-columns:repeat(2,minmax(0,1fr))}.report-charts{grid-template-columns:minmax(0,1fr)}}';
+  var REPORT_CHART_SCRIPT = '<script>(' + bindReportChartTooltips.toString() + ')(document.body);</script>';
+
+  function bindReportChartTooltips(container, listen) {
+    listen = listen || function (target, type, handler) { target.addEventListener(type, handler); };
+    var activeTooltip = null;
+
+    function hideTooltip() {
+      if (activeTooltip) activeTooltip.hidden = true;
+      activeTooltip = null;
+    }
+
+    function showTooltip(event) {
+      var slice = event.target.closest && event.target.closest('.status-slice');
+      if (!slice || !container.contains(slice)) {
+        hideTooltip();
+        return;
+      }
+      var chart = slice.closest('.status-distribution');
+      var tooltip = chart.querySelector('.chart-tooltip');
+      if (activeTooltip !== tooltip) hideTooltip();
+      activeTooltip = tooltip;
+      var label = slice.getAttribute('data-chart-tooltip');
+      if (tooltip.textContent !== label) tooltip.textContent = label;
+      tooltip.hidden = false;
+
+      var bounds = chart.getBoundingClientRect();
+      var sliceBounds = slice.getBoundingClientRect();
+      var x = (event.type === 'focusin' ? sliceBounds.left + sliceBounds.width / 2 : event.clientX) - bounds.left;
+      var y = (event.type === 'focusin' ? sliceBounds.top + sliceBounds.height / 2 : event.clientY) - bounds.top;
+      var left = Math.max(8, Math.min(x + 12, chart.clientWidth - tooltip.offsetWidth - 8));
+      var top = y + 12;
+      if (top + tooltip.offsetHeight > chart.clientHeight - 8) top = y - tooltip.offsetHeight - 12;
+      tooltip.style.left = left + 'px';
+      tooltip.style.top = Math.max(8, top) + 'px';
+    }
+
+    listen(container, 'pointerover', showTooltip);
+    listen(container, 'pointermove', showTooltip);
+    listen(container, 'pointerleave', hideTooltip);
+    listen(container, 'focusin', showTooltip);
+    listen(container, 'focusout', hideTooltip);
+    listen(container, 'keydown', function (event) { if (event.key === 'Escape') hideTooltip(); });
+    return hideTooltip;
+  }
 
   function formatStatus(status) {
     var key = String(status === undefined || status === null ? '' : status);
@@ -119,6 +171,7 @@
     idle: '#4086e0',
     stopped: '#9b6a6c',
     skipped: '#728e9b',
+    other: '#728e9b',
   };
 
   function hasOwn(value, key) {
@@ -258,6 +311,8 @@
   function renderCurrentRuns() {
     var list = $('#runs-list');
     if (!list) return;
+    var focusedHeader = doc.activeElement && doc.activeElement.closest('.run-card-header');
+    var focusedRunId = focusedHeader && list.contains(focusedHeader) ? focusedHeader.dataset.id : '';
     var runs = lastRuns;
     if (!runs.length) {
       list.innerHTML = renderReportDashboard(runs) + '<div class="placeholder">暂无运行记录</div>';
@@ -267,9 +322,10 @@
       var pager = renderConfigListPagination(page);
       list.innerHTML = renderReportDashboard(runs) + pager + page.items.map(function (run) {
         var expanded = !!expandedRunIds[run.id];
-        var duration = run.endedAt ? Math.round((run.endedAt - run.startedAt) / 1000) + 's' : '';
+        var duration = formatDurationMs(getRunDurationMs(run));
         var entry = runEntryDisplay(run);
-        var triggerText = '入口：' + esc(entry.label) + (entry.detail ? ' · ' + esc(entry.detail) : '');
+        var triggerText = entry.label + (entry.detail ? ' · ' + entry.detail : '');
+        var bodyId = 'run-body-' + encodeURIComponent(run.id);
         var steps = collectRunSteps(run);
         var stats = stepStats(steps);
         var statsBadge = steps.length
@@ -300,16 +356,20 @@
           }
         }
         return '<div class="run-card">'
-          + '<div class="run-card-header" data-action="toggle-run" data-id="' + esc(run.id) + '">'
-          + '<span class="run-time">' + fmtTime(run.startedAt) + '</span>'
-          + '<span class="run-flow">' + esc(run.flowLabel || run.flowId) + '</span>'
-          + '<span class="run-trigger">' + triggerText + (duration ? ' · ' + duration : '') + '</span>'
-          + statsBadge
+          + '<button type="button" class="run-card-header" data-action="toggle-run" data-id="' + esc(run.id) + '" aria-expanded="' + expanded + '" aria-controls="' + esc(bodyId) + '">'
+          + '<span class="run-summary"><span class="run-flow" title="' + esc((run.flowLabel || run.flowId) + ' · ID：' + run.id) + '">' + esc(run.flowLabel || run.flowId) + '</span>'
+          + '<span class="run-trigger" title="' + esc(triggerText) + '">' + esc(triggerText) + '</span>' + statsBadge + '</span>'
+          + '<span class="run-time">' + esc(fmtTime(run.startedAt)) + '</span>'
+          + '<span class="run-duration" title="运行耗时">' + esc(duration) + '</span>'
           + '<span class="badge status-' + esc(run.status) + '">' + statusText(run.status) + '</span>'
-          + '</div>'
-          + '<div class="run-card-body' + (expanded ? '' : ' collapsed') + '">' + body + '</div>'
+          + '</button>'
+          + '<div id="' + esc(bodyId) + '" class="run-card-body' + (expanded ? '' : ' collapsed') + '">' + body + '</div>'
           + '</div>';
       }).join('') + pager;
+    if (focusedRunId) {
+      var header = Array.from(list.querySelectorAll('.run-card-header')).find(function (item) { return item.dataset.id === focusedRunId; });
+      if (header) header.focus({ preventScroll: true });
+    }
   }
 
   function renderRuns(refreshOptions) {
@@ -400,7 +460,9 @@
     if (!isFinite(n) || n < 0) return '—';
     if (n < 1000) return Math.round(n) + 'ms';
     if (n < 60000) return (n / 1000).toFixed(n < 10000 ? 1 : 0) + 's';
-    return Math.floor(n / 60000) + 'm ' + Math.round((n % 60000) / 1000) + 's';
+    var seconds = Math.round(n / 1000);
+    if (seconds >= 3600) return Math.floor(seconds / 3600) + 'h ' + Math.floor(seconds % 3600 / 60) + 'm';
+    return Math.floor(seconds / 60) + 'm ' + seconds % 60 + 's';
   }
 
   function compactErrorText(error) {
@@ -427,7 +489,14 @@
   }
 
   function getRunDurationMs(run) {
-    return run && run.startedAt && run.endedAt ? run.endedAt - run.startedAt : null;
+    if (!run || !run.startedAt || !run.endedAt || isActiveRunHistoryStatus(run.status)) return null;
+    var duration = Number(run.endedAt) - Number(run.startedAt);
+    return isFinite(duration) && duration >= 0 ? duration : null;
+  }
+
+  function runStatusBucket(run) {
+    if (isActiveRunHistoryStatus(run.status)) return 'running';
+    return ['success', 'failed', 'stopped'].indexOf(run.status) !== -1 ? run.status : 'other';
   }
 
   function dateKeyFromTs(ts) {
@@ -512,11 +581,10 @@
     var groups = Object.create(null);
     (runs || []).forEach(function (run) {
       var key = dateKeyFromTs(run.startedAt);
-      if (!hasOwn(groups, key)) groups[key] = { key: key, total: 0, success: 0, failed: 0, stopped: 0, running: 0, durationSum: 0, durationCount: 0 };
+      if (!hasOwn(groups, key)) groups[key] = { key: key, total: 0, success: 0, failed: 0, stopped: 0, running: 0, other: 0, durationSum: 0, durationCount: 0 };
       var group = groups[key];
       group.total++;
-      if (run.status === 'idle') group.running++;
-      else if (hasOwn(group, run.status)) group[run.status]++;
+      group[runStatusBucket(run)]++;
       var duration = getRunDurationMs(run);
       if (duration !== null) {
         group.durationSum += duration;
@@ -569,8 +637,9 @@
       .concat(Object.keys(nodes).map(function (key) { return nodes[key]; }))
       .filter(function (item) { return item.passed > 0 && item.failed > 0; })
       .map(function (item) {
-        item.failRate = item.total ? item.failed / item.total : 0;
-        item.flakyScore = Math.min(item.passed, item.failed) / Math.max(1, item.total);
+        item.sampleCount = item.passed + item.failed;
+        item.failRate = item.failed / item.sampleCount;
+        item.flakyScore = Math.min(item.passed, item.failed) / item.sampleCount;
         return item;
       })
       .sort(function (a, b) {
@@ -580,7 +649,7 @@
 
   function renderReportDashboard(runs) {
     runs = runs || [];
-    var statusCount = { running: 0, success: 0, failed: 0, stopped: 0 };
+    var statusCount = { running: 0, success: 0, failed: 0, stopped: 0, other: 0 };
     var stepTotal = 0;
     var stepPassed = 0;
     var dataRows = 0;
@@ -590,10 +659,10 @@
     var flakyItems = buildFlakyAnalysis(runs);
 
     runs.forEach(function (run) {
-      if (run.status === 'idle') statusCount.running++;
-      else if (hasOwn(statusCount, run.status)) statusCount[run.status]++;
-      if (run.kind === 'flowGroup' || Array.isArray(run.flowGroupResults)) flowGroupRuns++;
-      if (run.startedAt && run.endedAt) durations.push(run.endedAt - run.startedAt);
+      statusCount[runStatusBucket(run)]++;
+      if (run.kind === 'flowGroup' || run.flowGroupResults && run.flowGroupResults.length) flowGroupRuns++;
+      var duration = getRunDurationMs(run);
+      if (duration !== null) durations.push(duration);
       var stats = stepStats(collectRunSteps(run, { includeFlowGroupChildren: false }));
       stepTotal += stats.passed + stats.failed + stats.skipped;
       stepPassed += stats.passed;
@@ -604,10 +673,10 @@
 
     var avgMs = durations.length
       ? Math.round(durations.reduce(function (sum, ms) { return sum + ms; }, 0) / durations.length)
-      : 0;
+      : null;
     var passRate = formatPct(statusCount.success, runs.length);
     var stepPassRate = formatPct(stepPassed, stepTotal);
-    var avgDuration = avgMs ? Math.round(avgMs / 1000) + 's' : '—';
+    var avgDuration = formatDurationMs(avgMs);
     var activeRuns = statusCount.running;
     var terminalRuns = runs.length - activeRuns;
 
@@ -633,8 +702,11 @@
     return '<div class="report-charts">'
       + renderRunStatusDistributionChart(statusCount, runs.length)
       + renderRunTrendChart(runs)
-      + renderHistoricalTrendChart(runs)
+      + renderStepDistributionChart(stepStats(chartSteps))
+      + renderRunEntryChart(runs)
       + renderTopNodeChart(chartSteps)
+      + renderTopNodeChart(chartSteps, 'failed')
+      + renderHistoricalTrendChart(runs)
       + '</div>';
   }
 
@@ -642,27 +714,39 @@
     if (!total) {
       return '<div class="report-chart"><h3>' + esc(title) + '</h3><div class="chart-empty">暂无数据</div></div>';
     }
-    var x = 0;
-    var rects = items.map(function (item) {
-      var w = item.count ? (item.count / total * 100) : 0;
-      var rect = w ? '<rect x="' + x.toFixed(2) + '" y="2" width="' + w.toFixed(2) + '" height="12" rx="2" fill="' + item.color + '"></rect>' : '';
-      x += w;
-      return rect;
+    var angle = -Math.PI / 2;
+    var slices = items.map(function (item) {
+      if (!item.count) return '';
+      var label = esc(item.label + ' · ' + item.count + ' 次 · ' + formatPct(item.count, total));
+      var attributes = ' class="status-slice" tabindex="0" role="img" aria-label="' + label + '" data-chart-tooltip="' + label + '"';
+      if (item.count === total) return '<circle cx="80" cy="80" r="72" fill="' + item.color + '"' + attributes + '></circle>';
+      var nextAngle = angle + item.count / total * Math.PI * 2;
+      var startX = 80 + Math.cos(angle) * 72;
+      var startY = 80 + Math.sin(angle) * 72;
+      var endX = 80 + Math.cos(nextAngle) * 72;
+      var endY = 80 + Math.sin(nextAngle) * 72;
+      var largeArc = item.count > total / 2 ? 1 : 0;
+      angle = nextAngle;
+      return '<path d="M80 80 L' + startX.toFixed(3) + ' ' + startY.toFixed(3)
+        + ' A72 72 0 ' + largeArc + ' 1 ' + endX.toFixed(3) + ' ' + endY.toFixed(3)
+        + ' Z" fill="' + item.color + '"' + attributes + '></path>';
     }).join('');
     var legend = items.map(function (item) {
-      return '<span><i style="background:' + item.color + '"></i>' + esc(item.label) + ' ' + item.count + '</span>';
+      return '<span class="status-legend-label"><i aria-hidden="true" style="background:' + item.color + '"></i>' + esc(item.label) + '</span>'
+        + '<b>' + item.count + '</b><span class="status-legend-pct">' + formatPct(item.count, total) + '</span>';
     }).join('');
     return '<div class="report-chart"><h3>' + esc(title) + '</h3>'
-      + '<svg viewBox="0 0 100 16" preserveAspectRatio="none" class="status-chart">' + rects + '</svg>'
-      + '<div class="chart-legend">' + legend + '</div></div>';
+      + '<div class="status-distribution"><svg viewBox="0 0 160 160" class="status-chart" role="group" aria-label="' + esc(title + '：' + items.map(function (item) { return item.label + ' ' + item.count + '，占 ' + formatPct(item.count, total); }).join('；')) + '">' + slices + '</svg>'
+      + '<div class="status-legend">' + legend + '</div><div class="chart-tooltip" aria-hidden="true" hidden></div></div></div>';
   }
 
   function renderRunStatusDistributionChart(statusCount, total) {
     return renderDistributionChart('运行状态分布', [
       { label: '成功', count: statusCount.success || 0, color: CHART_COLORS.success },
       { label: '失败', count: statusCount.failed || 0, color: CHART_COLORS.failed },
-      { label: '运行中', count: statusCount.running || 0, color: CHART_COLORS.running },
+      { label: '活动中', count: statusCount.running || 0, color: CHART_COLORS.running },
       { label: '已停止', count: statusCount.stopped || 0, color: CHART_COLORS.stopped },
+      { label: '其他', count: statusCount.other || 0, color: CHART_COLORS.other },
     ], total);
   }
 
@@ -675,38 +759,51 @@
   }
 
   function renderRunTrendChart(runs) {
-    var recent = (runs || []).slice(0, 12).reverse();
-    if (!recent.length) return '<div class="report-chart"><h3>最近运行趋势</h3><div class="chart-empty">暂无数据</div></div>';
-    var width = 260;
-    var height = 70;
-    var pad = 10;
+    var recent = (runs || []).filter(function (run) { return getRunDurationMs(run) !== null; })
+      .sort(function (a, b) { return Number(b.startedAt) - Number(a.startedAt); }).slice(0, 12).reverse();
+    if (!recent.length) return '<div class="report-chart"><h3>最近运行耗时</h3><div class="chart-empty">暂无已结束运行的耗时数据</div></div>';
+    var width = 480;
+    var height = 150;
+    var left = 56;
+    var right = 464;
+    var top = 14;
+    var bottom = 118;
+    var maxDuration = recent.reduce(function (max, run) { return Math.max(max, getRunDurationMs(run)); }, 0) || 1;
     var points = recent.map(function (run, i) {
-      var x = recent.length === 1 ? width / 2 : pad + i * ((width - pad * 2) / (recent.length - 1));
-      var y = run.status === 'success' ? 18 : ((run.status === 'running' || run.status === 'idle') ? 32 : (run.status === 'stopped' ? 46 : 56));
-      return { x: x, y: y, status: run.status };
+      var x = recent.length === 1 ? (left + right) / 2 : left + i * ((right - left) / (recent.length - 1));
+      var duration = getRunDurationMs(run);
+      return { x: x, y: bottom - duration / maxDuration * (bottom - top), duration: duration, run: run };
     });
     var line = points.map(function (p) { return p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
     var dots = points.map(function (p) {
-      var color = chartColor(p.status);
-      return '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="3.5" fill="' + color + '"></circle>';
+      return '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="3.5" fill="' + chartColor(p.run.status) + '"><title>'
+        + esc((p.run.flowLabel || p.run.flowId) + ' · ' + fmtTime(p.run.startedAt) + ' · ' + formatDurationMs(p.duration) + ' · ' + formatStatus(p.run.status)) + '</title></circle>';
     }).join('');
-    return '<div class="report-chart"><h3>最近运行趋势</h3>'
-      + '<svg viewBox="0 0 ' + width + ' ' + height + '" class="trend-chart">'
-      + '<line x1="' + pad + '" y1="18" x2="' + (width - pad) + '" y2="18"></line>'
-      + '<line x1="' + pad + '" y1="56" x2="' + (width - pad) + '" y2="56"></line>'
+    var axis = [0, 0.5, 1].map(function (ratio) {
+      var y = bottom - ratio * (bottom - top);
+      return '<line x1="' + left + '" y1="' + y + '" x2="' + right + '" y2="' + y + '"></line>'
+        + '<text class="chart-axis" x="' + (left - 8) + '" y="' + (y + 4) + '" text-anchor="end">' + esc(formatDurationMs(maxDuration * ratio)) + '</text>';
+    }).join('');
+    return '<div class="report-chart"><h3>最近运行耗时</h3>'
+      + '<svg viewBox="0 0 ' + width + ' ' + height + '" class="trend-chart" role="img" aria-label="最近 ' + recent.length + ' 次已结束运行的耗时，按开始时间排列">'
+      + axis
+      + '<text class="chart-axis" x="' + left + '" y="144">' + esc(fmtTime(recent[0].startedAt)) + '</text>'
+      + (recent.length > 1 ? '<text class="chart-axis" x="' + right + '" y="144" text-anchor="end">' + esc(fmtTime(recent[recent.length - 1].startedAt)) + '</text>' : '')
       + '<polyline points="' + line + '"></polyline>' + dots + '</svg>'
-      + '<div class="chart-caption">最近 ' + recent.length + ' 次运行</div></div>';
+      + '<div class="chart-caption">最近 ' + recent.length + ' 次已结束运行 · 横轴为运行顺序，纵轴为耗时 · 悬停查看详情</div></div>';
   }
 
   function renderHistoricalTrendChart(runs) {
     var buckets = buildHistoricalTrend(runs, 14);
-    if (!buckets.length) return '<div class="report-chart"><h3>历史趋势</h3><div class="chart-empty">暂无数据</div></div>';
+    if (!buckets.length) return '<div class="report-chart report-chart-wide"><h3>历史趋势</h3><div class="chart-empty">暂无数据</div></div>';
     var maxTotal = buckets.reduce(function (m, item) { return Math.max(m, item.total); }, 0) || 1;
     var rows = buckets.map(function (item) {
       var successW = item.total ? (item.success / item.total * 100) : 0;
       var failedW = item.total ? (item.failed / item.total * 100) : 0;
       var stoppedW = item.total ? (item.stopped / item.total * 100) : 0;
-      var totalW = Math.max(6, Math.round(item.total / maxTotal * 100));
+      var runningW = item.total ? (item.running / item.total * 100) : 0;
+      var otherW = item.total ? (item.other / item.total * 100) : 0;
+      var totalW = item.total / maxTotal * 100;
       var label = item.key === '未知日期' ? item.key : item.key.slice(5);
       return '<div class="history-trend-row">'
         + '<span>' + esc(label) + '</span>'
@@ -714,6 +811,8 @@
         + (successW ? '<i class="trend-success" style="width:' + successW.toFixed(1) + '%"></i>' : '')
         + (failedW ? '<i class="trend-failed" style="width:' + failedW.toFixed(1) + '%"></i>' : '')
         + (stoppedW ? '<i class="trend-stopped" style="width:' + stoppedW.toFixed(1) + '%"></i>' : '')
+        + (runningW ? '<i class="trend-running" style="width:' + runningW.toFixed(1) + '%"></i>' : '')
+        + (otherW ? '<i class="trend-other" style="width:' + otherW.toFixed(1) + '%"></i>' : '')
         + '</div>'
         + '<em>' + item.total + ' 次 · ' + formatPct(item.success, item.total) + ' · ' + formatDurationMs(item.avgDurationMs) + '</em>'
         + '</div>';
@@ -721,28 +820,50 @@
     return '<div class="report-chart report-chart-wide"><h3>历史趋势</h3>'
       + rows
       + '<div class="chart-legend"><span><i style="background:' + CHART_COLORS.success + '"></i>成功</span><span><i style="background:' + CHART_COLORS.failed + '"></i>失败</span><span><i style="background:' + CHART_COLORS.stopped + '"></i>停止</span></div>'
+      + '<div class="chart-caption">最近 14 个有记录的日期 · 蓝色为活动中，灰色为其他状态 · 平均耗时仅统计已结束运行</div>'
       + '</div>';
   }
 
-  function renderTopNodeChart(steps) {
-    var top = buildNodeStats(steps).filter(function (item) {
-      return item.failed || item.durationCount;
-    }).sort(function (a, b) {
-      return (b.failed - a.failed) || ((b.avg || 0) - (a.avg || 0)) || (b.sum - a.sum);
-    }).slice(0, 5);
-    if (!top.length) return '<div class="report-chart"><h3>Top 慢/失败节点</h3><div class="chart-empty">暂无数据</div></div>';
-    var max = top.reduce(function (m, item) {
-      var value = item.failed ? item.failed : (item.avg || item.sum || 0);
-      return Math.max(m, value);
-    }, 0) || 1;
-    var rows = top.map(function (item) {
-      var value = item.failed ? item.failed : (item.avg || item.sum || 0);
-      var label = item.failed ? (item.failed + ' 失败') : (formatDurationMs(item.avg) + ' avg');
-      var width = Math.max(4, Math.round(value / max * 100));
-      return '<div class="chart-bar-row"><span title="' + esc(item.title || item.nodeId) + '">' + esc(item.title || item.nodeId || item.type) + '</span>'
-        + '<div class="chart-bar-track"><i style="width:' + width + '%"></i></div><em>' + esc(label) + '</em></div>';
+  function renderBarChart(title, items, caption, color) {
+    var max = items.reduce(function (value, item) { return Math.max(value, item.value); }, 0) || 1;
+    var rows = items.map(function (item) {
+      return '<div class="chart-bar-row" title="' + esc(item.label + ' · ' + item.valueLabel + (item.detail ? ' · ' + item.detail : '')) + '">'
+        + '<span>' + esc(item.label) + '</span><div class="chart-bar-track"><i style="width:' + (item.value / max * 100).toFixed(1) + '%;background:' + color + '"></i></div>'
+        + '<em>' + esc(item.valueLabel) + '</em></div>';
     }).join('');
-    return '<div class="report-chart"><h3>Top 慢/失败节点</h3>' + rows + '</div>';
+    return '<div class="report-chart"><h3>' + esc(title) + '</h3>'
+      + (rows || '<div class="chart-empty">暂无数据</div>')
+      + '<div class="chart-caption">' + esc(caption) + '</div></div>';
+  }
+
+  function renderTopNodeChart(steps, metric) {
+    var failed = metric === 'failed';
+    var items = buildNodeStats(steps).filter(function (item) {
+      return failed ? item.failed > 0 : item.durationCount > 0;
+    }).sort(function (a, b) {
+      return failed ? b.failed - a.failed || b.count - a.count : b.avg - a.avg || b.sum - a.sum;
+    }).slice(0, 5).map(function (item) {
+      return {
+        label: item.title || item.nodeId || item.type,
+        value: failed ? item.failed : item.avg,
+        valueLabel: failed ? item.failed + ' 次' : formatDurationMs(item.avg),
+        detail: failed ? '共执行 ' + item.count + ' 次' : '耗时样本 ' + item.durationCount + ' 次',
+      };
+    });
+    return renderBarChart(failed ? '失败节点 Top 5' : '慢节点 Top 5', items,
+      failed ? '按失败次数排序' : '按平均耗时排序，悬停查看样本数', failed ? CHART_COLORS.failed : '#004849');
+  }
+
+  function renderRunEntryChart(runs) {
+    var counts = Object.create(null);
+    runs.forEach(function (run) {
+      var label = runEntryDisplay(run).label;
+      counts[label] = (counts[label] || 0) + 1;
+    });
+    var items = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; }).slice(0, 6).map(function (label) {
+      return { label: label, value: counts[label], valueLabel: counts[label] + ' 次', detail: formatPct(counts[label], runs.length) };
+    });
+    return renderBarChart('触发来源', items, '按运行次数排序，显示前 6 类入口', '#004849');
   }
 
   function renderReportInsights(runs, failureGroups, flakyItems) {
@@ -760,15 +881,17 @@
     }
     var rows = groups.slice(0, 8).map(function (item) {
       return '<tr>'
-        + '<td><b>' + esc(item.reason) + '</b><div class="error-preview">' + esc(item.sample) + '</div></td>'
-        + '<td>' + item.count + '</td>'
-        + '<td>' + item.runCount + '</td>'
-        + '<td>' + item.nodeCount + '</td>'
-        + '<td>' + fmtTime(item.latestAt) + '</td>'
+        + '<td><b class="report-reason">' + esc(item.reason) + '</b><div class="report-error-preview">' + esc(item.sample) + '</div></td>'
+        + '<td class="report-number stat-failed">' + item.count + '</td>'
+        + '<td class="report-number">' + item.runCount + '</td>'
+        + '<td class="report-number">' + item.nodeCount + '</td>'
+        + '<td class="report-time">' + esc(fmtTime(item.latestAt)) + '</td>'
         + '</tr>';
     }).join('');
-    return '<div class="report-insight"><h3>失败原因聚合</h3>'
-      + '<div class="report-table-scroll"><table class="steps-table failure-reason-table"><thead><tr><th>原因 / 样本</th><th>次数</th><th>运行</th><th>节点</th><th>最近出现</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+    return '<div class="report-insight"><h3>失败原因聚合 <span class="badge">' + groups.length + ' 类</span></h3>'
+      + '<p class="chart-caption">按样本数排序，显示前 8 类；包含运行和节点错误，同一次运行可能产生多个样本。</p>'
+      + '<div class="report-table-scroll"><table class="steps-table failure-reason-table" aria-label="失败原因聚合"><colgroup><col><col class="report-count-column" span="3"><col class="report-time-column"></colgroup>'
+      + '<thead><tr><th scope="col">原因与错误样本</th><th scope="col" class="report-number">样本数</th><th scope="col" class="report-number">运行数</th><th scope="col" class="report-number">节点数</th><th scope="col">最近出现</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
       + '</div>';
   }
 
@@ -778,20 +901,22 @@
       return '<div class="report-insight"><h3>Flaky 分析</h3><div class="chart-empty">暂无同时成功和失败的流程/节点</div></div>';
     }
     var rows = items.slice(0, 8).map(function (item) {
-      var name = item.kind === '节点'
-        ? esc(item.label) + '<div class="muted">' + esc(item.flowLabel || '') + '</div>'
-        : esc(item.label);
+      var latestStatus = normalizeRunStatus(item.latestStatus);
+      var sampleCount = item.passed + item.failed;
       return '<tr>'
-        + '<td><span class="badge">' + esc(item.kind) + '</span> ' + name + '</td>'
-        + '<td>' + item.total + '</td>'
-        + '<td>' + item.passed + '</td>'
-        + '<td class="' + (item.failed ? 'stat-failed' : '') + '">' + item.failed + '</td>'
-        + '<td>' + formatPct(item.failed, item.total) + '</td>'
-        + '<td>' + statusText(item.latestStatus) + '</td>'
+        + '<td><div class="report-object"><span class="badge">' + esc(item.kind) + '</span><b title="' + esc(item.label) + '">' + esc(item.label) + '</b></div>'
+        + (item.kind === '节点' ? '<div class="report-object-flow muted" title="' + esc(item.flowLabel || '') + '">' + esc(item.flowLabel || '') + '</div>' : '') + '</td>'
+        + '<td class="report-number" title="另有 ' + (item.stopped || 0) + ' 次停止记录">' + sampleCount + '</td>'
+        + '<td class="report-number report-passed">' + item.passed + '</td>'
+        + '<td class="report-number stat-failed">' + item.failed + '</td>'
+        + '<td><div class="report-rate"><span>' + formatPct(item.failed, sampleCount) + '</span><span class="chart-bar-track"><i style="width:' + (item.failed / sampleCount * 100).toFixed(1) + '%"></i></span></div></td>'
+        + '<td><div class="report-latest"><span class="badge status-' + esc(latestStatus) + '">' + statusText(latestStatus) + '</span><span class="report-time">' + esc(fmtTime(item.latestAt)) + '</span></div></td>'
         + '</tr>';
     }).join('');
-    return '<div class="report-insight"><h3>Flaky 分析</h3>'
-      + '<div class="report-table-scroll"><table class="steps-table flaky-table"><thead><tr><th>对象</th><th>运行/样本</th><th>成功</th><th>失败</th><th>失败率</th><th>最近状态</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+    return '<div class="report-insight"><h3>Flaky 分析 <span class="badge">' + items.length + ' 个对象</span></h3>'
+      + '<p class="chart-caption">同一流程或节点曾成功也曾失败，显示前 8 项；失败率仅统计成功和失败样本，不含停止及活动记录。</p>'
+      + '<div class="report-table-scroll"><table class="steps-table flaky-table" aria-label="Flaky 分析"><colgroup><col><col class="report-count-column" span="3"><col class="report-rate-column"><col class="report-time-column"></colgroup>'
+      + '<thead><tr><th scope="col">流程 / 节点</th><th scope="col" class="report-number">样本数</th><th scope="col" class="report-number">成功</th><th scope="col" class="report-number">失败</th><th scope="col">失败率</th><th scope="col">最近状态 / 时间</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
       + '</div>';
   }
 
@@ -1057,7 +1182,7 @@
       if (hasOwn(group, status)) group[status]++;
       else group.skipped++;
       var duration = Number(step.durationMs);
-      if (isFinite(duration) && duration >= 0) {
+      if (step.durationMs !== undefined && step.durationMs !== null && step.durationMs !== '' && isFinite(duration) && duration >= 0) {
         group.durationCount++;
         group.sum += duration;
         group.min = group.min === null ? duration : Math.min(group.min, duration);
@@ -1223,26 +1348,28 @@
   function buildHtmlReport(run) {
     var steps = collectRunSteps(run);
     var stats = stepStats(steps);
-    var duration = run.endedAt ? Math.round((run.endedAt - run.startedAt) / 1000) + 's' : '—';
-    var statusCount = { running: 0, success: 0, failed: 0, stopped: 0 };
-    if (run.status === 'idle') statusCount.running = 1;
-    else if (hasOwn(statusCount, run.status)) statusCount[run.status] = 1;
+    var duration = formatDurationMs(getRunDurationMs(run));
+    var statusCount = { running: 0, success: 0, failed: 0, stopped: 0, other: 0 };
+    statusCount[runStatusBucket(run)] = 1;
+    var relatedRuns = lastRuns.filter(function (item) { return run.flowId ? item.flowId === run.flowId : item.id === run.id; });
+    if (!relatedRuns.length) relatedRuns = [run];
 
     return '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>流程报告 - ' + esc(run.flowLabel || run.flowId) + '</title>'
       + '<style>'
       + 'body{font-family:Roboto,system-ui,-apple-system,"Segoe UI",sans-serif;margin:24px;color:#262626;background:#f9fafb;}'
       + 'h1{font-size:20px;color:#004849;} h3{font-size:14px;color:#004849;margin:18px 0 8px;} .cards{display:flex;gap:12px;margin:16px 0;flex-wrap:wrap;}'
-      + '.card{background:#fff;border:1px solid #d0dbe0;border-radius:3px;padding:12px 20px;text-align:center;min-width:90px;}'
+      + '.card{background:#fff;border:1px solid #d0dbe0;border-radius:4px;padding:12px 20px;text-align:center;min-width:90px;}'
       + '.card b{display:block;font-size:22px;} .c-pass b{color:#1a9964;} .c-fail b{color:#ba554a;} .c-skip b{color:#728e9b;}'
       + '.report-charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:16px 0;}'
-      + '.report-chart{background:#fff;border:1px solid #d0dbe0;border-radius:3px;padding:10px 12px;} .report-chart h3{margin:0 0 8px;font-size:13px;}'
-      + '.status-chart{width:100%;height:22px;background:#eef3f5;border-radius:3px;} .trend-chart{width:100%;height:80px;} .trend-chart line{stroke:#d0dbe0;stroke-dasharray:3 3}.trend-chart polyline{fill:none;stroke:#004849;stroke-width:2;}'
-      + '.chart-legend{display:flex;gap:8px;flex-wrap:wrap;color:#728e9b;font-size:12px}.chart-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}.chart-caption,.chart-empty{color:#728e9b;font-size:12px}.chart-bar-row{display:grid;grid-template-columns:minmax(80px,1fr) 1.2fr auto;gap:8px;align-items:center;font-size:12px;margin:6px 0}.chart-bar-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chart-bar-track{height:8px;background:#eef3f5;border-radius:3px;overflow:hidden}.chart-bar-track i{display:block;height:100%;background:#ba554a}.chart-bar-row em{font-style:normal;color:#728e9b;}'
-      + '.report-chart-wide{grid-column:1/-1}.history-trend-row{display:grid;grid-template-columns:48px minmax(80px,1fr) auto;gap:8px;align-items:center;font-size:12px;margin:6px 0}.history-trend-track{display:flex;height:10px;min-width:6px;background:#eef3f5;border-radius:3px;overflow:hidden}.history-trend-track i{display:block;height:100%}.trend-success{background:#1a9964}.trend-failed{background:#ba554a}.trend-stopped{background:#9b6a6c}.history-trend-row em{font-style:normal;color:#728e9b;white-space:nowrap}.report-insights{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:10px;margin:14px 0}.report-insight{border:1px solid #d0dbe0;background:#fff;padding:10px 12px}.report-insight h3{margin:0 0 8px;font-size:13px;color:#004849}'
+      + '.report-chart{background:#fff;border:1px solid #d0dbe0;border-radius:4px;padding:10px 12px;} .report-chart h3{margin:0 0 8px;font-size:13px;}'
+      + '.status-chart{width:100%;height:22px;background:#eef3f5;border-radius:4px;} .trend-chart{width:100%;height:80px;} .trend-chart line{stroke:#d0dbe0;stroke-dasharray:3 3}.trend-chart polyline{fill:none;stroke:#004849;stroke-width:2;}'
+      + '.chart-legend{display:flex;gap:8px;flex-wrap:wrap;color:#728e9b;font-size:12px}.chart-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}.chart-caption,.chart-empty{color:#728e9b;font-size:12px}.chart-bar-row{display:grid;grid-template-columns:minmax(80px,1fr) 1.2fr auto;gap:8px;align-items:center;font-size:12px;margin:6px 0}.chart-bar-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chart-bar-track{height:8px;background:#eef3f5;border-radius:4px;overflow:hidden}.chart-bar-track i{display:block;height:100%;background:#ba554a}.chart-bar-row em{font-style:normal;color:#728e9b;}'
+      + '.report-chart-wide{grid-column:1/-1}.history-trend-row{display:grid;grid-template-columns:48px minmax(80px,1fr) auto;gap:8px;align-items:center;font-size:12px;margin:6px 0}.history-trend-track{display:flex;height:10px;min-width:6px;background:#eef3f5;border-radius:4px;overflow:hidden}.history-trend-track i{display:block;height:100%}.trend-success{background:#1a9964}.trend-failed{background:#ba554a}.trend-stopped{background:#9b6a6c}.history-trend-row em{font-style:normal;color:#728e9b;white-space:nowrap}.report-insights{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:10px;margin:14px 0}.report-insight{border:1px solid #d0dbe0;background:#fff;padding:10px 12px}.report-insight h3{margin:0 0 8px;font-size:13px;color:#004849}'
       + '.report-table-scroll{overflow-x:auto;} table{border-collapse:collapse;width:100%;background:#fff;font-size:13px;}'
       + 'th,td{border:1px solid #d0dbe0;padding:6px 10px;text-align:left;vertical-align:top;}'
-      + 'th{background:#aabbc3;color:#004849;} tr:nth-child(even) td{background:#f9fafb;} .muted,.meta{color:#728e9b;font-size:12px;} .stat-failed{color:#ba554a;font-weight:600}.error-preview,.step-error{white-space:pre-wrap;word-break:break-word;max-width:360px;color:#ba554a}.step-shot{max-width:480px;border:1px solid #d0dbe0;margin-top:6px}.report-io-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:12px}.output-preview{white-space:pre-wrap;word-break:break-word;max-height:520px;overflow:auto;background:#f3f6f7;border:1px solid #d0dbe0;padding:8px}.run-log{background:#f3f6f7;border:1px solid #d0dbe0;padding:8px;font-family:monospace;font-size:12px}.log-entry{padding:2px 0}.log-time,.log-node{color:#728e9b;margin-right:8px}.log-error{color:#ba554a}.log-warn{color:#9a6a18}.badge{display:inline-block;border:1px solid #d0dbe0;border-radius:3px;padding:1px 6px}.step-passed{background:#1a9964;color:#fff}.step-failed{background:#ba554a;color:#fff}.status-failed{background:#ba554a;color:#fff}.on{background:#1a9964;color:#fff}'
-      + REPORT_DISCLOSURE_STYLE + '</style></head><body>'
+      + 'th{background:#aabbc3;color:#004849;} tr:nth-child(even) td{background:#f9fafb;} .muted,.meta{color:#728e9b;font-size:12px;} .stat-failed{color:#ba554a;font-weight:600}.error-preview,.step-error{white-space:pre-wrap;word-break:break-word;max-width:360px;color:#ba554a}.step-shot{max-width:480px;border:1px solid #d0dbe0;margin-top:6px}.report-io-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:12px}.output-preview{white-space:pre-wrap;word-break:break-word;max-height:520px;overflow:auto;background:#f3f6f7;border:1px solid #d0dbe0;padding:8px}.run-log{background:#f3f6f7;border:1px solid #d0dbe0;padding:8px;font-family:monospace;font-size:12px}.log-entry{padding:2px 0}.log-time,.log-node{color:#728e9b;margin-right:8px}.log-error{color:#ba554a}.log-warn{color:#9a6a18}.badge{display:inline-block;border:1px solid #d0dbe0;border-radius:4px;padding:1px 6px}.step-passed{background:#1a9964;color:#fff}.step-failed{background:#ba554a;color:#fff}.status-failed{background:#ba554a;color:#fff}.on{background:#1a9964;color:#fff}'
+      + '.report-insight,.step-shot,.output-preview,.run-log{border-radius:4px;}'
+      + REPORT_LAYOUT_STYLE + REPORT_DISCLOSURE_STYLE + '</style></head><body>'
       + '<h1>流程报告 — ' + esc(run.flowLabel || run.flowId) + '</h1>'
       + '<p class="meta">开始: ' + fmtTime(run.startedAt) + ' · 耗时: ' + duration + ' · 触发: ' + esc(run.trigger) + ' · 结果: <b>' + statusText(run.status) + '</b></p>'
       + renderRunParentInfo(run)
@@ -1252,8 +1379,11 @@
       + '<div class="card c-fail"><b>' + stats.failed + '</b>失败</div>'
       + '<div class="card c-skip"><b>' + stats.skipped + '</b>跳过</div>'
       + '</div>'
-      + '<div class="report-charts">' + renderRunStatusDistributionChart(statusCount, 1) + renderRunTrendChart(lastRuns.length ? lastRuns : [run]) + renderHistoricalTrendChart(lastRuns.length ? lastRuns : [run]) + renderTopNodeChart(steps) + renderStepDistributionChart(stats) + '</div>'
-      + renderReportInsights([run], buildFailureReasonGroups([run]), buildFlakyAnalysis(lastRuns.length ? lastRuns : [run]))
+      + '<p class="chart-caption">耗时、历史趋势与 Flaky 分析使用同一流程的历史记录，其余图表为本次运行。</p>'
+      + '<div class="report-charts">' + renderRunStatusDistributionChart(statusCount, 1) + renderRunTrendChart(relatedRuns)
+      + renderStepDistributionChart(stats) + renderRunEntryChart([run]) + renderTopNodeChart(steps) + renderTopNodeChart(steps, 'failed')
+      + renderHistoricalTrendChart(relatedRuns) + '</div>'
+      + renderReportInsights([run], buildFailureReasonGroups([run]), buildFlakyAnalysis(relatedRuns))
       + renderRunIO(run, { fullOutput: true, openDetails: true })
       + renderRunTabUsage(run)
       + renderDataRows(run)
@@ -1262,7 +1392,7 @@
       + renderFailureSamples(steps)
       + renderWarnErrorEvents(run)
       + '<p class="meta">Generated by Page Agent · ' + new Date().toLocaleString() + '</p>'
-      + '</body></html>';
+      + REPORT_CHART_SCRIPT + '</body></html>';
   }
 
   function exportRunHtml(runId) {
@@ -1299,14 +1429,15 @@
       + '<style>'
       + 'body{font-family:Roboto,system-ui,-apple-system,"Segoe UI",sans-serif;margin:24px;color:#262626;background:#f9fafb;}'
       + 'h1{font-size:22px;color:#004849;} h2{font-size:17px;color:#004849;margin:0 0 8px;} h3{font-size:14px;color:#004849;margin:18px 0 8px;} .batch-run{margin:18px 0 24px;padding-top:18px;border-top:2px solid #d0dbe0}.cards{display:flex;gap:12px;margin:16px 0;flex-wrap:wrap;}'
-      + '.card,.report-metric,.report-chart,.report-insight{background:#fff;border:1px solid #d0dbe0;border-radius:3px;padding:10px 12px}.card{text-align:center;min-width:90px}.card b,.report-metric b{display:block;font-size:22px}.c-pass b{color:#1a9964}.c-fail b{color:#ba554a}.c-skip b{color:#728e9b}.report-dashboard{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:12px 0}.report-metric span,.report-metric em{display:block;color:#728e9b;font-size:12px;font-style:normal}.report-metric b{color:#004849;margin:4px 0}.metric-success b{color:#1a9964}.report-charts,.report-insights{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin:14px 0}.report-chart-wide{grid-column:1/-1}.report-chart h3,.report-insight h3{margin:0 0 8px;font-size:13px}.status-chart{width:100%;height:22px;background:#eef3f5;border-radius:3px}.trend-chart{width:100%;height:80px}.trend-chart line{stroke:#d0dbe0;stroke-dasharray:3 3}.trend-chart polyline{fill:none;stroke:#004849;stroke-width:2}.chart-legend{display:flex;gap:8px;flex-wrap:wrap;color:#728e9b;font-size:12px}.chart-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}.chart-caption,.chart-empty{color:#728e9b;font-size:12px}.chart-bar-row{display:grid;grid-template-columns:minmax(80px,1fr) 1.2fr auto;gap:8px;align-items:center;font-size:12px;margin:6px 0}.chart-bar-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chart-bar-track,.history-trend-track{height:8px;background:#eef3f5;border-radius:3px;overflow:hidden}.chart-bar-track i{display:block;height:100%;background:#ba554a}.chart-bar-row em,.history-trend-row em{font-style:normal;color:#728e9b}.history-trend-row{display:grid;grid-template-columns:48px minmax(80px,1fr) auto;gap:8px;align-items:center;font-size:12px;margin:6px 0}.history-trend-track{display:flex;height:10px}.history-trend-track i{display:block;height:100%}.trend-success{background:#1a9964}.trend-failed{background:#ba554a}.trend-stopped{background:#9b6a6c}'
-      + '.report-table-scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;background:#fff;font-size:13px}th,td{border:1px solid #d0dbe0;padding:6px 10px;text-align:left;vertical-align:top}th{background:#aabbc3;color:#004849}tr:nth-child(even) td{background:#f9fafb}.muted,.meta{color:#728e9b;font-size:12px}.stat-failed{color:#ba554a;font-weight:600}.error-preview,.step-error{white-space:pre-wrap;word-break:break-word;max-width:420px;color:#ba554a}.report-io-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:12px}.output-preview{white-space:pre-wrap;word-break:break-word;max-height:520px;overflow:auto;background:#f3f6f7;border:1px solid #d0dbe0;padding:8px}.run-log{background:#f3f6f7;border:1px solid #d0dbe0;padding:8px;font-family:monospace;font-size:12px}.log-entry{padding:2px 0}.log-time,.log-node{color:#728e9b;margin-right:8px}.log-error{color:#ba554a}.log-warn{color:#9a6a18}.badge{display:inline-block;border:1px solid #d0dbe0;border-radius:3px;padding:1px 6px}.step-passed,.on{background:#1a9964;color:#fff}.step-failed,.status-failed{background:#ba554a;color:#fff}'
-      + REPORT_DISCLOSURE_STYLE + '</style></head><body>'
+      + '.card,.report-metric,.report-chart,.report-insight{background:#fff;border:1px solid #d0dbe0;border-radius:4px;padding:10px 12px}.card{text-align:center;min-width:90px}.card b,.report-metric b{display:block;font-size:22px}.c-pass b{color:#1a9964}.c-fail b{color:#ba554a}.c-skip b{color:#728e9b}.report-dashboard{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:12px 0}.report-metric span,.report-metric em{display:block;color:#728e9b;font-size:12px;font-style:normal}.report-metric b{color:#004849;margin:4px 0}.metric-success b{color:#1a9964}.report-charts,.report-insights{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin:14px 0}.report-chart-wide{grid-column:1/-1}.report-chart h3,.report-insight h3{margin:0 0 8px;font-size:13px}.status-chart{width:100%;height:22px;background:#eef3f5;border-radius:4px}.trend-chart{width:100%;height:80px}.trend-chart line{stroke:#d0dbe0;stroke-dasharray:3 3}.trend-chart polyline{fill:none;stroke:#004849;stroke-width:2}.chart-legend{display:flex;gap:8px;flex-wrap:wrap;color:#728e9b;font-size:12px}.chart-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}.chart-caption,.chart-empty{color:#728e9b;font-size:12px}.chart-bar-row{display:grid;grid-template-columns:minmax(80px,1fr) 1.2fr auto;gap:8px;align-items:center;font-size:12px;margin:6px 0}.chart-bar-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chart-bar-track,.history-trend-track{height:8px;background:#eef3f5;border-radius:4px;overflow:hidden}.chart-bar-track i{display:block;height:100%;background:#ba554a}.chart-bar-row em,.history-trend-row em{font-style:normal;color:#728e9b}.history-trend-row{display:grid;grid-template-columns:48px minmax(80px,1fr) auto;gap:8px;align-items:center;font-size:12px;margin:6px 0}.history-trend-track{display:flex;height:10px}.history-trend-track i{display:block;height:100%}.trend-success{background:#1a9964}.trend-failed{background:#ba554a}.trend-stopped{background:#9b6a6c}'
+      + '.report-table-scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;background:#fff;font-size:13px}th,td{border:1px solid #d0dbe0;padding:6px 10px;text-align:left;vertical-align:top}th{background:#aabbc3;color:#004849}tr:nth-child(even) td{background:#f9fafb}.muted,.meta{color:#728e9b;font-size:12px}.stat-failed{color:#ba554a;font-weight:600}.error-preview,.step-error{white-space:pre-wrap;word-break:break-word;max-width:420px;color:#ba554a}.report-io-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:12px}.output-preview{white-space:pre-wrap;word-break:break-word;max-height:520px;overflow:auto;background:#f3f6f7;border:1px solid #d0dbe0;padding:8px}.run-log{background:#f3f6f7;border:1px solid #d0dbe0;padding:8px;font-family:monospace;font-size:12px}.log-entry{padding:2px 0}.log-time,.log-node{color:#728e9b;margin-right:8px}.log-error{color:#ba554a}.log-warn{color:#9a6a18}.badge{display:inline-block;border:1px solid #d0dbe0;border-radius:4px;padding:1px 6px}.step-passed,.on{background:#1a9964;color:#fff}.step-failed,.status-failed{background:#ba554a;color:#fff}'
+      + '.output-preview,.run-log{border-radius:4px;}'
+      + REPORT_LAYOUT_STYLE + REPORT_DISCLOSURE_STYLE + '</style></head><body>'
       + '<h1>批量流程报告</h1>'
       + '<p class="meta">运行记录: ' + runs.length + ' · 生成时间: ' + new Date().toLocaleString() + '</p>'
       + renderReportDashboard(runs)
       + sections
-      + '</body></html>';
+      + REPORT_CHART_SCRIPT + '</body></html>';
   }
 
   function exportAllRunsHtml() {
@@ -1333,9 +1464,10 @@
     var maxAttr = ' max="' + toLocalDateInputValue(Date.now()) + '"';
     $('#drawer-title').textContent = '清理流程报告历史';
     $('#drawer-content').innerHTML =
-      '<p class="drawer-hint">可按开始时间清理指定日期之前的记录，或直接清空全部历史。活动中的记录会被保留，不参与清理。</p>'
+      '<details class="reference-panel drawer-guide"><summary>历史清理说明</summary><div class="drawer-guide-content"><p><b>清理范围：</b>按开始时间清理指定日期之前的记录，或清空历史；保留活动记录。</p></div></details>'
+      + '<section class="drawer-section"><h4>清理范围</h4>'
       + '<div class="form-row"><label>当前历史</label><div class="drawer-readonly-value">共 ' + runs.length + ' 条记录' + (activeCount ? ' · 活动中 ' + activeCount + ' 条' : '') + '</div></div>'
-      + '<div class="form-row"><label for="run-history-before-date">清理该日期之前（按开始时间）</label><input type="date" id="run-history-before-date"' + minAttr + maxAttr + '></div>';
+      + '<div class="form-row"><label for="run-history-before-date">清理该日期之前（按开始时间）</label><input type="date" id="run-history-before-date"' + minAttr + maxAttr + '></div></section>';
     $('#drawer-actions').innerHTML =
       '<button class="btn-secondary" data-action="cancel-drawer">取消</button>'
       + '<button class="btn-small btn-danger-outline" data-action="clear-run-history-before-date">清理指定日期前</button>'
@@ -1412,7 +1544,7 @@
       }, closeDrawer);
     }
 
-    function clearBeforeSelectedDate() {
+    async function clearBeforeSelectedDate() {
       var input = $('#run-history-before-date');
       var value = input && input.value || '';
       if (!value) {
@@ -1424,7 +1556,7 @@
         toast('日期无效', true);
         return Promise.resolve({ ok: false, error: '日期无效' });
       }
-      if (!confirmAction('确定清理 ' + value + ' 之前的记录？')) {
+      if (!await confirmAction('确定清理 ' + value + ' 之前的记录？')) {
         return Promise.resolve({ ok: false, cancelled: true });
       }
       return clearBefore(cutoff);
@@ -1443,7 +1575,7 @@
     }
 
 
-    function handleDocumentClick(event) {
+    async function handleDocumentClick(event) {
       var source = event && event.target;
       var target = source && typeof source.closest === 'function' ? source.closest('[data-action]') : null;
       if (!target) return;
@@ -1465,7 +1597,7 @@
       }
       if (action === 'delete-run-history-entry') {
         if (event.stopPropagation) event.stopPropagation();
-        if (confirmAction('确定清理这条运行记录？')) deleteRun(id);
+        if (await confirmAction('确定清理这条运行记录？')) deleteRun(id);
         return;
       }
       if (action === 'clear-run-history-before-date') {
@@ -1475,7 +1607,7 @@
       }
       if (action === 'clear-all-run-history') {
         if (event.stopPropagation) event.stopPropagation();
-        if (confirmAction('确定清空全部历史记录？活动中的记录会保留。')) clearAll();
+        if (await confirmAction('确定清空全部历史记录？活动中的记录会保留。')) clearAll();
       }
     }
 
@@ -1488,6 +1620,8 @@
       if (initialized || destroyed) return;
       initialized = true;
       if (doc) lifecycle.listen(doc, 'click', handleDocumentClick);
+      var runsList = $('#runs-list');
+      if (runsList) lifecycle.add(bindReportChartTooltips(runsList, lifecycle.listen));
       lifecycle.listen(timerHost, 'pagehide', function (event) {
         if (!event || !event.persisted) destroy();
       });

@@ -142,6 +142,7 @@
     var draft = null;
     var draftPendingId = '';
     var draftRevision = 0;
+    var draftBaselineRevision = 0;
     var draftFormSignature = '';
     var saveInFlight = null;
     var saveRevision = -1;
@@ -238,13 +239,13 @@
       var list = $('#pages-list');
       if (!list) return { ok: false, error: '页面列表不存在' };
       var pages = sortedValues(pageMap() || {});
-      list.innerHTML = renderConfigListItems('pages', pages, '<div class="placeholder">还没有页面配置，点击「新建页面」开始</div>', function (page) {
+      list.innerHTML = renderConfigListItems('pages', pages, draft ? '' : '<div class="placeholder">还没有页面配置，点击「新建页面」开始</div>', function (page) {
         var badges = '';
         var builtin = isBuiltinItem(page);
         if (page.captureNetwork) badges += '<span class="badge on">捕获网络</span>';
         if (page.keepAlive && page.keepAlive.enabled) badges += '<span class="badge on">会话保活</span>';
         if (builtin) badges += '<span class="badge builtin">内置</span>';
-        return '<div class="item-card' + (draft && draft.id === page.id ? ' selected' : '') + (builtin ? ' builtin' : '') + '" data-action="edit-page" data-id="' + esc(page.id) + '">'
+        return '<div class="item-card' + (draft && draft.id === page.id ? ' selected' : '') + (builtin ? ' builtin' : '') + '" role="button" tabindex="0" data-action="edit-page" data-id="' + esc(page.id) + '">'
           + '<span class="item-title">' + esc(page.label || '(未命名)') + '</span>'
           + '<span class="item-sub">' + esc(page.url) + '</span>'
           + badges
@@ -278,18 +279,17 @@
         + (readonly ? '<div class="readonly-banner">内置页面来自扩展包，不能直接修改，请先复制为用户页面后编辑。</div>' : '')
         + '<div class="form-grid">'
         + '<div class="form-row"><label>名称</label><input type="text" id="page-label" value="' + esc(page.label) + '" placeholder="ERP 报表页"' + (readonly ? ' disabled' : '') + '></div>'
-        + '<div class="form-row"><label>页面 URL（打开页面时使用）</label><input type="text" id="page-url" value="' + esc(page.url) + '" placeholder="https://erp.internal.company.com/report"' + (readonly ? ' disabled' : '') + '></div>'
+        + '<div class="form-row"><label for="page-url">页面 URL</label><input type="text" id="page-url" value="' + esc(page.url) + '" placeholder="https://erp.internal.company.com/report"' + (readonly ? ' disabled' : '') + '></div>'
         + '</div>'
         + '<div class="form-grid">'
-        + '<div class="form-row"><label>额外匹配域名（每行一个，可选；页面 URL 的域名自动包含）</label><textarea id="page-hostnames" rows="2" placeholder="erp2.internal.company.com"' + (readonly ? ' disabled' : '') + '>' + esc((page.matchers && page.matchers.hostnames) || '') + '</textarea></div>'
-        + '<div class="form-row"><label>URL 包含（可选，用于区分同域名下的不同页面）</label><input type="text" id="page-urlincludes" value="' + esc((page.matchers && page.matchers.urlIncludes) || '') + '" placeholder="/report/"' + (readonly ? ' disabled' : '') + '></div>'
+        + '<div class="form-row"><label for="page-hostnames">额外匹配域名（可选）</label><textarea id="page-hostnames" rows="2" placeholder="每行一个域名，如 erp2.internal.company.com"' + (readonly ? ' disabled' : '') + '>' + esc((page.matchers && page.matchers.hostnames) || '') + '</textarea></div>'
+        + '<div class="form-row"><label for="page-urlincludes">URL 包含（可选）</label><input type="text" id="page-urlincludes" value="' + esc((page.matchers && page.matchers.urlIncludes) || '') + '" placeholder="/report/"' + (readonly ? ' disabled' : '') + '></div>'
         + '</div>'
-        + '<div class="form-row form-row-spaced"><label class="switch-label"><input type="checkbox" id="page-capture"' + (page.captureNetwork ? ' checked' : '') + (readonly ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">捕获网络请求（供「获取请求返回数据」节点使用，修改后需刷新目标页面生效）</span></label></div>'
-        + '<div class="form-row form-row-spaced"><label class="switch-label"><input type="checkbox" id="page-auto-close"' + (page.autoCloseOnComplete !== false ? ' checked' : '') + (readonly ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">流程成功完成后自动关闭本次新打开的标签页（复用的标签页保留）</span></label></div>'
+        + '<div class="form-row form-row-spaced"><label class="switch-label"><input type="checkbox" id="page-capture"' + (page.captureNetwork ? ' checked' : '') + (readonly ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">捕获网络请求</span></label></div>'
+        + '<div class="form-row form-row-spaced"><label class="switch-label"><input type="checkbox" id="page-auto-close"' + (page.autoCloseOnComplete !== false ? ' checked' : '') + (readonly ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">流程成功后关闭新打开的标签页</span></label></div>'
         + '<div class="form-row form-row-spaced"><label class="switch-label"><input type="checkbox" id="page-heartbeat-enabled"' + (heartbeat.enabled ? ' checked' : '') + (readonly ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">启用页面会话保活</span></label></div>'
-        + '<div class="form-help">定时在已打开且未被浏览器丢弃的匹配页面内发送请求，自动携带符合浏览器规则的 Cookie。可填写无业务副作用的普通查询接口，无需专门的登录接口；是否延长会话有效期取决于服务端，不会切换标签或刷新页面。</div>'
         + '<div class="form-grid">'
-        + '<div class="form-row"><label>保活请求 URL（支持相对路径）</label><input type="text" id="page-heartbeat-url" value="' + esc(heartbeat.requestUrl || '') + '" placeholder="/api/user/info"' + (readonly ? ' disabled' : '') + '></div>'
+        + '<div class="form-row"><label for="page-heartbeat-url">保活请求 URL</label><input type="text" id="page-heartbeat-url" value="' + esc(heartbeat.requestUrl || '') + '" placeholder="/api/user/info"' + (readonly ? ' disabled' : '') + '></div>'
         + '<div class="form-row"><label>间隔（分钟）</label><input type="number" id="page-heartbeat-interval" min="1" step="any" value="' + esc(heartbeat.intervalMinutes || 5) + '"' + (readonly ? ' disabled' : '') + '></div>'
         + '</div>'
         + '<details><summary>心跳请求选项</summary><div class="form-grid">'
@@ -298,9 +298,9 @@
         + '</select></div>'
         + '<div class="form-row"><label>请求超时（毫秒）</label><input type="number" id="page-heartbeat-timeout" min="1000" max="60000" value="' + esc(heartbeat.requestTimeoutMs || 15000) + '"' + (readonly ? ' disabled' : '') + '></div>'
         + '</div>'
-        + '<div class="form-row"><label>请求头（JSON 或每行 Key: Value）</label><page-code-editor id="page-heartbeat-headers" language="auto" rows="3"' + (readonly ? ' disabled' : '') + '>' + esc(heartbeat.headers || '') + '</page-code-editor></div>'
+        + '<div class="form-row"><label for="page-heartbeat-headers">请求头</label><page-code-editor id="page-heartbeat-headers" language="auto" rows="3"' + (readonly ? ' disabled' : '') + '>' + esc(heartbeat.headers || '') + '</page-code-editor></div>'
         + '<div class="form-row"><label>请求体（仅 POST）</label><page-code-editor id="page-heartbeat-body" language="auto" rows="3"' + (readonly ? ' disabled' : '') + '>' + esc(heartbeat.body || '') + '</page-code-editor></div>'
-        + '<div class="form-row"><label>期望 HTTP 状态码（逗号分隔，支持范围）</label><input type="text" id="page-heartbeat-status" value="' + esc(heartbeat.expectedStatus || '200-399') + '"' + (readonly ? ' disabled' : '') + '></div>'
+        + '<div class="form-row"><label for="page-heartbeat-status">期望 HTTP 状态码</label><input type="text" id="page-heartbeat-status" placeholder="200-299,304" value="' + esc(heartbeat.expectedStatus || '200-399') + '"' + (readonly ? ' disabled' : '') + '></div>'
         + '</details>'
         + '<div class="editor-actions">'
         + (readonly
@@ -318,8 +318,20 @@
       }
     }
 
-    function openNew() {
+    function isDirty() {
+      if (!draft || isBuiltinItem(draft)) return false;
+      try { syncDraftFromEditor(); } catch (_) {}
+      return draftRevision !== draftBaselineRevision;
+    }
+
+    async function confirmDiscard() {
+      if (saveInFlight) return false;
+      return !isDirty() || await confirmAction('有未保存的修改，是否放弃？');
+    }
+
+    async function openNew() {
       if (destroyed) return { ok: false, destroyed: true };
+      if (!await confirmDiscard()) return { ok: false, cancelled: true };
       draft = {
         label: '',
         url: '',
@@ -331,6 +343,7 @@
       draftPendingId = '';
       draftRevision++;
       draftFormSignature = '';
+      draftBaselineRevision = draftRevision;
       if (isActive()) {
         render();
         scrollOpenedEditor('#page-editor');
@@ -338,9 +351,11 @@
       return { ok: true };
     }
 
-    function edit(pageId) {
+    async function edit(pageId) {
       if (destroyed) return { ok: false, destroyed: true };
       pageId = String(pageId || '');
+      if (draft && draft.id === pageId) return { ok: true, retained: true };
+      if (!await confirmDiscard()) return { ok: false, cancelled: true };
       var nextDraft;
       try {
         nextDraft = findPage(pageId, false);
@@ -352,6 +367,7 @@
       draft = nextDraft;
       draftPendingId = '';
       draftRevision++;
+      draftBaselineRevision = draftRevision;
       draftFormSignature = '';
       if (isActive()) {
         render();
@@ -627,7 +643,7 @@
       return operation;
     }
 
-    function remove(pageId) {
+    async function remove(pageId) {
       if (destroyed) return Promise.resolve({ ok: false, destroyed: true });
       pageId = String(pageId || '');
       if (!isSafeId(pageId)) return Promise.resolve({ ok: false, error: '页面不存在' });
@@ -649,7 +665,7 @@
         toast('内置页面不能删除，请先复制为用户页面');
         return Promise.resolve({ ok: false, builtin: true, error: '内置页面不能删除，请先复制为用户页面' });
       }
-      if (!confirmAction('确定删除该页面配置？')) return Promise.resolve({ ok: false, canceled: true });
+      if (!await confirmAction('确定删除该页面配置？')) return { ok: false, canceled: true };
 
       var revision = draftRevision;
       if (draft && String(draft.id) === pageId) revision = ++draftRevision;
@@ -701,7 +717,7 @@
         return true;
       }
       if (action === 'cancel-page') {
-        clearDraft();
+        confirmDiscard().then(function (confirmed) { if (confirmed) clearDraft(); });
         return true;
       }
       if (action === 'copy-page') {
@@ -741,11 +757,14 @@
       render: render,
       handleAction: handleAction,
       clearDraft: clearDraft,
+      confirmDiscard: confirmDiscard,
+      isDirty: isDirty,
       getState: function () {
         return {
           initialized: initialized,
           destroyed: destroyed,
           saving: !!saveInFlight,
+          dirty: isDirty(),
           copying: Object.keys(copyInFlight).length > 0,
           mutating: Object.keys(targetInFlight).length > 0,
           draftId: draft && draft.id || '',

@@ -62,6 +62,7 @@
   }
 
   function etag(value) {
+    if (value && Number.isSafeInteger(value.configRevision)) return '"mcp-' + value.configRevision + '"';
     var text = JSON.stringify(stable(value === undefined ? null : value));
     var hash = 2166136261;
     for (var i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619); }
@@ -338,7 +339,7 @@
     ['listServers', 'getServer', 'upsertServer', 'removeServer', 'testServer', 'syncServer', 'callTool'].forEach(function (name) {
       requiredFunction(httpMcp[name], 'HttpMcpManager.' + name);
     });
-    ['listConnections', 'getConnection', 'updateConnection', 'attemptConnection', 'getConnectionLogs', 'clearConnectionLogs'].forEach(function (name) {
+    ['listConnections', 'getConnection', 'updateConnection', 'attemptConnection', 'getConnectionLogs', 'clearConnectionLogs', 'callServerArp'].forEach(function (name) {
       requiredFunction(connectionRuntime[name], 'MCP Connection runtime.' + name);
     });
     var callStore = options.mcpCallStore || options.operationRunStore || createOperationRunStore({
@@ -376,23 +377,14 @@
       });
     }
 
-    function patchConnection(id, patch, context) {
-      id = cleanId(id, 'connectionId');
-      return getConnection(id).then(function (current) {
-        var next = applyPatch(current, patch);
-        if (!next || typeof next !== 'object' || Array.isArray(next)) fail('SCHEMA_VALIDATION_FAILED', 'Connection patch must leave an object');
-        var changed = {};
-        var projected = connectionInput(next);
-        Object.keys(projected).forEach(function (key) {
-          if (JSON.stringify(projected[key]) !== JSON.stringify(current[key])) changed[key] = projected[key];
-        });
-        if ((Object.prototype.hasOwnProperty.call(changed, 'localToolsEnabled')
-            || Object.prototype.hasOwnProperty.call(changed, 'localWorkingDirectory'))
-            && !/^ui:/.test(String(context && context.actorId || ''))) {
-          fail('FORBIDDEN', '本地文件与命令操作开关和工作目录只能在连接配置中修改');
-        }
-        return Object.keys(changed).length ? connectionRuntime.updateConnection(id, changed) : current;
-      }).then(sanitize);
+    function patchConnection(id, patch, context, expected) {
+      return connectionRuntime.updateConnection(cleanId(id, 'connectionId'), patch, context, expected);
+    }
+    function getWorkspace(id, workspaceId) {
+      return getConnection(id).then(function (item) {
+        var workspace = item.workspaces.find(function (value) { return value.id === workspaceId; });
+        if (!workspace) fail('RESOURCE_NOT_FOUND', '目录不存在'); return workspace;
+      });
     }
 
     function getConnectionLogs(id) {
@@ -702,6 +694,7 @@
     function preconditionState(context, _request, route, params) {
       var readers = {
         '/connections/{connectionId}': function () { return getConnection(params.connectionId); },
+        '/connections/{connectionId}/workspaces/{workspaceId}': function () { return getWorkspace(params.connectionId, params.workspaceId); },
         '/mcp-servers/{serverId}': function () { return getMcpServer(params.serverId); },
         '/connections/{connectionId}/logs': function () { return getConnectionLogs(params.connectionId); },
       };
@@ -718,10 +711,16 @@
       listConnections: listConnections,
       getConnection: getConnection,
       patchConnection: patchConnection,
+      createConnection: function (body, context) { return connectionRuntime.createConnection(body, context); },
+      deleteConnection: function (id, context, expected) { return connectionRuntime.deleteConnection(id, context, expected); },
+      getWorkspace: getWorkspace,
+      listWorkspaces: function (id) { return getConnection(id).then(function (value) { return { items: value.workspaces, total: value.workspaces.length }; }); },
+      changeWorkspace: function () { return connectionRuntime.changeWorkspace.apply(connectionRuntime, arguments); },
       createConnectionAttempt: createConnectionAttempt,
       getConnectionAttempt: getConnectionAttempt,
       getConnectionLogs: getConnectionLogs,
       clearConnectionLogs: clearConnectionLogs,
+      callServerArp: function (id, method, request, context) { return connectionRuntime.callServerArp(cleanId(id, 'connectionId'), method, request, context); },
       listMcpServers: listMcpServers,
       getMcpServer: getMcpServer,
       createMcpServer: createMcpServer,

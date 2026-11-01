@@ -876,6 +876,37 @@
     });
   }
 
+  function hasBoundedDiscriminator(schema, key) {
+    if (!isRecord(schema) || schema.$ref) return false;
+    var property = isRecord(schema.properties) ? schema.properties[key] : undefined;
+    if (isRecord(property) && !property.$ref) {
+      if (typeof property.const === 'string') return true;
+      if (Array.isArray(property.enum) && property.enum.length && property.enum.every(function (value) {
+        return typeof value === 'string';
+      })) return true;
+    }
+    // Every alternative must bound the field; one allOf constraint is sufficient.
+    if (Array.isArray(schema.allOf) && schema.allOf.some(function (branch) {
+      return hasBoundedDiscriminator(branch, key);
+    })) return true;
+    return ['oneOf', 'anyOf'].some(function (keyword) {
+      return Array.isArray(schema[keyword]) && schema[keyword].length > 0
+        && schema[keyword].every(function (branch) { return hasBoundedDiscriminator(branch, key); });
+    });
+  }
+
+  function assertRouteDiscriminators(schema) {
+    if (!isRecord(schema)) return;
+    ['action', 'operation', 'dispatch'].forEach(function (key) {
+      if (hasOwn(schema.properties, key) && !hasBoundedDiscriminator(schema, key)) {
+        throw new TypeError('ARP route contracts cannot use a universal "' + key + '" discriminator');
+      }
+    });
+    ['oneOf', 'anyOf', 'allOf'].forEach(function (keyword) {
+      if (Array.isArray(schema[keyword])) schema[keyword].forEach(assertRouteDiscriminators);
+    });
+  }
+
   function normalizeMethodContract(method, value) {
     if (!isRecord(value)) throw new TypeError(method + ' method contract must be an object');
     ['outputSchema', 'safety', 'idempotency', 'execution', 'permissions', 'preconditions'].forEach(function (field) {
@@ -907,13 +938,7 @@
     // route-scoped body for conditional collection deletion.
     if (method === 'DELETE' && value.inputSchema === null) inputSchema = { type: 'null' };
     if (method === 'GET') assertFlatGetQuerySchema(inputSchema);
-    if (isRecord(inputSchema) && isRecord(inputSchema.properties)) {
-      ['action', 'operation', 'dispatch'].forEach(function (forbidden) {
-        if (hasOwn(inputSchema.properties, forbidden)) {
-          throw new TypeError('ARP route contracts cannot use a universal "' + forbidden + '" discriminator');
-        }
-      });
-    }
+    assertRouteDiscriminators(inputSchema);
     var out = {
       inputSchema: inputSchema,
       outputSchema: cloneJson(value.outputSchema),
@@ -1399,7 +1424,7 @@
       if (routeRoots['/local'] && (routeRoots['/page'] || routeRoots['/browser'])) {
         lines.push('规则：页面或浏览器任务优先使用当前已开放的页面、浏览器能力。仅当用户明确指定本地执行，或能力契约、能力缺失或实际错误表明浏览器能力无法满足目标时，才改用本地能力；不要仅为减少工具调用次数而切换到本地执行。');
       }
-      lines.push('规则：不要重复 performed=yes 的操作。写入或执行操作返回 performed=unknown 时，不要自动重放；如有只读观测方式则用它核实，否则把结果报告为未知。');
+      lines.push('规则：performed 描述副作用，不是请求完成状态；成功读取或无需修改时 performed=no 不表示未执行。confirmed 只确认该操作或显式 expectation，不代表后续页面加载或整个任务完成。不要重复 performed=yes 的操作。写入或执行操作返回 performed=unknown 时，不要自动重放；如有只读观测方式则用它核实，否则把结果报告为未知。');
       lines.push('规则：当前 RouteContract 声明 if-match 前置条件而你尚未取得 ETag 时，先 GET 同一 canonical URI；Runtime 会在该资源的模型结果中保留 ETag。不得猜测、复用其他资源的 ETag，或以缺失前置条件试探。');
     }
     if (contracts.length) {
@@ -2070,6 +2095,7 @@
       body: request.body,
       patch: request.patch,
       contentType: request.contentType,
+      targetBinding: request.targetBinding,
     };
     return Promise.resolve(this.hash(payload)).then(function (signature) {
       ledger.cleanup();
@@ -2310,11 +2336,11 @@
     };
   }
 
-  function assertOneUnsafeAction(request) {
+  function assertOneUnsafeAction(request, inputSchema) {
     var value = request.method === 'PATCH' ? request.patch : request.body;
     if (!isRecord(value)) return;
     ['action', 'operation', 'dispatch'].forEach(function (key) {
-      if (hasOwn(value, key)) {
+      if (hasOwn(value, key) && !hasBoundedDiscriminator(inputSchema, key)) {
         throw arpError('INVALID_REQUEST', 'Unsafe ARP requests cannot use a universal "' + key + '" discriminator', { stage: 'request-safety' });
       }
     });
@@ -2515,7 +2541,7 @@
       if (method === 'POST' && !hasOwn(request, 'body') && acceptsOmittedPostBody(descriptor.inputSchema)) {
         request.body = {};
       }
-      if (unsafe) assertOneUnsafeAction(request);
+      if (unsafe) assertOneUnsafeAction(request, descriptor.inputSchema);
       // 信任边界:路由 inputSchema 是给 Agent/MCP 的合同反馈面，它们在边界外，
       // 读得到合同也能对拒绝自我修正。background 盖章的 ui:* 调用方是系统自身
       // 的固定代码，与本合同同库同版本，被拒绝时没有任何调整手段；其 payload
@@ -2562,7 +2588,11 @@
         return { terminalResponse: createArpResponse({ requestId: requestId, statusCode: 304, trace: requestTrace }) };
       }
       if (!idempotencyKey) return null;
-      return router.idempotencyLedger.begin(context, request, idempotencyKey).then(function (ledgerResult) {
+      var prepare = typeof resolved.adapter.prepareRequest === 'function'
+        ? resolved.adapter.prepareRequest(context, request, resolved.route) : null;
+      return Promise.resolve(prepare).then(function () {
+        return router.idempotencyLedger.begin(context, request, idempotencyKey);
+      }).then(function (ledgerResult) {
         if (ledgerResult.state === 'replay') return { terminalResponse: responseWithTrace(ledgerResult.response, requestTrace) };
         if (ledgerResult.state === 'pending') return ledgerResult.response.then(function (response) {
           return { terminalResponse: responseWithTrace(response, requestTrace) };

@@ -148,6 +148,7 @@
     var initialized = false;
     var destroyed = false;
     var draft = null;
+    var draftBaseline = '';
     var draftRevision = 0;
     var codeRevision = 0;
     var saveInFlight = null;
@@ -181,10 +182,10 @@
       if (!list) return { ok: false, error: '脚本列表不存在' };
       var scripts = userConfigValues('scripts');
       if (!Array.isArray(scripts)) scripts = [];
-      list.innerHTML = renderConfigListItems('scripts', scripts, '<div class="placeholder">还没有脚本，点击「新建脚本」开始</div>', function (script) {
+      list.innerHTML = renderConfigListItems('scripts', scripts, draft ? '' : '<div class="placeholder">还没有脚本，点击「新建脚本」开始</div>', function (script) {
         var code = script && script.code;
         var lines = String(code === undefined || code === null ? '' : code).split('\n').length;
-        return '<div class="item-card' + (draft && draft.id === script.id ? ' selected' : '') + '" data-action="edit-script" data-id="' + esc(script.id) + '">'
+        return '<div class="item-card' + (draft && draft.id === script.id ? ' selected' : '') + '" role="button" tabindex="0" data-action="edit-script" data-id="' + esc(script.id) + '">'
           + '<span class="item-title">' + esc(script.label || '(未命名)') + '</span>'
           + '<span class="item-sub">' + lines + ' 行 · 更新于 ' + fmtTime(script.updatedAt) + '</span>'
           + itemIdHtml(script.id)
@@ -269,9 +270,25 @@
       else if (event.target.id === 'script-code') updateDraftField('code', event.target.value);
     }
 
-    function openNew() {
+    function draftSignature() {
+      return draft ? JSON.stringify([draft.label || '', draft.code || '']) : '';
+    }
+
+    function isDirty() {
+      syncDraftFromEditor();
+      return !!draft && draftSignature() !== draftBaseline;
+    }
+
+    async function confirmDiscard() {
+      if (saveInFlight || testInFlight) return false;
+      return !isDirty() || await confirmAction('有未保存的修改，是否放弃？');
+    }
+
+    async function openNew() {
       if (destroyed) return { ok: false, destroyed: true };
+      if (!await confirmDiscard()) return { ok: false, cancelled: true };
       draft = { label: '', code: '' };
+      draftBaseline = draftSignature();
       draftRevision++;
       codeRevision++;
       testSequence++;
@@ -282,9 +299,11 @@
       return { ok: true };
     }
 
-    function edit(scriptId) {
+    async function edit(scriptId) {
       if (destroyed) return { ok: false, destroyed: true };
       scriptId = String(scriptId || '');
+      if (draft && draft.id === scriptId) return { ok: true, retained: true };
+      if (!await confirmDiscard()) return { ok: false, cancelled: true };
       var nextDraft;
       try {
         nextDraft = findScript(scriptId);
@@ -294,6 +313,7 @@
         return { ok: false, error: message };
       }
       draft = nextDraft;
+      draftBaseline = draftSignature();
       draftRevision++;
       codeRevision++;
       testSequence++;
@@ -431,6 +451,7 @@
         var run = ownDataValue(response, 'run');
         if (savedScript && typeof savedScript === 'object') {
           draft = cloneData(savedScript);
+          draftBaseline = draftSignature();
         }
         var result = run ? ownDataValue(run, 'result') : null;
         resultElement.innerHTML = '<p>✓ 已保存并执行成功 · 返回值</p>' + globalThis.PageAgentCodeEditor.html(formatTestResult(result), 'json');
@@ -440,7 +461,10 @@
           return { ok: false, stale: true, destroyed: destroyed };
         }
         var savedScript = ownDataValue(error, 'savedScript');
-        if (savedScript && typeof savedScript === 'object') draft = cloneData(savedScript);
+        if (savedScript && typeof savedScript === 'object') {
+          draft = cloneData(savedScript);
+          draftBaseline = draftSignature();
+        }
         var message = errorText(error, '未知错误');
         resultElement.classList.add('error');
         resultElement.textContent = savedScript
@@ -457,7 +481,7 @@
       return operation;
     }
 
-    function remove(scriptId) {
+    async function remove(scriptId) {
       if (destroyed) return Promise.resolve({ ok: false, destroyed: true });
       scriptId = String(scriptId || '');
       if (!isSafeId(scriptId)) return Promise.resolve({ ok: false, error: '脚本不存在' });
@@ -468,7 +492,7 @@
         toast(savingMessage, true);
         return Promise.resolve({ ok: false, saving: true, error: savingMessage });
       }
-      if (!confirmAction('确定删除该脚本？')) return Promise.resolve({ ok: false, canceled: true });
+      if (!await confirmAction('确定删除该脚本？')) return { ok: false, canceled: true };
       if (draft && String(draft.id) === scriptId) {
         draftRevision++;
         codeRevision++;
@@ -521,7 +545,7 @@
         return true;
       }
       if (action === 'cancel-script') {
-        clearDraft();
+        confirmDiscard().then(function (confirmed) { if (confirmed) clearDraft(); });
         return true;
       }
       if (action === 'delete-script') {
@@ -556,11 +580,14 @@
       render: render,
       handleAction: handleAction,
       clearDraft: clearDraft,
+      confirmDiscard: confirmDiscard,
+      isDirty: isDirty,
       getState: function () {
         return {
           initialized: initialized,
           destroyed: destroyed,
           saving: !!saveInFlight,
+          dirty: isDirty(),
           testing: !!testInFlight,
           deleting: Object.keys(deleteInFlight).length > 0,
           draftId: draft && draft.id || '',

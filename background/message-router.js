@@ -164,9 +164,11 @@
       'system-settings.read', 'system-settings.write',
       'mail-settings.read', 'mail-settings.write', 'mail-settings.execute',
       'connections.read', 'connections.write', 'connections.execute',
+      'local.execute',
       'mcp-servers.read', 'mcp-servers.write', 'mcp-servers.delete', 'mcp-servers.call', 'mcp-calls.read',
     ]);
     var ARP_SIDEPANEL_PERMISSIONS = Object.freeze([
+      'apps.read',
       'utilities.read', 'utilities.execute',
       'page.read', 'page.interact',
       'browser.read', 'browser.navigate', 'browser.downloads.read',
@@ -241,6 +243,8 @@
           && String(sender.id) !== String(chromeApi.runtime.id)) return '';
       if (isOptionsPageSender(sender)) return 'options';
       if (isSidepanelPageSender(sender)) return 'sidepanel';
+      if (chromeApi && chromeApi.runtime && chromeApi.runtime.getURL
+          && String(sender.url || '').split(/[?#]/)[0] === chromeApi.runtime.getURL('popup/popup.html')) return 'popup';
       var tab = sender.tab || {};
       var url = String(sender.url || tab.url || '').trim();
       if (Number(tab.id) > 0 && /^(?:https?|file):/i.test(url)) return 'page';
@@ -368,6 +372,7 @@
     function arpPermissionsForSurface(surface) {
       if (surface === 'options') return ARP_OPTION_PERMISSIONS.slice();
       if (surface === 'sidepanel') return ARP_SIDEPANEL_PERMISSIONS.slice();
+      if (surface === 'popup') return ['apps.read'];
       return ARP_PAGE_PERMISSIONS.slice();
     }
 
@@ -384,6 +389,7 @@
       var runtimeId = String(chromeApi && chromeApi.runtime && chromeApi.runtime.id || 'extension');
       return Object.assign({}, clientContext || {}, {
         actorId: 'ui:' + runtimeId + ':' + surface,
+        trustedConnectionUi: surface === 'options',
         conversationId: 'ui:' + surface + ':' + arpDocumentBinding(sender, surface, boundTab),
         entryContext: surface === 'options' ? 'global' : 'page',
         origin: pageScoped ? pageOrigin : extensionOrigin,
@@ -598,6 +604,25 @@
 
     function handleMessage(message, sender, sendResponse) {
       var type = message.type;
+      if (type === 'ARCHIVE_CONTROL') {
+        if (!isOptionsPageSender(sender)) { sendResponse({ ok: false, error: '仅配置页可操作自动同步和备份' }); return false; }
+        Promise.resolve().then(function () { return deps.handleArchiveControl(message.payload || {}); })
+          .then(function (result) { sendResponse({ ok: true, result: result }); }, function (error) {
+            sendResponse({ ok: false, error: error.message, code: error.code });
+          });
+        return true;
+      }
+      if (['MCP_CONNECTION_PAIR', 'MCP_CLIENT_UPDATE_NAME', 'MCP_CLIENT_RESET_ID', 'MCP_CONNECTIONS_IMPORT'].indexOf(type) >= 0) {
+        // Consume secrets before any generic logging, cloning or broadcasting.
+        if (!isOptionsPageSender(sender)) { if (message.payload) delete message.payload.password; sendResponse({ ok: false, error: '仅配置页可操作配对' }); return false; }
+        var payload = message.payload || {};
+        var password = payload.password; delete payload.password;
+        Promise.resolve().then(function () { return deps.handleMcpControl(type, payload, password); })
+          .then(function (result) { password = ''; sendResponse({ ok: true, result: result }); }, function (error) {
+            password = ''; sendResponse({ ok: false, error: error.message, code: error.code, reason: error.reason || error.details && error.details.reason });
+          });
+        return true;
+      }
 
       switch (type) {
 

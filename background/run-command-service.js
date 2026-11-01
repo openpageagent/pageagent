@@ -261,14 +261,16 @@
         if (!(session.appAuthorization && Array.isArray(session.appNodes)) && !hasRegisteredFlow(session.flowId)) {
           throw new Error('流程已被删除，无法续跑: ' + session.flowLabel);
         }
-        requireSessionMethod(session, 'restart')('resume:' + nodeId, {
+        var snapshot = getSnapshot(runId);
+        return requireSessionMethod(session, 'restart')('resume:' + nodeId, {
           totalRuns: 1,
           maxRetries: 0,
           resumeFromNodeId: nodeId,
+        }).then(function (result) {
+          if (result.started && getSnapshot(runId) === snapshot) deleteSnapshot(runId);
+          broadcastSessions();
+          return result;
         });
-        deleteSnapshot(runId);
-        broadcastSessions();
-        return { runId: runId, started: true };
       });
     }
 
@@ -323,14 +325,15 @@
             - (snapshot.round.completedRuns || 0))
           : 1;
 
-        requireSessionMethod(session, 'restart')('continue', {
+        return requireSessionMethod(session, 'restart')('continue', {
           totalRuns: remainingRuns,
           maxRetries: 0,
           continueFrom: stopNodeId ? { nodeId: stopNodeId, dataIndex: dataIndex } : null,
+        }).then(function (result) {
+          if (result.started && getSnapshot(runId) === snapshot) deleteSnapshot(runId);
+          broadcastSessions();
+          return Object.assign({}, result, { continued: result.started === true });
         });
-        deleteSnapshot(runId);
-        broadcastSessions();
-        return { runId: session.runId, started: true, continued: true };
       });
     }
 

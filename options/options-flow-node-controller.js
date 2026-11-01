@@ -15,10 +15,12 @@
 
   var lifecycleApi = root && root.PageAutomationLifecycle;
   if (commonJs && !lifecycleApi) lifecycleApi = require('../ui/lifecycle.js');
-  var api = factory(lifecycleApi);
+  var sortLayoutApi = root && root.PageAgentSortLayout;
+  if (commonJs && !sortLayoutApi) sortLayoutApi = require('../builtin-apps/shared/sort-layout.js');
+  var api = factory(lifecycleApi, sortLayoutApi);
   if (commonJs) module.exports = api;
   if (root) root.OptionsFlowNodeController = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (LifecycleApi) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (LifecycleApi, SortLayoutApi) {
   'use strict';
 
   var API_VERSION = 1;
@@ -228,7 +230,7 @@
       destinationIndex: -1,
       nodeId: '',
       draftRevision: -1,
-      metrics: null,
+      layout: null,
     };
     var conversationState = { assistants: {}, assistantOrder: [] };
     var modelServiceState = { services: [], defaultServiceId: '', loaded: false };
@@ -593,11 +595,14 @@
       var kind = String(ownDataValue(param, 'kind') || '');
       var label = ownDataValue(param, 'label');
       var placeholder = ownDataValue(param, 'placeholder');
-      var description = ownDataValue(param, 'description');
       var formatted = formatParamEditorValue(param, value);
-      var html = '<div class="form-row"><label>' + esc(label) + (ownDataValue(param, 'required') ? ' *' : '') + '</label>';
+      var wide = kind !== 'boolean' && kind !== 'select';
+      var html = '<div class="form-row' + (wide ? ' form-row-wide' : '') + '"><label>' + esc(label) + (ownDataValue(param, 'required') ? ' *' : '') + '</label>';
 
-      if (kind === 'textarea') {
+      if (key === 'connectionId' || key === 'workspaceId') {
+        html += '<input type="text"' + attrs + ' list="local-target-' + key + '" value="' + esc(formatted)
+          + '" placeholder="选择别名对应的 ID，或输入模板"><datalist id="local-target-' + key + '"></datalist><small data-local-target-reason="' + key + '"></small>';
+      } else if (kind === 'textarea') {
         var language = ownDataValue(param, 'editorLanguage');
         if (!language && ownDataValue(param, 'valueFormat') === 'json') language = 'json';
         if (language) {
@@ -649,7 +654,6 @@
       } else {
         html += '<input type="text"' + attrs + ' value="' + esc(formatted) + '" placeholder="' + esc(placeholder || '') + '">';
       }
-      if (description) html += '<p class="form-help">' + esc(description) + '</p>';
       return html + '</div>';
     }
 
@@ -678,26 +682,25 @@
       var retries = Number(ownDataValue(node, 'retries'));
       if (retries > 0) flags += '<span class="badge">重试' + retries + '</span>';
 
-      return '<div class="node-card' + (readonly ? ' readonly' : '') + '" draggable="' + (readonly ? 'false' : 'true')
+      return '<div class="node-card' + (readonly ? ' readonly' : '') + '" role="button" tabindex="0" data-action="' + (readonly ? 'view-node' : 'edit-node') + '" data-id="' + esc(id)
         + '" data-node-id="' + esc(id) + '" data-node-index="' + index + '" style="margin-left:' + indent + 'px">'
         + '<div class="node-card-header">'
-        + (readonly ? '' : '<span class="drag-handle">⋮⋮</span>')
+        + '<span class="node-card-heading" draggable="' + (readonly ? 'false' : 'true') + '"' + (readonly ? '' : ' title="拖拽调整顺序"') + '>'
+        + (readonly ? '' : '<span class="drag-handle" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M8 5h.01M16 5h.01M8 12h.01M16 12h.01M8 19h.01M16 19h.01"></path></svg></span>')
         + '<span class="node-order">' + (index + 1) + '.</span>'
         + '<span class="node-type-label">[' + esc(typeLabel) + ']</span>'
         + '<span class="node-title">' + esc(ownDataValue(node, 'title') || typeLabel) + '</span>'
+        + '</span>'
         + flags
         + '<button class="btn-icon" data-action="run-from-node" data-id="' + esc(id)
         + '" title="从此节点运行（之前节点跳过，保留上下文变量）">运行</button>'
         + '<button class="btn-icon" data-action="run-single-node" data-id="' + esc(id)
         + '" title="单步运行当前节点（不保存，不继续后续节点）">单步</button>'
         + (readonly
-          ? '<button class="btn-icon btn-edit" data-action="view-node" data-id="' + esc(id) + '">查看</button>'
-            + '<button class="btn-icon" disabled title="内置流程节点不能修改">编辑</button>'
-            + '<button class="btn-icon" disabled title="内置流程节点不能修改">复制</button>'
+          ? '<button class="btn-icon" disabled title="内置流程节点不能修改">复制</button>'
             + '<button class="btn-icon" disabled title="内置流程节点不能拆分">从此拆分</button>'
             + '<button class="btn-icon" disabled title="内置流程节点不能删除">删除</button>'
-          : '<button class="btn-icon btn-edit" data-action="edit-node" data-id="' + esc(id) + '">编辑</button>'
-            + '<button class="btn-icon" data-action="copy-node" data-id="' + esc(id) + '" title="复制节点">复制</button>'
+          : '<button class="btn-icon" data-action="copy-node" data-id="' + esc(id) + '" title="复制节点">复制</button>'
             + '<button class="btn-icon" data-action="split-flow-from-node" data-id="' + esc(id)
             + '" title="从此拆分为新流程">从此拆分</button>'
             + '<button class="btn-icon" data-action="delete-node" data-id="' + esc(id) + '">删除</button>')
@@ -739,16 +742,25 @@
       };
 
       $('#drawer-title').textContent = (readonly ? '查看节点 - ' : '编辑节点 - ') + typeLabel;
-      var body = '<div class="form-row"><label>节点标题</label><input type="text" id="node-title" value="'
-        + esc(ownDataValue(node, 'title') || '') + '" placeholder="' + esc(typeLabel) + '"></div>';
+      var body = '<details class="reference-panel drawer-guide"><summary>节点配置说明</summary><div class="drawer-guide-content">';
       if (typeDef && ownDataValue(typeDef, 'description')) {
-        body += '<p class="form-help">' + esc(ownDataValue(typeDef, 'description')) + '</p>';
+        body += '<p><b>节点用途：</b>' + esc(ownDataValue(typeDef, 'description')) + '</p>';
+      }
+      body += '<p><b>填写与保存：</b>* 为必填；保存节点后，还需保存流程。</p>'
+        + '<p><b>输出变量：</b>命名后可供后续节点引用。格式：' + esc(typeDef ? ownDataValue(typeDef, 'outputHint') || '—' : '—') + '</p>'
+        + '<p><b>执行策略：</b>失败时可中止本轮或继续；数值支持固定值、随机范围和 <code>{{变量}}</code>。'
+        + (retriesLocked ? '此节点可能有外部副作用，禁用自动重试。' : '重试间隔单位为毫秒。') + '</p>';
+      if (typeDef) {
+        body += '<dl>' + paramDefinitions(typeDef).map(function (param) {
+          var description = ownDataValue(param, 'description');
+          return description ? '<dt>' + esc(ownDataValue(param, 'label')) + '</dt><dd>' + esc(description) + '</dd>' : '';
+        }).join('') + '</dl>';
       }
       var hasSelectorParam = typeDef && paramDefinitions(typeDef).some(function (param) {
         return /selector/i.test(String(ownDataValue(param, 'key') || ''));
       });
       if (hasSelectorParam) {
-        body += '<details class="selector-help"><summary>选择器使用说明（手写选择器前请读）</summary><ul>'
+        body += '<p><b>选择器使用说明</b></p><ul>'
           + '<li>使用<b>标准 CSS 选择器</b>：<code>#id</code>、<code>.class</code>、<code>button[type="submit"]</code>、<code>div.list > a</code></li>'
           + '<li><b>不支持</b> XPath（<code>//div[…]</code>）和 jQuery 扩展（<code>:contains(…)</code>）；按文字定位请用点击节点的「文本匹配正则」</li>'
           + '<li>多个备选用 <code>||</code> 分隔，左边找不到自动尝试右边：<code>#submit || button.primary</code></li>'
@@ -757,10 +769,13 @@
           + '<li>自动穿透 open Shadow DOM 与同源 iframe；<b>跨域 iframe 不支持</b></li>'
           + '<li>多个元素匹配同一选择器时，配合「第几个匹配」（2 / -1 / random）与「相对定位」精确定位</li>'
           + '<li>注意动态 class（如 <code>css-1q2w3e</code> 这类构建哈希）刷新就变，别用它定位</li>'
-          + '</ul></details>';
+          + '</ul>';
       }
+      body += '</div></details><section class="drawer-section"><div class="form-grid node-editor-fields">'
+        + '<div class="form-row form-row-wide"><label for="node-title">节点标题</label><input type="text" id="node-title" value="'
+        + esc(ownDataValue(node, 'title') || '') + '" placeholder="' + esc(typeLabel) + '"></div>';
       if (typeDef && (ownDataValue(typeDef, 'needsPage') || ownDataValue(typeDef, 'optionalPage'))) {
-        body += '<div class="form-row"><label>目标页面' + (ownDataValue(typeDef, 'needsPage') ? ' *' : '（可选）')
+        body += '<div class="form-row form-row-wide"><label for="node-pageId">目标页面' + (ownDataValue(typeDef, 'needsPage') ? ' *' : '（可选）')
           + '</label><select id="node-pageId"><option value="">— 选择页面 —</option>';
         var pages = readonly ? sortedValues(configMap('pages')).slice() : userConfigValues('pages').slice();
         var selectedPageId = String(ownDataValue(node, 'pageId') || '');
@@ -793,22 +808,20 @@
           }
         });
       }
-      body += '<div class="form-row"><label>输出变量名（可选）</label><input type="text" id="node-outputVar" value="'
+      body += '<div class="form-row form-row-wide"><label for="node-outputVar">输出变量名（可选）</label><input type="text" id="node-outputVar" value="'
         + esc(ownDataValue(node, 'outputVar') || '') + '" placeholder="orders"></div>'
-        + '<div class="output-hint">输出格式: ' + esc(typeDef ? ownDataValue(typeDef, 'outputHint') : '—') + '</div>'
-        + '<hr class="form-divider"><div class="form-grid">'
-        + '<div class="form-row"><label>失败策略</label><select id="node-onFailure">'
+        + '<div class="form-row"><label for="node-onFailure">失败策略</label><select id="node-onFailure">'
         + '<option value="abort"' + (ownDataValue(node, 'onFailure') !== 'continue' ? ' selected' : '') + '>失败时中止本轮</option>'
         + '<option value="continue"' + (ownDataValue(node, 'onFailure') === 'continue' ? ' selected' : '') + '>失败时继续执行（软断言）</option>'
         + '</select></div>'
-        + '<div class="form-row"><label>失败重试次数</label><input type="number" id="node-retries" min="0" value="'
+        + '<div class="form-row"><label for="node-retries">失败重试次数</label><input type="number" id="node-retries" min="0" value="'
         + esc(retriesLocked ? 0 : (ownDataValue(node, 'retries') || 0)) + '"'
         + (retriesLocked ? ' disabled title="该节点可能产生外部副作用，不允许自动重试"' : '') + '></div>'
-        + (retriesLocked ? '' : '<div class="form-row"><label>重试间隔(ms)</label>'
+        + (retriesLocked ? '' : '<div class="form-row form-row-wide"><label>重试间隔（ms）</label>'
           + numericControlHtml('retryDelayMs', ownDataValue(node, 'retryDelayMs') !== undefined
             && ownDataValue(node, 'retryDelayMs') !== '' ? ownDataValue(node, 'retryDelayMs') : 1000, 'common', '1000')
           + '</div>')
-        + '</div>';
+        + '</div></section>';
 
       $('#drawer-content').innerHTML = body;
       $('#drawer-actions').innerHTML = readonly
@@ -822,6 +835,32 @@
         });
       }
       openDrawer();
+      if (/^local/.test(selectedNode.type)) {
+        var targetToken = selectedNode.token;
+        sendMessage('ARP_RESOURCE_REQUEST', { method: 'GET', request: { uri: '/local?limit=100' } }).then(function (response) {
+          if (!selectedNode || selectedNode.token !== targetToken) return;
+          var envelope = response && response.payload;
+          if (!envelope || envelope.error) throw new Error(envelope && envelope.error && envelope.error.message || '无法发现本地目标');
+          var data = envelope.primary && envelope.primary.data;
+          var connections = Array.isArray(data) ? data : data && data.items || [];
+          var connectionInput = findParamElement('connectionId'), workspaceInput = findParamElement('workspaceId');
+          var list = $('#local-target-connectionId');
+          if (!connectionInput || !list) return;
+          list.innerHTML = connections.map(function (item) { return '<option value="' + esc(item.id) + '">' + esc(item.alias + ' · ' + item.state) + '</option>'; }).join('');
+          function refreshWorkspaces() {
+            var selected = connections.find(function (item) { return item.id === connectionInput.value; });
+            var reason = $('[data-local-target-reason="connectionId"]');
+            if (reason) reason.textContent = selected ? (selected.reason || '') : connectionInput.value.includes('{{') ? '动态目标在首次解析时绑定' : '连接失效或尚未选择，请重新绑定';
+            var workspaces = selected && selected.workspaces || [], workspaceList = $('#local-target-workspaceId');
+            if (workspaceList) workspaceList.innerHTML = workspaces.map(function (item) { return '<option value="' + esc(item.id) + '">' + esc(item.alias + ' · ' + (item.resolvedPath || '未确认') + ' · ' + item.state) + '</option>'; }).join('');
+            var workspaceReason = $('[data-local-target-reason="workspaceId"]');
+            if (workspaceReason && workspaceInput) workspaceReason.textContent = workspaces.some(function (item) { return item.id === workspaceInput.value; }) || workspaceInput.value.includes('{{') ? '' : '目录失效或尚未选择，请重新绑定';
+          }
+          connectionInput.addEventListener('input', refreshWorkspaces);
+          if (workspaceInput) workspaceInput.addEventListener('input', refreshWorkspaces);
+          refreshWorkspaces();
+        }).catch(function (error) { var reason = $('[data-local-target-reason="connectionId"]'); if (reason) reason.textContent = error.message; });
+      }
       if (typeDef && Object.keys(assistantValues).length) {
         refreshAssistantFields(selectedNode.token, assistantValues);
       }
@@ -1118,12 +1157,14 @@
           + '<span class="type-label">' + esc(label) + '</span></div>';
       }
 
-      var html = '<details class="form-row"><summary>粘贴节点 JSON</summary>'
+      var html = '<details class="reference-panel drawer-guide"><summary>添加节点说明</summary><div class="drawer-guide-content">'
+        + '<p><b>添加方式：</b>搜索并点击节点类型，或粘贴 JSON 导入；循环、分支自动创建结束节点。</p></div></details>'
+        + '<section class="drawer-section"><h4>导入节点</h4><details><summary>粘贴节点 JSON</summary>'
         + '<div class="form-row"><page-code-editor id="node-import-json" language="json" rows="8"'
         + ' aria-label="节点 JSON" placeholder="粘贴从开发者工具箱复制的节点 JSON"></page-code-editor></div>'
         + '<div><button type="button" class="btn-primary" data-action="add-node-from-json">添加节点</button></div>'
-        + '</details><div class="form-row"><input type="text" id="node-type-search"'
-        + ' placeholder="搜索节点名称或功能" autocomplete="off"></div>';
+        + '</details></section><section class="drawer-section"><h4>选择节点类型</h4><div class="form-row"><input type="search" id="node-type-search"'
+        + ' aria-label="搜索节点名称或功能" placeholder="搜索节点名称或功能" autocomplete="off"></div>';
       categories.forEach(function (category) {
         var categoryTypes = ownDataValue(category, 'types');
         var items = (Array.isArray(categoryTypes) ? categoryTypes : [])
@@ -1150,7 +1191,7 @@
       editorToken++;
       revision++;
       $('#drawer-title').textContent = '添加节点';
-      $('#drawer-content').innerHTML = html;
+      $('#drawer-content').innerHTML = html + '</section>';
       $('#drawer-actions').innerHTML = '<button class="btn-secondary" data-action="cancel-drawer">取消</button>';
       openDrawer();
       var search = $('#node-type-search');
@@ -1370,7 +1411,6 @@
       }
       if (!replaceDraft(draft)) return '';
       drawerMode = '';
-      closeDrawer();
       return newNodeId;
     }
 
@@ -1515,7 +1555,7 @@
       return errors;
     }
 
-    function splitFlowFromNode(id, indexHint) {
+    async function splitFlowFromNode(id, indexHint) {
       if (!ensureEditable()) return false;
       var draft;
       try { draft = snapshotDraft(true); } catch (error) {
@@ -1552,14 +1592,14 @@
       var draftId = String(ownDataValue(draft, 'id') || '');
       var draftLabel = String(ownDataValue(draft, 'label') || draftId);
       var defaultName = draftLabel + ' - ' + (ownDataValue(firstTail, 'title') || ownDataValue(firstTail, 'type') || '后半段');
-      var newLabel = promptAction('后半段流程名称', defaultName);
+      var newLabel = await promptAction('后半段流程名称', defaultName);
       if (newLabel === null) return false;
       newLabel = String(newLabel || '').trim();
       if (!newLabel) {
         toast('新流程名称不能为空', true);
         return false;
       }
-      if (!confirmAction('将从第 ' + (match.index + 1) + ' 个节点开始拆分：原流程保留前 '
+      if (!await confirmAction('将从第 ' + (match.index + 1) + ' 个节点开始拆分：原流程保留前 '
           + match.index + ' 个节点，新建后半段流程。继续？')) return false;
       var newFlowId;
       try { newFlowId = String(generateConfigId('fl', 'flows', Object.create(null)) || ''); } catch (error) {
@@ -1722,84 +1762,24 @@
       return list ? queryAll('.node-card', list) : [];
     }
 
-    function measureDragLayout(list, cards) {
-      if (!list || !cards.length || typeof list.getBoundingClientRect !== 'function') return null;
-      var listRect = list.getBoundingClientRect();
-      var gap = 6;
-      try {
-        var style = windowRef.getComputedStyle && windowRef.getComputedStyle(list);
-        var measuredGap = style && parseFloat(style.rowGap || style.gap);
-        if (Number.isFinite(measuredGap)) gap = measuredGap;
-      } catch (_) {}
-      return {
-        gap: gap,
-        items: cards.map(function (card) {
-          var rect = card.getBoundingClientRect();
-          return {
-            top: rect.top - listRect.top,
-            height: rect.height,
-            center: rect.top - listRect.top + rect.height / 2,
-          };
-        }),
-      };
-    }
-
-    function destinationFromPointer(event, list) {
-      var metrics = dragState.metrics;
-      if (!metrics || !metrics.items.length || dragState.index < 0) return dragState.index;
-      var listRect = list.getBoundingClientRect();
-      var pointerY = Number(event.clientY) - listRect.top;
-      var slot = metrics.items.length;
-      for (var index = 0; index < metrics.items.length; index++) {
-        if (pointerY < metrics.items[index].center) {
-          slot = index;
-          break;
-        }
-      }
-      var destination = slot > dragState.index ? slot - 1 : slot;
-      return Math.max(0, Math.min(destination, metrics.items.length - 1));
-    }
-
-    function clearDragTransforms(list) {
-      dragCards(list).forEach(function (card) {
-        card.style.removeProperty('--drag-shift-y');
-      });
-    }
-
-    function previewDragDestination(list, destinationIndex) {
-      if (!list || !dragState.metrics || destinationIndex === dragState.destinationIndex) return;
-      var cards = dragCards(list);
-      var metrics = dragState.metrics;
-      var sourceIndex = dragState.index;
-      var sourceCard = cards[sourceIndex];
-      var sourceMetrics = metrics.items[sourceIndex];
-      if (!sourceCard || !sourceMetrics || !metrics.items[destinationIndex]) return;
-
-      clearDragTransforms(list);
-      var shift = sourceMetrics.height + metrics.gap;
-      if (destinationIndex > sourceIndex) {
-        for (var downIndex = sourceIndex + 1; downIndex <= destinationIndex; downIndex++) {
-          cards[downIndex].style.setProperty('--drag-shift-y', (-shift) + 'px');
-        }
-      } else if (destinationIndex < sourceIndex) {
-        for (var upIndex = destinationIndex; upIndex < sourceIndex; upIndex++) {
-          cards[upIndex].style.setProperty('--drag-shift-y', shift + 'px');
-        }
-      }
-      dragState.destinationIndex = destinationIndex;
+    function destinationFromPointer(event) {
+      return dragState.layout.destinationAt(event.clientX, event.clientY);
     }
 
     function handleDragStart(event) {
       var card = dragCard(event);
       if (!card) return;
+      if (!event.target.closest('.node-card-heading[draggable="true"]')) {
+        event.preventDefault();
+        return;
+      }
       var list = card.closest('#node-list-container');
       var cards = dragCards(list);
       dragState.index = Number(card.dataset.nodeIndex);
       dragState.destinationIndex = dragState.index;
       dragState.nodeId = String(card.dataset.nodeId || '');
       dragState.draftRevision = currentFlowRevision();
-      dragState.metrics = measureDragLayout(list, cards);
-      list.classList.add('drag-active');
+      dragState.layout = SortLayoutApi.create(list, cards, dragState.index);
       if (event.dataTransfer) {
         event.dataTransfer.effectAllowed = 'move';
         try { event.dataTransfer.setData('text/plain', dragState.nodeId || String(dragState.index)); } catch (_) {}
@@ -1815,11 +1795,8 @@
     }
 
     function clearDragClasses() {
+      if (dragState.layout) dragState.layout.clear();
       var editor = $('#flow-editor');
-      queryAll('.node-list', editor).forEach(function (list) {
-        list.classList.remove('drag-active');
-        clearDragTransforms(list);
-      });
       queryAll('.node-card', editor).forEach(function (card) {
         card.classList.remove('dragging');
       });
@@ -1831,7 +1808,7 @@
       dragState.destinationIndex = -1;
       dragState.nodeId = '';
       dragState.draftRevision = -1;
-      dragState.metrics = null;
+      dragState.layout = null;
     }
 
     function handleDragOver(event) {
@@ -1839,7 +1816,8 @@
       if (!list || dragState.index < 0) return;
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-      previewDragDestination(list, destinationFromPointer(event, list));
+      dragState.destinationIndex = destinationFromPointer(event);
+      dragState.layout.preview(dragState.destinationIndex);
     }
 
     function handleDragLeave() {}
@@ -1848,7 +1826,7 @@
       var list = dragList(event);
       if (!list || dragState.index < 0) return;
       event.preventDefault();
-      var targetIndex = destinationFromPointer(event, list);
+      var targetIndex = destinationFromPointer(event);
       var fromIndex = dragState.index;
       var nodeId = dragState.nodeId;
       if (currentFlowRevision() !== dragState.draftRevision) {
@@ -1970,6 +1948,7 @@
 
     function destroy() {
       if (destroyed) return { ok: true, destroyed: true };
+      handleDragEnd();
       destroyed = true;
       revision++;
       editorToken++;

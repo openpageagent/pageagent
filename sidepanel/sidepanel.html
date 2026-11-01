@@ -3,10 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>运行面板</title>
+  <title>Page Agent</title>
+  <link rel="stylesheet" href="../options/options-app.css">
   <link rel="stylesheet" href="sidepanel.css">
+  <link rel="stylesheet" href="../ui/tabs.css">
+  <link rel="stylesheet" href="../builtin-apps/shared/drag-preview.css">
 </head>
 <body>
+  <header class="sidepanel-header">
+    <div class="sidepanel-tabs" role="tablist" aria-label="侧边栏">
+      <button id="tab-apps" type="button" role="tab" data-sidepanel-tab="apps" aria-controls="apps-panel" aria-selected="true">应用</button>
+      <button id="tab-flows" type="button" role="tab" data-sidepanel-tab="flows" aria-controls="flows-panel" aria-selected="false" tabindex="-1">流程</button>
+    </div>
+  </header>
+
+  <div id="apps-panel" class="sidepanel-panel" role="tabpanel" aria-labelledby="tab-apps">
+    <p id="apps-message" role="alert" hidden></p>
+    <div id="section-apps"></div>
+  </div>
+
+  <div id="flows-panel" class="sidepanel-panel" role="tabpanel" aria-labelledby="tab-flows" hidden>
   <!-- 运行配置 -->
   <section id="config-section">
     <div class="field-row">
@@ -54,7 +70,6 @@
     <div class="output-tabs" role="tablist" aria-label="输出面板">
       <button class="output-tab active" data-output-tab="log" role="tab" aria-selected="true">日志</button>
       <button class="output-tab" data-output-tab="debug" role="tab" aria-selected="false">调试</button>
-      <button id="btn-open-settings" class="btn-secondary btn-small output-settings-button" type="button" title="打开扩展配置页面" aria-label="打开扩展配置页面">配置</button>
     </div>
 
     <div class="output-panels">
@@ -121,12 +136,19 @@
     <span id="session-details"></span>
     <span id="page-readiness" class="page-readiness">驱动未就绪</span>
   </footer>
+  </div>
 
   <script src="../ui/runtime-client.js"></script>
   <script src="../ui/resource-client.js"></script>
+  <script src="../shared/app-contract.js"></script>
+  <script src="../settings/system-settings.js"></script>
+  <script src="../builtin-apps/shared/sort-layout.js"></script>
+  <script type="module" src="../options/options-drag-preview.js"></script>
+  <script src="../options/options-app-controller.js"></script>
   <script src="../ui/code-editor.js"></script>
   <script src="../ui/session-floating-message-contract.js"></script>
   <script src="../ui/lifecycle.js"></script>
+  <script src="../ui/conversation-shared.js"></script>
   <script src="../shared/sync-event-stream.js"></script>
   <script src="sidepanel-runtime-input.js"></script>
   <script src="sidepanel-log.js"></script>

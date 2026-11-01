@@ -279,7 +279,7 @@
     async function createComponents(input, lease) {
       input = clone(input || {});
       await lease.assertActive();
-      var values = await Promise.all([resolveService(input.serviceId), resolveAssistant(input.assistantId)]);
+      var values = await Promise.all([resolveService(input.serviceId), resolveAssistant(input.assistantId, input.conversationId)]);
       var service = values[0];
       var assistant = values[1];
       if (!service || text(service.id || service.serviceId) !== input.serviceId) {

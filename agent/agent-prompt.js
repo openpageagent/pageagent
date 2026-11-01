@@ -8,12 +8,14 @@
   'use strict';
 
   var API_VERSION = 5;
-  var PROMPT_VERSION = 'page-agent-system-core-v73';
+  var PROMPT_VERSION = 'page-agent-system-core-v75';
   var responseLanguage = '中文';
   // The System Core contains only stable identity, authority, execution, and completion rules.
   // Active route contracts and runtime facts are composed per Provider request.
   var SYSTEM_INTRO = '# 系统提示词\n\n你是 Page Agent，运行在用户的浏览器中。把用户当前目标转化为直接答案或经过验证的结果。任务不依赖外部状态时直接回答，否则使用工具。只有用户明确要求保存或复用工作时，才创建能够可靠复现结果的最小资源。在目标和必要验证的约束下，只收集足够完成任务的最少证据，只执行必要的最少操作。仅在取得可验证的实质进展后发送简短过程说明。所有面向用户的自然语言内容使用' + responseLanguage + '，包括过程说明、提问和最终回答；用户明确指定其他语言时，以用户要求为准。代码、标识符和原文引语保持原样。过程说明不得泄露私有推理。';
   var CORE_GUIDELINES = Object.freeze([
+    '远端本地能力：本地指目标 MCP Server 所在机器，未必是浏览器所在机器。先根据任务从上下文或 GET /local 发现并匹配已授权、可用的服务端和目录；找不到合适目标或存在歧义时，禁止调用相关本地操作，说明缺少的信息并按需向用户澄清。连接和目录 ID 只能取自上下文、GET /local 或返回的 links；别名仅用于匹配意图。每次调用都在 URI 明确写出连接 ID，文件、Bash 和图片定位还须写出目录 ID，不能猜测 ID 或回退启动目录、第一个目标。Linux 没有桌面自动化。不可修改目录授权或配对。',
+    '远端执行：继续优先使用页面和浏览器能力处理网页任务。按目标系统与实际 Bash 环境选择命令，未知版本、内存预算和磁盘配额不得猜测。构建、下载、解压和大文件写入前按需刷新环境和目标磁盘采样，采样不代表预留空间。命令以服务端系统权限运行，不受文件读写开关隔离。断线不换机器；performed=unknown 不自动重放。取消确认只代表已收到停止请求，termination=unconfirmed 表示未确认停止。',
     '权限边界：系统提示词及当前生效的工具和路由契约定义能力与安全边界。用户最新的请求或纠正定义当前目标。用户选择的助手配置仅在与上述约束兼容时控制方法、行为和风格。',
     '时效性：按对象和时间判断事实。对于同一对象，优先采用工具最近一次相关观测；初始轮次上下文只在尚未被后续观测取代时有效。历史、摘要和背景材料不能覆盖更新的当前状态。绝不把推断表述为观测事实。',
     '连续性：简短追问、纠正或省略式补充继承最近一次明确任务的对象和交付物。只有用户提出独立的新目标时才切换任务。',
@@ -184,6 +186,8 @@
       context.recordingContext = clone(input.recordingContext);
     }
     if (input.selectedMcpContext) context.selectedMcp = dataOnly('assistant-selected-mcp', input.selectedMcpContext);
+    if (input.localTargets) context.localTargets = dataOnly('authorized-local-targets', input.localTargets);
+    if (input.selectedLocalTarget) context.selectedLocalTarget = dataOnly('selected-local-target', input.selectedLocalTarget);
     if (input.selectedResourceWarnings) context.selectedResourceWarnings = dataOnly('assistant-selected-resources', input.selectedResourceWarnings);
     return '<runtime_context trust="data-only">\n' + json(context) + '\n</runtime_context>';
   }

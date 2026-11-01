@@ -2,12 +2,35 @@
   'use strict';
   function create(options) {
     var section = document.getElementById('section-apps'), client = options.resourceClient, C = root.AppContract;
-    var apps = [], sequence = 0, loading = false, loadError = false, managing = false, editor = null, permissionView = null;
+    var apps = [], sequence = 0, loading = false, loadError = false, editor = null, permissionView = null, creation = null;
     var layoutKey = 'app_launcher_' + (chrome.extension.inIncognitoContext ? 'incognito' : 'regular');
     var layout = { order: [], favorites: [] }, layoutReady = false, layoutBusy = false, favoritesOnly = false, disposed = false;
-    var drag = null, redrawPending = false;
+    var sidebarFavoritesOnly = false;
+    var drag = null, redrawPending = false, expandedApps = new Set();
     function el(tag, text, className) { var node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; }
-    function button(text, action) { var node = el('button', text, 'btn-secondary'); node.type = 'button'; node.onclick = function () { Promise.resolve().then(action).catch(fail); }; return node; }
+    function button(text, action) { var node = el('button', text, 'btn-secondary'); node.type = 'button'; node.onclick = function (event) { Promise.resolve().then(function () { return action(event); }).catch(fail); }; return node; }
+    function actionIcon(name) {
+      var paths = {
+        eye: 'M2 12C4 7 8 5 12 5s8 2 10 7c-2 5-6 7-10 7s-8-2-10-7Zm13 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
+        favorite: 'm12 3 2.8 5.7 6.2 .9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z',
+        open: 'M14 3h7v7m0-7L10 14M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5',
+        top: 'M4 3h16M12 21V7m-6 6 6-6 6 6',
+        grip: 'M8 5h.01M16 5h.01M8 12h.01M16 12h.01M8 19h.01M16 19h.01',
+        settings: 'M10 2h4l.5 3 2 1.2 2.9-1 2 3.5-2.3 2v2.6l2.3 2-2 3.5-2.9-1-2 1.2-.5 3h-4l-.5-3-2-1.2-2.9 1-2-3.5 2.3-2v-2.6l-2.3-2 2-3.5 2.9 1 2-1.2ZM15.5 12a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0',
+        more: 'M5 11a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm7 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm7 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z'
+      };
+      var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'), path = document.createElementNS(svg.namespaceURI, 'path');
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false');
+      path.setAttribute('d', paths[name]); svg.append(path); return svg;
+    }
+    function lastOpened(timestamp) {
+      var minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+      if (minutes < 1) return '刚刚';
+      if (minutes < 60) return minutes + ' 分钟前';
+      if (minutes < 1440) return Math.floor(minutes / 60) + ' 小时前';
+      if (minutes < 43200) return Math.floor(minutes / 1440) + ' 天前';
+      return new Date(timestamp).toLocaleDateString();
+    }
     function fail(error) { options.toast(error.message || String(error), true); }
     function unwrap(response) { if (response.error) throw Object.assign(new Error(response.error.message), { code: response.error.code }); return response.primary.data; }
     function get(uri) { return client.get(uri).then(unwrap); }
@@ -17,25 +40,24 @@
         if (response.error) throw Object.assign(new Error(response.error.message), response.error);
         if (operation === 'open') {
           var app = apps.find(function (item) { return item.appId === input.appId; });
-          if (app) { app.lastUsedAt = Date.now(); draw(); }
+          if (app) {
+            app.lastUsedAt = Math.max(app.lastUsedAt || 0, response.result.lastUsedAt);
+            app.openCount = Math.max(app.openCount || 0, response.result.openCount);
+            draw();
+          }
         }
         return response.result;
       });
     }
-    var header = el('header', undefined, 'section-header app-header'), heading = el('div', undefined, 'app-header-copy'), actions = el('div', undefined, 'app-actions');
-    var description = el('p', '点击应用即可打开。', 'section-desc');
-    heading.append(el('h2', '应用入口'), description);
+    function openApp(appId, event) {
+      var newTab = event.metaKey || event.ctrlKey;
+      return manage('open', { appId: appId, newTab: newTab, active: !newTab || event.shiftKey });
+    }
+    var header = el('header', undefined, 'section-header'), actions = el('div', undefined, 'app-actions');
+    var description = el('p', '点击应用打开，按住 Command / Ctrl 点击可新开标签页。', 'section-desc');
     var newApp = button('新建应用', createApp); newApp.className = 'btn-primary';
-    var manageApps = button('管理应用', function () {
-      managing = !managing;
-      manageApps.textContent = managing ? '取消管理' : '管理应用';
-      manageApps.setAttribute('aria-pressed', String(managing));
-      description.textContent = managing ? '点击管理进入应用管理页面。' : '点击应用即可打开。';
-      draw();
-    });
-    manageApps.setAttribute('aria-pressed', 'false'); manageApps.setAttribute('aria-controls', 'app-catalog');
-    actions.append(button('导入应用', function () { document.getElementById('file-import-config').click(); }), newApp, manageApps);
-    header.append(heading, actions);
+    actions.append(button('导入应用', function () { document.getElementById('file-import-config').click(); }), newApp);
+    header.append(el('h2', '应用入口'), actions);
     var recent = el('section', undefined, 'app-recent'), recentList = el('ul', undefined, 'app-recent-list');
     var recentTitle = el('h3', '最近使用'); recentTitle.id = 'app-recent-title';
     recent.setAttribute('aria-labelledby', recentTitle.id); recent.hidden = true; recent.append(recentTitle, recentList);
@@ -46,13 +68,22 @@
     filters.setAttribute('role', 'group'); filters.setAttribute('aria-label', '应用筛选'); filters.append(allApps, favoriteApps);
     var status = el('span', '正在加载…', 'app-list-status'), retry = button('重新加载', render);
     status.setAttribute('role', 'status'); retry.hidden = true;
-    toolbar.append(filters, search, status, retry);
+    if (options.compact) toolbar.append(search, retry);
+    else toolbar.append(filters, search, status, retry);
     var orderHint = el('p', undefined, 'app-order-hint'); orderHint.id = 'app-order-hint';
+    orderHint.hidden = !!options.compact;
     var catalog = el('section', undefined, 'app-catalog-section'), catalogTitle = el('h3', '全部应用'); catalog.id = 'app-catalog';
+    catalogTitle.hidden = !!options.compact;
     catalogTitle.id = 'app-catalog-title'; catalog.setAttribute('aria-labelledby', catalogTitle.id);
     var grid = el('ul', undefined, 'app-grid'); grid.id = 'app-grid'; grid.setAttribute('aria-label', '应用');
     catalog.append(catalogTitle, grid);
-    section.append(header, recent, toolbar, orderHint, catalog);
+    if (options.compact) section.append(toolbar, orderHint, catalog);
+    else section.append(header, description, drawerGuide('应用入口说明', [
+      ['搜索与收藏', '按名称搜索，点击星标收藏，通过「全部／收藏」筛选。'],
+      ['排序', '切到「全部」并清空搜索，拖拽图标与标题区域；更多操作中可置顶。'],
+      ['应用管理', '更多操作 → 管理，可编辑代码、设置权限、复制或导出；内置应用需复制后修改。'],
+      ['新增与导入', '新建应用或选择备份包导入。'],
+    ]), recent, toolbar, orderHint, catalog);
     search.oninput = draw;
     function normalizeLayout(value) {
       var normalized = {};
@@ -117,52 +148,65 @@
       var moved = Array.from(catalog.querySelectorAll('.app-card-main')).find(function (node) { return node.dataset.appId === appId; });
       if (moved) moved.focus({ preventScroll: true });
     }
-    function clearDropTarget() {
-      catalog.querySelectorAll('.app-drop-before, .app-drop-after').forEach(function (node) { node.classList.remove('app-drop-before', 'app-drop-after'); });
-    }
     function endDrag() {
-      drag = null; clearDropTarget();
+      if (drag) drag.layout.clear();
+      drag = null;
       catalog.querySelectorAll('.app-dragging').forEach(function (node) { node.classList.remove('app-dragging'); });
       if (redrawPending) { redrawPending = false; draw(); }
     }
-    function dropTarget(event) {
-      var card = event.target.closest('.app-card');
-      if (!drag || !canReorder() || !card || !catalog.contains(card) || card.dataset.appId === drag.appId) return null;
-      return card;
-    }
     catalog.addEventListener('dragstart', function (event) {
-      var main = event.target.closest('.app-card-main');
-      if (!main || !canReorder()) { event.preventDefault(); return; }
-      drag = { appId: main.dataset.appId };
+      var title = event.target.closest('.app-card-heading');
+      if (!title || !canReorder()) { event.preventDefault(); return; }
+      var card = title.closest('.app-card');
+      var cards = Array.from(grid.children), index = cards.indexOf(card);
+      drag = { appId: card.dataset.appId, index: index, cards: cards,
+        layout: root.PageAgentSortLayout.create(grid, cards, index) };
       event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', drag.appId);
-      main.closest('.app-card').classList.add('app-dragging');
+      card.classList.add('app-dragging');
     });
     catalog.addEventListener('dragover', function (event) {
-      var card = dropTarget(event); clearDropTarget();
-      if (!card) return;
+      if (!drag || !canReorder()) return;
       event.preventDefault(); event.dataTransfer.dropEffect = 'move';
-      var rect = card.getBoundingClientRect();
-      card.classList.add(event.clientX > rect.left + rect.width / 2 ? 'app-drop-after' : 'app-drop-before');
+      drag.layout.preview(drag.layout.destinationAt(event.clientX, event.clientY));
     });
-    catalog.addEventListener('dragleave', function (event) { if (!catalog.contains(event.relatedTarget)) clearDropTarget(); });
     catalog.addEventListener('drop', function (event) {
-      var card = dropTarget(event);
-      if (!card) { endDrag(); return; }
+      if (!drag || !canReorder()) { endDrag(); return; }
       event.preventDefault();
-      var appId = drag.appId, targetId = card.dataset.appId, rect = card.getBoundingClientRect(), after = event.clientX > rect.left + rect.width / 2;
-      endDrag(); moveApp(appId, targetId, after).catch(fail);
+      var index = drag.layout.destinationAt(event.clientX, event.clientY), fromIndex = drag.index;
+      var appId = drag.appId, targetId = drag.cards[index].dataset.appId;
+      var previousOrder = layout.order, nextOrder;
+      if (index !== fromIndex) {
+        nextOrder = previousOrder.filter(function (id) { return id !== appId; });
+        nextOrder.splice(nextOrder.indexOf(targetId) + (index > fromIndex ? 1 : 0), 0, appId);
+        layout.order = nextOrder;
+      }
+      endDrag();
+      if (index !== fromIndex) moveApp(appId, targetId, index > fromIndex).catch(function (error) {
+        if (layout.order === nextOrder) layout.order = previousOrder;
+        draw(); fail(error);
+      });
     });
     catalog.addEventListener('dragend', endDrag);
+    function drawerGuide(title, paragraphs) {
+      var guide = el('details', undefined, 'reference-panel drawer-guide');
+      var content = el('div', undefined, 'drawer-guide-content');
+      paragraphs.forEach(function (entry) {
+        var paragraph = el('p');
+        paragraph.append(el('b', entry[0] + '：'), entry[1]);
+        content.append(paragraph);
+      });
+      guide.append(el('summary', title), content);
+      return guide;
+    }
+    var appAddressHelp = '1–64 位英文字母或数字，可用单个 - 连接，自动转小写；留空用 ID，改名后旧别名失效。';
     function addressField(input, id) {
       var row = el('div', undefined, 'form-row'), label = el('label', '应用别名');
       input.id = id; input.type = 'text'; input.maxLength = 64; input.placeholder = 'my-tools'; input.spellcheck = false; input.autocapitalize = 'none';
       label.htmlFor = id;
-      var help = el('p', '1–64 位英文字母或数字，可用单个 - 连接，自动转小写。留空使用 ID；改名后旧别名失效。', 'form-help');
-      help.id = id + '-help'; input.setAttribute('aria-describedby', help.id);
-      row.append(label, input, help); return row;
+      row.append(label, input); return row;
     }
-    function createApp() {
-      if (!confirmDrawerClose()) return;
+    async function createApp() {
+      if (!await confirmDrawerClose()) return;
       var form = el('form'), name = el('input'), description = el('textarea'), slug = el('input');
       form.id = 'app-create-form';
       name.type = 'text'; name.id = 'app-create-name'; name.required = true; name.maxLength = C.limits.nameLength; name.placeholder = '应用名称，最多 ' + C.limits.nameLength + ' 个字符';
@@ -171,16 +215,24 @@
       var descriptionRow = el('div', undefined, 'form-row'), descriptionLabel = el('label', '描述'); descriptionLabel.htmlFor = description.id; descriptionRow.append(descriptionLabel, description);
       var submit = el('button', '创建应用', 'btn-primary'); submit.type = 'submit'; submit.setAttribute('form', form.id);
       var cancel = el('button', '取消', 'btn-secondary'); cancel.type = 'button'; cancel.dataset.action = 'cancel-drawer';
-      form.append(nameRow, addressField(slug, 'app-create-slug'), descriptionRow);
+      var fields = el('section', undefined, 'drawer-section');
+      fields.append(el('h4', '应用信息'), nameRow, addressField(slug, 'app-create-slug'), descriptionRow);
+      form.append(drawerGuide('新建应用说明', [
+        ['应用别名', appAddressHelp],
+        ['应用描述', '简述用途，可留空；创建后可编辑代码和权限。'],
+      ]), fields);
       document.getElementById('drawer-title').textContent = '新建应用';
       document.getElementById('drawer-content').replaceChildren(form);
       document.getElementById('drawer-actions').replaceChildren(cancel, submit);
+      creation = { form: form, busy: false };
+      draw();
       options.openDrawer(); name.focus();
       form.onsubmit = async function (event) {
         event.preventDefault();
         if (submit.disabled) return;
         name.value = name.value.trim();
         if (!form.reportValidity()) return;
+        creation.busy = true;
         newApp.disabled = true; submit.disabled = true; cancel.disabled = true; name.disabled = true; description.disabled = true; slug.disabled = true;
         try {
           slug.value = C.slug(slug.value) || '';
@@ -196,13 +248,17 @@
             }
           }));
           options.toast('应用已创建');
+          creation = null;
           search.value = ''; favoritesOnly = false; render().catch(fail);
           if (form.isConnected && document.getElementById('drawer').classList.contains('active')) {
-            options.closeDrawer();
+            if (!await options.closeDrawer()) return;
             await edit(app.appId);
           }
         } catch (error) { fail(error); }
-        finally { newApp.disabled = false; submit.disabled = false; cancel.disabled = false; name.disabled = false; description.disabled = false; slug.disabled = false; }
+        finally {
+          if (creation && creation.form === form) creation.busy = false;
+          newApp.disabled = false; submit.disabled = false; cancel.disabled = false; name.disabled = false; description.disabled = false; slug.disabled = false;
+        }
       };
     }
     async function render() {
@@ -210,6 +266,11 @@
       var ticket = ++sequence, collected = new Map(), cursor = null;
       loading = true; loadError = false; catalog.setAttribute('aria-busy', 'true'); draw();
       try {
+        if (options.compact) {
+          var settings = await root.PageAutomationSystemSettings.load(chrome.storage.local, chrome.runtime);
+          if (ticket !== sequence) return;
+          sidebarFavoritesOnly = settings.sidebarAppsFavoritesOnly;
+        }
         do {
           var query = new URLSearchParams({ limit: '100', sort: 'updated' });
           if (cursor) query.set('cursor', cursor);
@@ -233,17 +294,21 @@
       if (disposed) return;
       if (drag) { redrawPending = true; return; }
       var term = C.normalizeName(search.value), favorites = new Set(layout.favorites), ordered = orderedApps();
-      var visibleApps = ordered.filter(function (app) { return C.normalizeName(app.name).includes(term) && (!favoritesOnly || favorites.has(app.appId)); });
+      if (options.onFavoritesChanged) options.onFavoritesChanged(apps.some(function (app) { return favorites.has(app.appId); }));
+      var filterFavorites = options.compact ? sidebarFavoritesOnly && !term : favoritesOnly;
+      var visibleApps = ordered.filter(function (app) { return C.normalizeName(app.name).includes(term) && (!filterFavorites || favorites.has(app.appId)); });
       status.textContent = loading ? '正在加载…' : layoutBusy ? '正在保存…' : loadError ? '加载失败，请重试。' : (term ? '找到 ' : '') + visibleApps.length + ' 个应用';
       retry.hidden = !loadError;
       allApps.setAttribute('aria-pressed', String(!favoritesOnly)); favoriteApps.setAttribute('aria-pressed', String(favoritesOnly));
       favoriteApps.textContent = '收藏 ' + apps.filter(function (app) { return favorites.has(app.appId); }).length;
-      orderHint.textContent = term || favoritesOnly ? '清空搜索并切换到“全部”后可拖拽调整顺序。' : '拖拽卡片调整顺序。';
+      orderHint.textContent = term || favoritesOnly
+        ? options.compact ? '清空搜索后可拖拽标题调整顺序。' : '清空搜索并切换到“全部”后可拖拽标题调整顺序。'
+        : '拖拽应用标题调整顺序。';
       var focused = catalog.contains(document.activeElement) || recentList.contains(document.activeElement) ? document.activeElement : null;
       recentList.replaceChildren();
       apps.filter(function (app) { return app.lastUsedAt > 0 && app.lastUsedAt !== app.createdAt; })
-        .sort(function (a, b) { return b.lastUsedAt - a.lastUsedAt || a.appId.localeCompare(b.appId); }).slice(0, 10).forEach(function (app) {
-          var item = el('li'), open = button('', function () { return manage('open', { appId: app.appId }); });
+        .sort(function (a, b) { return b.lastUsedAt - a.lastUsedAt || a.appId.localeCompare(b.appId); }).slice(0, C.limits.recentApps).forEach(function (app) {
+          var item = el('li'), open = button('', function (event) { return openApp(app.appId, event); });
           open.className = 'app-recent-open'; open.title = app.name; open.setAttribute('aria-label', '打开 ' + app.name);
           open.dataset.appId = app.appId; open.dataset.control = 'recent';
           var icon = el('span', C.ICONS[app.icon] || C.ICONS['fa-cube'], 'app-icon'); icon.setAttribute('aria-hidden', 'true');
@@ -251,31 +316,72 @@
         });
       recent.hidden = !recentList.childElementCount;
       grid.replaceChildren();
-      catalogTitle.textContent = favoritesOnly ? '收藏的应用' : '全部应用';
-      if (!visibleApps.length) grid.append(el('li', loading ? '正在加载应用…' : loadError ? '暂时无法加载应用。' : term ? '没有找到匹配的应用，试试其他名称。' : favoritesOnly ? '还没有收藏，切换到“全部”，点击卡片上的五角星即可收藏。' : '还没有应用，点击“新建应用”或“导入应用”开始。', 'app-empty'));
+      catalogTitle.textContent = filterFavorites ? '收藏的应用' : '全部应用';
+      if (!visibleApps.length && (!creation || loading || loadError)) {
+        var emptyText = loading ? '正在加载应用…' : loadError ? '暂时无法加载应用。'
+          : term ? '没有找到匹配的应用，试试其他名称。'
+          : filterFavorites ? options.compact ? '还没有收藏的应用，请在应用入口收藏，或搜索全部应用。' : '还没有收藏，切换到“全部”，点击应用下方的星标即可。'
+          : options.compact ? '还没有应用，请在配置中心新建或导入应用。' : '还没有应用，点击“新建应用”或“导入应用”开始。';
+        grid.append(el('li', emptyText, 'app-empty'));
+      }
       visibleApps.forEach(function (app) {
         var card = el('li', undefined, 'app-card'); card.dataset.appId = app.appId;
-        var main = button('', function () { return manage('open', { appId: app.appId }); }); main.className = 'app-card-main';
-        main.title = app.name + (app.description ? '\n' + app.description : ''); main.setAttribute('aria-label', '打开 ' + app.name + (favorites.has(app.appId) ? '，已收藏' : ''));
-        main.dataset.appId = app.appId; main.dataset.control = 'open'; main.draggable = canReorder(); main.setAttribute('aria-describedby', orderHint.id);
+        var main = button('', function (event) { return openApp(app.appId, event); }); main.className = 'app-card-main';
+        main.setAttribute('aria-label', '打开 ' + app.name + (!options.compact && favorites.has(app.appId) ? '，已收藏' : ''));
+        main.dataset.appId = app.appId; main.dataset.control = 'open'; main.setAttribute('aria-describedby', orderHint.id);
         var icon = el('span', C.ICONS[app.icon] || C.ICONS['fa-cube'], 'app-icon'); icon.setAttribute('aria-hidden', 'true');
-        var copy = el('span', undefined, 'app-card-copy'); copy.append(el('span', app.name, 'app-card-name'));
+        var copy = el('span', undefined, 'app-card-copy'), topLine = el('span', undefined, 'app-card-topline'), title = el('span', undefined, 'app-card-heading');
+        title.draggable = canReorder();
+        var handle = el('span', undefined, 'app-card-drag-handle'); handle.setAttribute('aria-hidden', 'true');
+        handle.append(actionIcon('grip'));
+        title.append(handle, el('span', app.name, 'app-card-name'));
+        if (app.__builtin) title.append(el('span', '内置', 'app-card-builtin'));
+        topLine.append(title); copy.append(topLine);
         if (app.description) copy.append(el('span', app.description, 'app-card-description'));
         main.append(icon, copy); card.append(main);
-        if (app.__builtin) main.append(el('span', '内置', 'app-card-builtin'));
-        var favorite = button('', function () { return toggleLayout('favorites', app.appId); }); favorite.className = 'app-card-favorite';
-        favorite.dataset.appId = app.appId; favorite.dataset.control = 'favorites'; favorite.disabled = loading || layoutBusy || !layoutReady;
-        favorite.title = (favorites.has(app.appId) ? '取消收藏 ' : '收藏 ') + app.name;
-        favorite.setAttribute('aria-label', favorite.title); favorite.setAttribute('aria-pressed', String(favorites.has(app.appId)));
-        var star = el('span', favorites.has(app.appId) ? '\uf005' : '\uf006'); star.setAttribute('aria-hidden', 'true'); favorite.append(star); card.append(favorite);
-        if (managing) {
-          var controls = el('div', undefined, 'app-card-controls');
-          var pin = button('置顶', function () { return moveApp(app.appId, null, false); }); pin.className = 'app-card-manage';
-          pin.dataset.appId = app.appId; pin.dataset.control = 'move-first'; pin.disabled = loading || layoutBusy || !layoutReady || ordered[0].appId === app.appId;
-          pin.title = '移到列表第一位'; pin.setAttribute('aria-label', '将 ' + app.name + ' 移到列表第一位'); controls.append(pin);
-          var settings = button('管理', function () { showManagement(app); }); settings.className = 'app-card-manage';
-          settings.setAttribute('aria-label', '管理 ' + app.name); settings.dataset.appId = app.appId; settings.dataset.control = 'manage'; controls.append(settings); card.append(controls);
+        var used = app.lastUsedAt > 0 && app.lastUsedAt !== app.createdAt;
+        var lastUsed = el(used ? 'time' : 'span', used ? lastOpened(app.lastUsedAt) : '尚未打开', 'app-card-last-used');
+        if (used) { lastUsed.dateTime = new Date(app.lastUsedAt).toISOString(); lastUsed.title = '打开时间：' + new Date(app.lastUsedAt).toLocaleString(); }
+        topLine.append(lastUsed);
+        var footer = el('div', undefined, 'app-card-footer');
+        var openCount = Number.isSafeInteger(app.openCount) && app.openCount > 0 ? app.openCount : 0;
+        var usage = el('span', undefined, 'app-card-usage');
+        usage.append(actionIcon('eye'), el('span', openCount.toLocaleString()));
+        usage.title = '打开次数：' + openCount.toLocaleString(); usage.setAttribute('aria-label', usage.title);
+        footer.append(usage);
+        var controls = el('div', undefined, 'app-card-controls');
+        if (!options.compact) {
+          var favorite = button('', function () { return toggleLayout('favorites', app.appId); }); favorite.className = 'app-card-action app-card-favorite';
+          favorite.dataset.appId = app.appId; favorite.dataset.control = 'favorites'; favorite.disabled = loading || layoutBusy || !layoutReady;
+          favorite.title = favorites.has(app.appId) ? '取消收藏' : '收藏';
+          favorite.setAttribute('aria-label', (favorites.has(app.appId) ? '取消收藏 ' : '收藏 ') + app.name); favorite.setAttribute('aria-pressed', String(favorites.has(app.appId)));
+          favorite.append(actionIcon('favorite')); controls.append(favorite);
         }
+        var newTab = button('', function () { return manage('open', { appId: app.appId, newTab: true }); }); newTab.className = 'app-card-action';
+        newTab.dataset.appId = app.appId; newTab.dataset.control = 'new-tab';
+        newTab.title = '在新标签页打开';
+        newTab.setAttribute('aria-label', '在新标签页打开 ' + app.name);
+        newTab.append(actionIcon('open'));
+        var more = el('button', undefined, 'app-card-action app-card-more'), menu = el('div', undefined, 'app-card-menu');
+        more.type = 'button'; more.dataset.appId = app.appId; more.dataset.control = 'more';
+        more.title = '更多操作';
+        more.hidden = expandedApps.has(app.appId);
+        more.setAttribute('aria-label', app.name + '的更多操作'); more.setAttribute('aria-expanded', String(expandedApps.has(app.appId))); more.append(actionIcon('more'));
+        menu.id = 'app-menu-' + app.appId; menu.hidden = !expandedApps.has(app.appId); menu.setAttribute('role', 'group'); menu.setAttribute('aria-label', app.name + '的更多操作');
+        more.setAttribute('aria-controls', menu.id);
+        var top = button('', function () { return moveApp(app.appId, null, false); }); top.className = 'app-card-action';
+        top.title = '置顶'; top.setAttribute('aria-label', '置顶 ' + app.name); top.append(actionIcon('top'));
+        top.dataset.appId = app.appId; top.dataset.control = 'move-first'; top.disabled = loading || layoutBusy || !layoutReady || ordered[0].appId === app.appId;
+        var settings = button('', function () { return options.openManagement ? options.openManagement(app.appId) : showManagement(app); }); settings.className = 'app-card-action';
+        settings.title = '管理'; settings.setAttribute('aria-label', '管理 ' + app.name); settings.append(actionIcon('settings'));
+        settings.dataset.appId = app.appId; settings.dataset.control = 'manage';
+        menu.append(top, settings);
+        more.onclick = function () {
+          expandedApps.add(app.appId);
+          menu.hidden = false; more.hidden = true; more.setAttribute('aria-expanded', 'true');
+          (top.disabled ? settings : top).focus({ preventScroll: true });
+        };
+        controls.append(newTab, menu, more); footer.append(controls); card.append(footer);
         grid.append(card);
       });
       if (focused) {
@@ -283,9 +389,15 @@
         if (replacement) replacement.focus({ preventScroll: true }); else if (favoritesOnly) favoriteApps.focus({ preventScroll: true });
       }
     }
-    function showManagement(app) {
-      if (!confirmDrawerClose()) return;
-      var container = el('div', undefined, 'app-management'), overview = el('div', undefined, 'app-management-overview');
+    async function showManagement(app) {
+      if (!await confirmDrawerClose()) return;
+      var container = el('div', undefined, 'app-management'), overview = el('div', undefined, 'app-management-overview drawer-section');
+      container.append(drawerGuide('应用管理说明', [
+        app.__builtin
+          ? ['内置应用', '只读，复制后可修改；副本仅含源码，不含业务数据和授权。']
+          : ['编辑信息', '图标选择后立即保存；名称、别名、描述和源码在「编辑代码」中修改。'],
+        ['草稿与发布', '预览使用草稿，应用入口使用发布版本；权限单独保存。'],
+      ]));
       var icon = el('button'), iconPreview = el('span', undefined, 'app-icon'), copy = el('div');
       var iconGrid = el('div', undefined, 'app-icon-grid'), iconButtons = [];
       iconGrid.id = 'app-management-icon-grid'; iconGrid.setAttribute('popover', 'auto');
@@ -360,18 +472,18 @@
         iconButtons[index].tabIndex = -1; iconButtons[next].tabIndex = 0; iconButtons[next].focus();
       };
       var appName = el('h4', app.name); appName.title = app.name; copy.append(appName);
-      if (app.__builtin) copy.append(el('p', '内置应用只读，可复制后修改。副本包含应用源码文件，不包含业务数据和授权。', 'form-help'));
-      else copy.append(el('p', '点击编辑图标', 'form-help'));
       overview.append(icon, copy);
-      overview.append(el('p', app.description || '', 'form-help app-management-description'));
+      if (app.description) overview.append(el('p', app.description, 'app-management-description'));
       container.append(overview, iconGrid);
       function group(title, controls) {
-        var group = el('section', undefined, 'app-management-group'), row = el('div', undefined, 'app-actions');
+        var group = el('section', undefined, 'app-management-group drawer-section'), row = el('div', undefined, 'app-actions');
         row.append.apply(row, controls); group.append(el('h4', title), row); return group;
       }
-      var info = el('section', undefined, 'app-management-group'), details = el('dl', undefined, 'app-management-details');
+      var info = el('section', undefined, 'app-management-group drawer-section'), details = el('dl', undefined, 'app-management-details');
       var idValue = el('dd'), aliasValue = el('dd');
-      var idCode = el('code', app.appId); idCode.title = '点击选中 ID'; idValue.append(idCode);
+      var idCode = el('button', 'ID: ' + app.appId, 'item-id'); idCode.type = 'button';
+      idCode.dataset.action = 'copy-id'; idCode.dataset.id = app.appId; idCode.title = '点击复制 ID: ' + app.appId;
+      idCode.setAttribute('aria-label', '复制 ID: ' + app.appId); idValue.append(idCode);
       aliasValue.append(app.slug ? el('code', app.slug) : el('span', '未设置（使用 ID）'));
       details.append(el('dt', 'ID'), idValue, el('dt', '别名'), aliasValue);
       var accessActions = el('div', undefined, 'app-actions');
@@ -394,7 +506,7 @@
       });
       if (app.__builtin) managementActions.append(group('编辑', [copyApp]));
       else managementActions.append(group('编辑', [
-        button('对话调整', function () { if (options.closeDrawer() !== false) return options.converse(app.appId); }),
+        button('对话调整', async function () { if (await options.closeDrawer() !== false) return options.converse(app.appId); }),
         button('编辑代码', function () { return edit(app.appId); }),
         copyApp
       ]), group('发布', [
@@ -405,12 +517,12 @@
       ]));
       managementActions.append(group('权限', [button('权限设置', function () { return permissions(app.appId); })]));
       var running = group('运行', [
-        button('查看运行记录', function () { if (options.closeDrawer() !== false) options.showRuns(); }),
+        button('查看运行记录', async function () { if (await options.closeDrawer() !== false) options.showRuns(); }),
         button('关闭应用标签页', function () { return manage('stop', { appId: app.appId }); }),
         button('取消此应用的任务', async function () { var result = await manage('cancel-runs', { appId: app.appId }); options.toast('已请求取消 ' + result.requested + ' 个任务；已发生的操作不会回滚。'); })
       ]);
       var remove = button('删除应用', async function () {
-        if (!confirm('删除“' + app.name + '”及其业务数据和主题资源？共享流程会保留。')) return;
+        if (!await options.confirm('删除“' + app.name + '”及其业务数据和主题资源？共享流程会保留。')) return;
         remove.disabled = true;
         try {
           var current = await get('/apps/' + app.appId);
@@ -434,11 +546,18 @@
       options.toast('已发布'); await render();
     }
     async function permissions(appId) {
-      if (!confirmDrawerClose()) return;
+      if (!await confirmDrawerClose()) return;
       var app = null, draft = null, readSequence = 0, pendingRefresh = false, ready = false;
       var container = el('div', undefined, 'app-permissions'), form = el('fieldset'), content = el('div', undefined, 'app-permission-content');
       var notice = el('p', '正在读取权限…', 'app-permission-notice'); notice.setAttribute('role', 'status');
-      form.append(content); form.disabled = true; container.append(notice, form);
+      var permissionGuide = drawerGuide('应用权限说明', [
+        ['作用范围', '草稿与发布共用应用权限；自定义原生调用不受 SDK 完整管理。'],
+        ['关闭与重置', '关闭后停止对应调用，发布不重新开启；重置恢复 SDK 开关、数据与动作范围、模块权限，保存后生效。'],
+        ['本地能力', '文件、命令与桌面操作还需在连接配置中启用。'],
+      ]);
+      var permissionDefaults = el('p');
+      permissionGuide.querySelector('.drawer-guide-content').append(permissionDefaults);
+      form.append(content); form.disabled = true; container.append(permissionGuide, notice, form);
       var state = { appId: appId, container: container, notice: notice, busy: false, dirty: false, refresh: refresh };
       permissionView = state;
       var done = button('取消', function () { options.closeDrawer(); });
@@ -509,15 +628,14 @@
         document.getElementById('drawer-title').textContent = app.name + ' · 权限';
         content.replaceChildren();
         var master = el('section', undefined, 'app-permission-card');
-        master.append(checkbox('允许此应用通过 SDK 调用能力', draft.enabled, function (enabled) { change({ enabled: enabled }); }),
-          el('p', '所有权限统一作用于整个应用，草稿和发布共用。自定义原生调用不受 SDK 完整管理。', 'form-help'));
+        master.append(el('h4', 'SDK 开关'), checkbox('允许此应用通过 SDK 调用能力', draft.enabled, function (enabled) { change({ enabled: enabled }); }));
         var permissionActions = el('div', undefined, 'app-actions');
         permissionActions.append(button('重置为默认权限', function () {
           change({ enabled: app.permissions.defaultEnabled, generationScope: app.permissions.defaultGenerationScope.slice(), resources: app.permissions.defaultResources.slice() });
         }));
-        master.append(permissionActions, el('p', '重置会同时恢复 SDK 开关、应用数据与绑定动作范围、插件模块权限，点击「保存权限」后生效。', 'form-help'));
+        master.append(permissionActions);
         var scope = el('section', undefined, 'app-permission-card');
-        scope.append(el('h4', '应用数据与绑定动作范围'), el('p', '关闭后停止调用对应能力，保存或发布代码不会重新开启。', 'form-help'));
+        scope.append(el('h4', '应用数据与绑定动作范围'));
         var capabilityLabels = { 'data.read': '读取本应用数据', 'data.write': '保存本应用数据', 'data.delete': '删除本应用数据', 'actions.run': '运行绑定的流程或脚本' };
         C.CAPABILITIES.forEach(function (capability) {
           scope.append(checkbox(capabilityLabels[capability] || capability, draft.generationScope.includes(capability), function (enabled) {
@@ -525,7 +643,10 @@
             if (enabled) selected.push(capability); change({ generationScope: selected });
           }));
         });
-        content.append(master, scope, el('h4', '插件模块权限'), el('p', (app.__builtin && app.__builtinDefaultPermissions && app.__builtinDefaultPermissions.resources !== 'system' ? '此内置应用使用随包声明的默认权限，可按需调整。' : '此应用使用系统默认运行权限，可按需调整。') + '本地文件、命令与桌面还需在连接配置中启用本地操作服务。', 'form-help'));
+        permissionDefaults.replaceChildren(el('b', '默认权限：'),
+          app.__builtin && app.__builtinDefaultPermissions && app.__builtinDefaultPermissions.resources !== 'system'
+            ? '使用应用随包声明，可按需调整。' : '使用系统默认值，可按需调整。');
+        content.append(master, scope, el('h4', '插件模块权限'));
         var groups = new Map(), operationLabels = { read: '读取', write: '创建和修改', delete: '删除', execute: '执行', cancel: '取消运行', call: '调用工具', interact: '页面交互', javascript: '执行页面脚本', navigate: '导航', debugger: '调试器', 'tabs.write': '管理标签页', 'windows.write': '管理窗口', 'downloads.read': '读取下载', 'downloads.write': '管理下载', 'nodes.read': '读取节点', 'nodes.write': '修改节点', 'nodes.delete': '删除节点', 'report.read': '读取报告', 'debug.read': '读取调试数据', 'trace.read': '读取追踪记录', 'export.read': '导出' };
         app.permissions.resourceCatalog.forEach(function (item) {
           if (!groups.has(item.group)) groups.set(item.group, []);
@@ -553,21 +674,29 @@
       }
       await refresh();
     }
-    function confirmDrawerClose() {
-      if (permissionView && permissionView.container.isConnected && permissionView.busy) {
-        permissionView.notice.textContent = '正在保存权限，请完成后再关闭。'; return false;
-      }
-      if (permissionView && permissionView.container.isConnected && permissionView.dirty && !confirm('放弃未保存的权限修改？')) return false;
-      if (editor && editor.container.isConnected) {
-        if (editor.busy) { editor.notice.textContent = '正在处理，请完成后再关闭。'; return false; }
-        if (editor.dirty && !confirm('放弃当前未保存的输入？')) return false;
-      }
-      editor = null; permissionView = null;
+    function getEditState() {
+      var creating = creation && creation.form.isConnected;
+      var editing = editor && editor.container.isConnected;
+      var permissionsOpen = permissionView && permissionView.container.isConnected;
+      return {
+        dirty: !!(creating && Array.from(creation.form.querySelectorAll('input, textarea')).some(function (field) { return field.value !== ''; })
+          || editing && editor.dirty || permissionsOpen && permissionView.dirty),
+        busy: !!(creating && creation.busy || editing && editor.busy || permissionsOpen && permissionView.busy),
+      };
+    }
+
+    async function confirmDrawerClose(discard) {
+      var editState = getEditState();
+      if (editState.busy) { options.toast('正在保存，请稍后再操作'); return false; }
+      if (discard !== true && editState.dirty && !await options.confirm('有未保存的修改，是否放弃？')) return false;
+      var wasCreating = !!creation;
+      editor = null; permissionView = null; creation = null;
+      if (wasCreating) draw();
       return true;
     }
     async function edit(appId) {
       if (editor && editor.container.isConnected) { editor.focus(); return; }
-      if (!confirmDrawerClose()) return;
+      if (!await confirmDrawerClose()) return;
       var loading = el('p', '正在读取草稿…', 'drawer-hint');
       document.getElementById('drawer-title').textContent = '编辑代码';
       document.getElementById('drawer-content').replaceChildren(loading);
@@ -592,8 +721,8 @@
         var row = el('div', undefined, 'form-row'), caption = el('label', label);
         input.id = id; caption.htmlFor = id; row.append(caption, input); return row;
       }
-      var metadata = el('div', undefined, 'app-editor-meta');
-      metadata.append(field('应用名称', name, 'app-edit-name'), addressField(slug, 'app-edit-slug'));
+      var metadata = el('section', undefined, 'app-editor-meta drawer-section');
+      metadata.append(el('h4', '应用信息'), field('应用名称', name, 'app-edit-name'), addressField(slug, 'app-edit-slug'));
       var tabs = el('div', undefined, 'app-editor-tabs'), panes = el('div'), inputs = {}, tabButtons = [];
       tabs.setAttribute('role', 'group'); tabs.setAttribute('aria-label', '源码类型');
       var fields = [['html', 'HTML'], ['css', 'CSS'], ['javascript', 'JavaScript'], ['themeCss', '主题'], ['declarations', '功能与依赖']];
@@ -637,14 +766,14 @@
       fileSelect.onchange = selectFile;
       fileEditor.addEventListener('input', function () { if (fileSelect.value) fileSources[fileSelect.value] = fileEditor.value; });
       var fileActions = el('div', undefined, 'form-row app-actions app-source-file-actions');
-      var addFile = button('新增文件', function () {
-        var name = prompt('源码文件名，例如 helpers.js 或 layout.css'); if (name === null) return;
+      var addFile = button('新增文件', async function () {
+        var name = await options.prompt('源码文件名，例如 helpers.js 或 layout.css'); if (name === null) return;
         name = C.sourceFileName(name.trim());
         if (Object.prototype.hasOwnProperty.call(fileSources, name)) throw new Error('文件已存在');
         fileSources[name] = ''; loadFiles(fileSources); fileSelect.value = name; selectFile(); markDirty();
       }); addFile.className = 'btn-primary';
-      var removeFile = button('删除文件', function () {
-        var name = fileSelect.value; if (!name || !confirm('删除源码文件 ' + name + '？请同时移除对它的引用。')) return;
+      var removeFile = button('删除文件', async function () {
+        var name = fileSelect.value; if (!name || !await options.confirm('删除源码文件 ' + name + '？请同时移除对它的引用。')) return;
         delete fileSources[name]; loadFiles(fileSources); markDirty();
       }); removeFile.className = 'btn-danger';
       fileActions.append(fileSelect, addFile, removeFile);
@@ -727,9 +856,9 @@
               refresh.hidden = true;
               report('有变更未保存'); review.hidden = true;
             }),
-            button('载入最新草稿', function () {
+            button('载入最新草稿', async function () {
               if (activeEditor.busy || editor !== activeEditor) return;
-              if (activeEditor.dirty && !confirm('确认放弃当前未保存输入，载入上述最新草稿？')) return;
+              if (activeEditor.dirty && !await options.confirm('确认放弃当前未保存输入，载入上述最新草稿？')) return;
               name.value = current.name; slug.value = current.slug || ''; description.value = current.description || '';
               var declarations = Object.assign({}, current.code);
               ['html', 'css', 'javascript', 'themeCss'].forEach(function (key) { inputs[key].value = current.code[key]; delete declarations[key]; });
@@ -766,10 +895,13 @@
         asset.value = '';
       };
       var assetRow = field('主题图片和字体', asset, 'app-edit-asset');
-      assetRow.append(el('p', '文件名使用字母、数字、点、横线或下划线。上传后用 app-asset:assets/文件名 引用。', 'form-help'));
       metadata.append(assetRow, field('应用描述', description, 'app-edit-description'));
-      var source = el('div'); source.append(tabs, panes);
-      container.append(metadata, source, review);
+      var source = el('section', undefined, 'drawer-section'); source.append(el('h4', '应用源码'), tabs, panes);
+      container.append(drawerGuide('代码编辑说明', [
+        ['应用别名', appAddressHelp],
+        ['保存与发布', '保存写入草稿，预览查看效果；发布后更新应用入口。'],
+        ['主题资源', '文件名限字母、数字、点、横线或下划线。上传即保存，用 app-asset:assets/文件名 引用；代码需另存。'],
+      ]), metadata, source, review);
       document.getElementById('drawer-title').textContent = app.name + ' · 编辑代码';
       document.getElementById('drawer-content').replaceChildren(container);
       document.getElementById('drawer-actions').replaceChildren(save, preview, publishButton, status);
@@ -785,8 +917,11 @@
       if (options.isActive() && !document.hidden) render().catch(fail);
     }
     function onLayoutChanged(changes, area) {
-      if (area !== 'local' || !changes[layoutKey] || disposed) return;
-      layout = normalizeLayout(changes[layoutKey].newValue);
+      if (area !== 'local' || disposed) return;
+      var settingsChange = options.compact && changes[root.PageAutomationSystemSettings.SETTINGS_KEY];
+      if (!changes[layoutKey] && !settingsChange) return;
+      if (changes[layoutKey]) layout = normalizeLayout(changes[layoutKey].newValue);
+      if (settingsChange) sidebarFavoritesOnly = root.PageAutomationSystemSettings.normalize(settingsChange.newValue).sidebarAppsFavoritesOnly;
       if (options.isActive() && !document.hidden) draw();
     }
     function visible() {
@@ -798,10 +933,18 @@
         if (editor === currentEditor && !currentEditor.busy && app.revision !== currentEditor.revision) currentEditor.showExternalChange();
       }).catch(function (error) { if (editor === currentEditor && !currentEditor.busy) currentEditor.notice.textContent = error.message + '，当前输入仍保留'; });
     }
+    var usageTimer = setInterval(function () {
+      if (document.hidden || !options.isActive()) return;
+      catalog.querySelectorAll('time.app-card-last-used').forEach(function (node) { node.textContent = lastOpened(Date.parse(node.dateTime)); });
+    }, 60000);
     chrome.runtime.onMessage.addListener(onChanged); document.addEventListener('visibilitychange', visible);
     chrome.storage.onChanged.addListener(onLayoutChanged);
-    return { render: render, edit: edit, permissions: permissions, manage: manage, confirmDrawerClose: confirmDrawerClose, destroy: function () {
+    return { render: render, edit: edit, permissions: permissions, manage: manage,
+      openManagement: function (appId) { return get('/apps/' + appId).then(showManagement); },
+      getEditState: getEditState,
+      confirmDrawerClose: confirmDrawerClose, destroy: function () {
       disposed = true; sequence++; endDrag();
+      clearInterval(usageTimer);
       chrome.runtime.onMessage.removeListener(onChanged); document.removeEventListener('visibilitychange', visible);
       chrome.storage.onChanged.removeListener(onLayoutChanged);
       editor = null; permissionView = null;

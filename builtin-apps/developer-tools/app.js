@@ -2,6 +2,8 @@ import { createCrontabView } from './crontab.js';
 import { createToolViews } from './views.js';
 import { copyText, notify } from './feedback.js';
 import { receiveToolInput } from './tool-input.js';
+import { createDragPreview } from './drag-preview.js';
+import './sort-layout.js';
 
 // Page features and API operations are different: a page can combine several operations.
 const defaultCommon = ['hash', 'json', 'base64', 'url', 'time', 'qrCode', 'pinyin', 'code', 'unicode', 'text', 'randomString', 'diffs', 'dockerCompose'];
@@ -9,12 +11,12 @@ const categories = [
   { id: 'common', label: '常用' },
   { id: 'encryption', label: '加解密/签名', tools: ['hash', 'hmac', 'aes', 'des', 'tripleDes', 'rc4', 'rabbit', 'sm2', 'sm4', 'rsa', 'sign', 'base64', 'bcrypt'] },
   { id: 'check', label: '校验', tools: ['sign', 'regex', 'diffs', 'crontab', 'bcrypt', 'dataValidation'] },
-  { id: 'encoding', label: '编解码', tools: ['base64', 'base64Image', 'url', 'unicode', 'jwt', 'hexString', 'html', 'gzip', 'asn1', 'punycode', 'backslash'] },
-  { id: 'conversion', label: '转换', tools: ['json', 'pinyin', 'radix', 'serialize', 'unit', 'time', 'ascii', 'variableConversion', 'hexString', 'httpSnippet', 'color', 'urlParse', 'dockerCompose', 'zhNumber', 'svgToCss'] },
-  { id: 'generate', label: '生成', tools: ['qrCode', 'barcode', 'randomString', 'uuid', 'ulid', 'loremIpsum', 'binary', 'ipcalc', 'sqlFillParameter', 'httpSnippet'] },
-  { id: 'other', label: '其他', tools: ['code', 'unit', 'text'] }
+  { id: 'encoding', label: '编解码', tools: ['base64', 'base64Image', 'url', 'unicode', 'jwt', 'hexString', 'html', 'gzip', 'asn1', 'certificate', 'punycode', 'backslash'] },
+  { id: 'conversion', label: '转换', tools: ['json', 'pinyin', 'radix', 'serialize', 'unit', 'time', 'ascii', 'variableConversion', 'hexString', 'httpSnippet', 'color', 'urlParse', 'dockerCompose', 'zhNumber', 'svgToCss', 'htmlToJsx', 'markdown'] },
+  { id: 'generate', label: '生成', tools: ['qrCode', 'barcode', 'randomString', 'randomRecipe', 'uuid', 'ulid', 'loremIpsum', 'binary', 'ipcalc', 'sqlFillParameter', 'httpSnippet'] },
+  { id: 'other', label: '其他', tools: ['code', 'unit', 'text', 'stringInspect'] }
 ];
-const labels = { digest: '计算摘要', encrypt: '加密', decrypt: '解密', keypair: '生成密钥对', sign: '签名', verify: '验证', hash: '生成哈希', checksum: '计算校验码', encode: '编码', decode: '解码', format: '格式化', minify: '压缩', sort: '排序', escape: '转义', unescape: '反转义', repair: '修复', jsonpath: 'JSONPath 查询', jmespath: 'JMESPath 查询', schema: 'Schema 验证', toCode: '生成类型代码', convert: '转换', lines: '按行比较', words: '按词比较', characters: '按字符比较', match: '匹配', replace: '替换', split: '拆分', statistics: '统计', dedupe: '去重', reverse: '反转', trim: '去首尾空格', upper: '大写', lower: '小写', removeEmpty: '移除空行', table: '码表', timestamp: '时间戳', timezone: '时区', add: '时间增减', difference: '时间差', now: '当前时间', describe: '解释表达式', next: '后续执行时间', validate: '验证', generate: '生成', parse: '解析', fill: '填充参数', money: '金额大写', camel: '小驼峰', pascal: '大驼峰', snake: '下划线', kebab: '连字符', constant: '常量名', ipv4: 'IPv4', ipv6: 'IPv6' };
+const labels = { digest: '计算摘要', encrypt: '加密', decrypt: '解密', keypair: '生成密钥对', sign: '签名', verify: '验证', hash: '生成哈希', checksum: '计算校验码', encode: '编码', decode: '解码', format: '格式化', minify: '压缩', sort: '排序', escape: '转义', unescape: '反转义', repair: '修复', jsonpath: 'JSONPath 查询', jmespath: 'JMESPath 查询', schema: 'Schema 验证', toCode: '生成类型代码', convert: '转换', render: '渲染', inspect: '检查', lines: '按行比较', words: '按词比较', characters: '按字符比较', match: '匹配', replace: '替换', split: '拆分', statistics: '统计', dedupe: '去重', reverse: '反转', trim: '去首尾空格', upper: '大写', lower: '小写', removeEmpty: '移除空行', table: '码表', timestamp: '时间戳', timezone: '时区', add: '时间增减', difference: '时间差', now: '当前时间', describe: '解释表达式', next: '后续执行时间', validate: '验证', generate: '生成', parse: '解析', fill: '填充参数', money: '金额大写', camel: '小驼峰', pascal: '大驼峰', snake: '下划线', kebab: '连字符', constant: '常量名', ipv4: 'IPv4', ipv6: 'IPv6' };
 const resultLabels = { publicKey: '公钥', privateKey: '私钥', header: 'Header', payload: 'Payload', signature: '签名片段', signatureVerified: '已验证签名', signMagnitude: '原码', onesComplement: '反码', twosComplement: '补码', input: '十进制输入', valid: '验证通过', iso: 'ISO 8601', timestamp: '时间戳', zone: '时区', formatted: '当地时间', milliseconds: '毫秒', seconds: '秒', minutes: '分钟', hours: '小时', days: '天', characters: 'Unicode 字符', utf16Units: 'UTF-16 单元', utf8Bytes: 'UTF-8 字节', lines: '行数', words: '词数', parameters: '查询参数', pathname: '路径', hostname: '主机名', port: '端口', protocol: '协议', search: '查询字符串', hash: '片段', origin: '源', href: '完整地址', username: '用户名', password: '密码' };
 const textValue = value => typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 // Navigation switches feature views. Buttons and live transformations stay in the page.
@@ -24,7 +26,7 @@ const featureOperations = {
   base64: ['encode', 'decode'], base64Image: ['encode', 'decode'], url: ['encode', 'decode'], unicode: ['encode', 'decode'],
   hexString: ['encode', 'decode'], gzip: ['encode', 'decode'], punycode: ['encode', 'decode'], qrCode: ['generate', 'parse'], ipcalc: ['ipv4', 'ipv6']
 };
-const liveTools = new Set(['hash', 'hmac', 'aes', 'des', 'tripleDes', 'rc4', 'rabbit', 'sm2', 'sm4', 'rsa', 'base64', 'base64Image', 'url', 'unicode', 'hexString', 'html', 'gzip', 'punycode', 'pinyin', 'serialize', 'regex', 'diffs', 'binary', 'jwt', 'asn1', 'dataValidation', 'qrCode', 'barcode', 'urlParse', 'httpSnippet', 'dockerCompose', 'sqlFillParameter', 'variableConversion']);
+const liveTools = new Set(['hash', 'hmac', 'aes', 'des', 'tripleDes', 'rc4', 'rabbit', 'sm2', 'sm4', 'rsa', 'base64', 'base64Image', 'url', 'unicode', 'hexString', 'html', 'gzip', 'punycode', 'pinyin', 'serialize', 'regex', 'diffs', 'binary', 'jwt', 'asn1', 'dataValidation', 'qrCode', 'barcode', 'urlParse', 'httpSnippet', 'dockerCompose', 'sqlFillParameter', 'variableConversion', 'svgToCss', 'htmlToJsx', 'markdown', 'stringInspect', 'certificate']);
 const actionTools = new Set(['json', 'code', 'text', 'sign', 'bcrypt']);
 const cryptoTools = new Set(['aes', 'des', 'tripleDes', 'rc4', 'rabbit']);
 const defaultDigests = id => id === 'hash' ? ['MD5', 'SHA1', 'SHA256', 'SHA512', 'SM3'] : ['MD5', 'SHA1', 'SHA256', 'SHA512', 'SM3', 'RIPEMD160'];
@@ -61,7 +63,7 @@ function visibleFields(tool, operation, value) {
 
 function inputKind(tool, operation) {
   if (operation === 'keypair' || tool === 'ascii' && operation === 'table' || tool === 'time' && operation === 'now'
-    || ['randomString', 'loremIpsum'].includes(tool) || tool === 'ulid' && operation === 'generate'
+    || ['randomString', 'randomRecipe', 'loremIpsum'].includes(tool) || tool === 'ulid' && operation === 'generate'
     || tool === 'uuid' && ['v1', 'v4', 'v6', 'v7'].includes(operation)) return 'none';
   if (['time', 'crontab', 'radix', 'unit', 'color', 'barcode', 'ipcalc', 'zhNumber', 'uuid', 'ulid'].includes(tool)) return 'line';
   return 'editor';
@@ -100,6 +102,8 @@ export async function mountDeveloperTools() {
   let pinyinMode = 'normal';
   let common = [...defaultCommon], commonDraft = [], commonVersion = null, commonLoaded = false, savingCommon = false;
   let commonLoadError = '', draggedCommon = null;
+  let commonSortLayout = null;
+  const commonDragPreview = createDragPreview();
   const toolbox = document.querySelector('.toolbox'), cronContainer = document.createElement('section');
   const toolbar = $('run').parentElement;
   $('description').after(cronContainer);
@@ -693,7 +697,7 @@ export async function mountDeveloperTools() {
   }
   function updateForm() {
     if (!selected) return;
-    const generated = ['uuid', 'ulid', 'loremIpsum'].includes(selected.id) && inputKind(selected.id, operation) === 'none';
+    const generated = ['uuid', 'ulid', 'loremIpsum', 'randomRecipe'].includes(selected.id) && inputKind(selected.id, operation) === 'none';
     const fitted = !views.supports(selected.id) && !['crontab', 'qrCode'].includes(selected.id);
     toolbox.dataset.fitted = String(fitted); toolbox.dataset.generated = String(generated);
     for (const id of ['input-panel', 'output-panel', 'options']) $(id).classList.toggle('app-panel', selected.id === 'qrCode' || selected.id === 'barcode' && id !== 'input-panel' || (cryptoTools.has(selected.id) || selected.id === 'pinyin' || generated) && id === 'options');
@@ -786,7 +790,7 @@ export async function mountDeveloperTools() {
     $('input').setAttribute('language', supported.includes(inputLanguage) ? inputLanguage : 'plaintext');
     $('output').setAttribute('language', supported.includes(outputLanguage) ? outputLanguage : 'plaintext');
     $('editors').before(toolbar, $('options'));
-    if (['json', 'code', 'text', 'bcrypt', 'uuid', 'ulid', 'loremIpsum'].includes(selected.id)) $('editors').after($('options'), toolbar);
+    if (['json', 'code', 'text', 'bcrypt', 'uuid', 'ulid', 'loremIpsum', 'randomRecipe'].includes(selected.id)) $('editors').after($('options'), toolbar);
     if (selected.id === 'sign') { fields.get('key').wrapper.before(toolbar); renderOperations(); }
     if (liveTools.has(selected.id) && selected.id !== 'diffs') $('input-panel').querySelector('.section-title').append(toolbar);
     if (['aes', 'des', 'tripleDes', 'rc4', 'rabbit', 'sm2', 'sm4', 'gzip', 'pinyin'].includes(selected.id)) $('inputs').after($('options'));
@@ -801,7 +805,8 @@ export async function mountDeveloperTools() {
     if (selected.id === 'barcode') { $('editors').prepend($('output-panel')); $('editors').after($('options')); $('options').prepend($('inputs')); }
     if (selected.id === 'barcode') { fields.get('background').control.type = 'color'; fields.get('lineColor').control.type = 'color'; }
     if (selected.id === 'binary') inputOptions.append($('options'));
-    if (selected.id === 'dataValidation') inputOptions.append($('options'));
+    if (['dataValidation', 'stringInspect'].includes(selected.id)) inputOptions.append($('options'));
+    if (selected.id === 'svgToCss') outputOptions.append($('options'));
     if (['hash', 'hmac'].includes(selected.id)) {
       inputOptions.append($('options'));
       if (selected.id === 'hmac') document.querySelector('.hmac-key').append(fields.get('key').wrapper, fields.get('keyEncoding').wrapper);
@@ -1149,16 +1154,11 @@ export async function mountDeveloperTools() {
   function closeCommonMenu() {
     $('common-choices').querySelector('.common-menu:popover-open')?.hidePopover();
   }
-  function clearCommonDrop() {
-    for (const row of $('common-choices').querySelectorAll('[data-drop]')) delete row.dataset.drop;
-  }
   function endCommonDrag() {
-    draggedCommon = null; clearCommonDrop();
+    commonDragPreview.clear();
+    if (commonSortLayout) commonSortLayout.clear();
+    commonSortLayout = null; draggedCommon = null;
     for (const row of $('common-choices').querySelectorAll('.is-dragging')) row.classList.remove('is-dragging');
-  }
-  function commonDropTarget(event) {
-    const row = event.target.closest('.common-choice');
-    return draggedCommon && !savingCommon && !closed && row && $('common-choices').contains(row) && row.dataset.toolId !== draggedCommon && commonDraft.includes(row.dataset.toolId) ? row : null;
   }
   $('common-choices').addEventListener('pointerdown', event => {
     const row = event.target.closest('.common-choice');
@@ -1169,21 +1169,20 @@ export async function mountDeveloperTools() {
     if (!row?.draggable || savingCommon || closed) { event.preventDefault(); return; }
     closeCommonMenu(); draggedCommon = row.dataset.toolId;
     event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', draggedCommon);
+    commonDragPreview.start(event, row);
+    const rows = Array.from($('common-choices').querySelectorAll('.is-selected'));
+    commonSortLayout = globalThis.PageAgentSortLayout.create($('common-choices'), rows, rows.indexOf(row));
     row.classList.add('is-dragging');
   });
   $('common-choices').addEventListener('dragover', event => {
-    const row = commonDropTarget(event); clearCommonDrop();
-    if (!row) return;
+    if (!commonSortLayout || savingCommon || closed) return;
     event.preventDefault(); event.dataTransfer.dropEffect = 'move';
-    const rect = row.getBoundingClientRect(); row.dataset.drop = event.clientY > rect.top + rect.height / 2 ? 'after' : 'before';
+    commonSortLayout.preview(commonSortLayout.destinationAt(event.clientX, event.clientY));
   });
-  $('common-choices').addEventListener('dragleave', event => { if (!$('common-choices').contains(event.relatedTarget)) clearCommonDrop(); });
   $('common-choices').addEventListener('drop', event => {
-    const row = commonDropTarget(event);
-    if (!row) { endCommonDrag(); return; }
+    if (!commonSortLayout || savingCommon || closed) { endCommonDrag(); return; }
     event.preventDefault();
-    const id = draggedCommon, rect = row.getBoundingClientRect();
-    const index = commonDraft.filter(value => value !== id).indexOf(row.dataset.toolId) + (event.clientY > rect.top + rect.height / 2 ? 1 : 0);
+    const id = draggedCommon, index = commonSortLayout.destinationAt(event.clientX, event.clientY);
     endCommonDrag(); moveCommon(id, index);
   });
   $('common-choices').addEventListener('dragend', endCommonDrag);

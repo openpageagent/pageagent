@@ -4,7 +4,7 @@
 
 ## 固定工具
 
-协议定义以下七个工具，运行时按入口和权限确定可用集合：
+协议提供七个固定工具，实际可用范围由入口和权限决定：
 
 ```text
 GET  POST  PUT  PATCH  DELETE  OPTIONS  ASK_USER
@@ -63,9 +63,11 @@ PATCH 使用 `application/merge-patch+json`，字符串和数组按字段整体�
 每次写入或执行请求表达一个用户意图；存在副作用的调用顺序执行。
 `performed: "unknown"` 时保留原幂等键，读取状态确认结果，不通过更换键重放操作。
 
+本地操作通过 `GET /local` 取得完整调用 URI；文件、Bash 和图片定位需指定连接与目录，其他桌面操作只需连接。取消后的结果判断见 [MCP 服务](./Page-Agent-11-MCP服务.md#执行限制与结果)。
+
 ## 离线计算
 
-离线工具通过 `POST /utilities/{tool}/{operation}` 执行，操作由路径确定，请求体只含 `input` 和可选的 `options`。例如：
+`POST /utilities/{tool}/{operation}` 调用离线工具，路径指定操作，请求体只含 `input` 和可选的 `options`。计算 SHA256 示例：
 
 ```json
 {
@@ -74,7 +76,7 @@ PATCH 使用 `application/merge-patch+json`，字符串和数组按字段整体�
 }
 ```
 
-已知契约时可直接执行；工具或参数未知时，通过 `GET /utilities`、`GET /utilities/{tool}` 或具体操作的 `OPTIONS` 查询。目录中的 `uri`、`operationUris` 提供准确地址。
+工具或参数未知时，用 `GET /utilities`、`GET /utilities/{tool}` 或操作 URI 的 `OPTIONS` 查询契约。目录中的 `uri`、`operationUris` 提供调用地址。
 
 执行结果为 `{tool, operation, value}`，完整 ARP 响应中位于 `primary.data`。
 读取目录需要 `utilities.read`，执行需要 `utilities.execute`；系统默认包含这两项，实际调用受入口权限范围限制。

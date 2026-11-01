@@ -1,0 +1,54 @@
+:is(.conversation-trajectory-detail-tabs, .conversation-drawer-tabs, .app-editor-tabs, .sidepanel-tabs, .app-filters) {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  overflow-x: auto;
+  border-bottom: 0;
+}
+
+:is(.conversation-trajectory-detail-tabs, .conversation-drawer-tabs, .app-editor-tabs, .sidepanel-tabs, .app-filters) > button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--control-border);
+  border-radius: 0;
+  background: var(--control-bg);
+  color: var(--text-secondary);
+  font: 400 12px/1 'Roboto', Arial, sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+:is(.conversation-trajectory-detail-tabs, .conversation-drawer-tabs, .app-editor-tabs, .sidepanel-tabs, .app-filters) > button + button {
+  margin-left: -1px;
+}
+
+:is(.conversation-trajectory-detail-tabs, .conversation-drawer-tabs, .app-editor-tabs, .sidepanel-tabs, .app-filters) > button:first-child {
+  border-radius: var(--control-radius) 0 0 var(--control-radius);
+}
+
+:is(.conversation-trajectory-detail-tabs, .conversation-drawer-tabs, .app-editor-tabs, .sidepanel-tabs, .app-filters) > button:last-child {
+  border-radius: 0 var(--control-radius) var(--control-radius) 0;
+}
+
+:is(.conversation-trajectory-detail-tabs, .conversation-drawer-tabs, .app-editor-tabs, .sidepanel-tabs, .app-filters) > button:only-child {
+  border-radius: var(--control-radius);
+}
+
+:is(.conversation-trajectory-detail-tabs, .conversation-drawer-tabs, .app-editor-tabs, .sidepanel-tabs, .app-filters) > button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--control-bg-hover);
+  color: var(--accent);
+}
+
+:is(.conversation-trajectory-detail-tabs, .conversation-drawer-tabs, .app-editor-tabs, .sidepanel-tabs, .app-filters) > button:is(.active, .selected, [aria-pressed="true"], [aria-selected="true"]) {
+  position: relative;
+  z-index: 1;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}

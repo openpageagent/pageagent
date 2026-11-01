@@ -42,6 +42,10 @@
   var assistantMenuOpen = false;
   var topicMenuOpen = false;
   var assistantEditorDraft = null;
+  var assistantEditorBaseline = '';
+  var assistantEditorSequence = 0;
+  var topicPermissionsBaseline = '';
+  var editorSaving = false;
   var assistantEditorTab = 'base';
   var topicConfigTab = 'run';
   var confirmDialogEl = null;
@@ -532,25 +536,10 @@
     }
     if (scrollVelocity) drag.list.scrollTop += Math.max(-14, Math.min(14, scrollVelocity));
 
-    var scrollDelta = drag.list.scrollTop - drag.startScrollTop;
     var deltaY = drag.lastClientY - drag.startClientY;
     drag.overlay.style.transform = 'translate3d(0,' + deltaY + 'px,0) scale(1.02)';
-    var draggedCenter = drag.sourceRect.top + deltaY + drag.sourceRect.height / 2;
-    var targetIndex = 0;
-    drag.rects.forEach(function (rect, index) {
-      if (index === drag.sourceIndex) return;
-      if (draggedCenter > rect.top - scrollDelta + rect.height / 2) targetIndex += 1;
-    });
-    drag.targetIndex = Math.max(0, Math.min(drag.rows.length - 1, targetIndex));
-    drag.rows.forEach(function (row, index) {
-      var shift = 0;
-      if (drag.targetIndex < drag.sourceIndex && index >= drag.targetIndex && index < drag.sourceIndex) {
-        shift = drag.displacement;
-      } else if (drag.targetIndex > drag.sourceIndex && index > drag.sourceIndex && index <= drag.targetIndex) {
-        shift = -drag.displacement;
-      }
-      row.style.transform = shift ? 'translate3d(0,' + shift + 'px,0)' : '';
-    });
+    drag.targetIndex = drag.layout.destinationAt(drag.lastClientX, drag.lastClientY);
+    drag.layout.preview(drag.targetIndex);
     if (scrollVelocity) scheduleAssistantDragUpdate();
   }
 
@@ -558,24 +547,20 @@
     var drag = assistantDrag;
     if (!drag || drag.active) return;
     drag.active = true;
-    drag.startScrollTop = drag.list.scrollTop;
-    drag.rects = drag.rows.map(function (row) { return row.getBoundingClientRect(); });
-    drag.sourceRect = drag.rects[drag.sourceIndex];
-    var listStyle = window.getComputedStyle(drag.list);
-    var gap = parseFloat(listStyle.rowGap || listStyle.gap) || 0;
-    drag.displacement = drag.sourceRect.height + gap;
+    drag.sourceRect = drag.row.getBoundingClientRect();
+    drag.layout = window.PageAgentSortLayout.create(drag.list, drag.rows, drag.sourceIndex);
     drag.targetIndex = drag.sourceIndex;
-    drag.list.classList.add('is-sorting');
     drag.row.classList.add('is-drag-source');
     assistantMenuOpen = false;
     topicMenuOpen = false;
     drag.row.querySelectorAll('.conversation-assistant-menu').forEach(function (menu) { menu.remove(); });
 
     var overlay = drag.row.cloneNode(true);
-    overlay.classList.remove('is-drag-source');
-    overlay.classList.add('conversation-assistant-drag-overlay');
+    overlay.classList.remove('is-drag-source', 'sort-item');
+    overlay.classList.add('conversation-assistant-drag-overlay', 'sort-drag-preview');
     overlay.removeAttribute('data-assistant-id');
     overlay.setAttribute('aria-hidden', 'true');
+    overlay.inert = true;
     overlay.style.left = drag.sourceRect.left + 'px';
     overlay.style.top = drag.sourceRect.top + 'px';
     overlay.style.width = drag.sourceRect.width + 'px';
@@ -594,11 +579,10 @@
   function cleanupAssistantDrag(drag) {
     if (!drag) return;
     cancelAssistantDragFrame(drag.frameId);
+    if (drag.layout) drag.layout.clear();
     drag.rows.forEach(function (row) {
-      row.style.transform = '';
       row.classList.remove('is-drag-source');
     });
-    drag.list.classList.remove('is-sorting');
     if (drag.overlay && drag.overlay.parentNode) drag.overlay.parentNode.removeChild(drag.overlay);
     document.body.classList.remove('conversation-assistant-dragging');
     if (assistantDrag === drag) assistantDrag = null;
@@ -628,8 +612,8 @@
       var movedId = nextOrder.splice(drag.sourceIndex, 1)[0];
       nextOrder.splice(targetIndex, 0, movedId);
     }
-    var scrollDelta = drag.list.scrollTop - drag.startScrollTop;
-    var destinationTop = drag.rects[targetIndex].top - scrollDelta;
+    drag.layout.preview(targetIndex);
+    var destinationTop = drag.layout.sourceTop();
     drag.overlay.classList.add('is-dropping');
     drag.overlay.style.transform = 'translate3d(0,' + (destinationTop - drag.sourceRect.top) + 'px,0) scale(1.02)';
     setTimeout(function () {
@@ -1563,6 +1547,21 @@
       + '</div>';
   }
 
+  function refreshModelServiceControls() {
+    var select = $('#conversation-service');
+    if (select) {
+      var container = document.createElement('div');
+      container.innerHTML = renderGeneratorServiceSelect(select.disabled, displayedTopic());
+      var optionsHtml = container.querySelector('select').innerHTML;
+      if (select.innerHTML !== optionsHtml) select.innerHTML = optionsHtml;
+    }
+    var editorSelect = $('#conversation-editor-model-service');
+    if (editorSelect) {
+      var editorOptions = modelServiceOptions(editorSelect.value);
+      if (editorSelect.innerHTML !== editorOptions) editorSelect.innerHTML = editorOptions;
+    }
+  }
+
   function topicTrajectoryItems(topic) {
     if (!topic) return [];
     var items = trajectoryItemsByTopic[String(topic.topicId || '')];
@@ -2232,19 +2231,25 @@
       if (type === 'context_injected') {
         var injectedSystem = trajectoryContentText(payload.system);
         if (injectedSystem || Array.isArray(payload.tools)) addSystemCell(base, event, payload, injectedSystem);
-        var contextText = trajectoryContentText(payload.contextAppendMessages
-          || payload.runtimeContext || payload.content);
-        if (contextText) add(Object.assign({}, base, {
-          status: 'completed',
-          recordId: 'trajectory:context:' + String(event.eventId || event.sequence),
-          kind: 'context', text: trajectoryPreview(contextText), detail: contextText,
-          inputDetail: contextText,
-          messageSource: payload.source,
-          sourceRole: trajectoryContextProvenance(payload.source).role,
-          sourceLabel: trajectoryContextProvenance(payload.source).label,
-          sourceBlocks: trajectorySourceBlocks(payload.contextAppendMessages
-            || payload.runtimeContext || payload.content, 'text'),
-        }));
+        var contextParts = [
+          { key: 'guidance', content: payload.contextAppendMessages },
+          { key: 'runtime', content: payload.runtimeContext },
+        ].filter(function (part) { return trajectoryContentText(part.content); });
+        if (!contextParts.length) contextParts.push({ key: 'content', content: payload.content });
+        contextParts.forEach(function (part) {
+          var contextText = trajectoryContentText(part.content);
+          if (!contextText) return;
+          add(Object.assign({}, base, {
+            status: 'completed',
+            recordId: 'trajectory:context:' + String(event.eventId || event.sequence) + ':' + part.key,
+            kind: 'context', text: trajectoryPreview(contextText), detail: contextText,
+            inputDetail: contextText,
+            messageSource: payload.source,
+            sourceRole: trajectoryContextProvenance(payload.source).role,
+            sourceLabel: trajectoryContextProvenance(payload.source).label,
+            sourceBlocks: trajectorySourceBlocks(part.content, 'text'),
+          }));
+        });
         return;
       }
       if (/^summary_/.test(type) || type === 'checkpoint_committed') {
@@ -2656,6 +2661,7 @@
   function renderTrajectoryRequestDetail(request, allCells) {
     var tabs = [
       { id: 'overview', label: '概述' }, { id: 'options', label: '选项' },
+      { id: 'request', label: '请求内容' },
       { id: 'usage', label: '用量' }, { id: 'timing', label: '计时' },
     ];
     if (!tabs.some(function (tab) { return tab.id === trajectoryInspectorTab; })) trajectoryInspectorTab = 'overview';
@@ -2703,6 +2709,12 @@
         + '</section>';
     } else if (activeTab === 'options') {
       body = '<section class="conversation-trajectory-detail-section">' + PageAgentCodeEditor.html(trajectoryJson(options), 'json') + '</section>';
+    } else if (activeTab === 'request') {
+      var requestContent = { system: config.system, messages: config.messages, tools: config.tools };
+      var hasRequestContent = config.system !== undefined || Array.isArray(config.messages) || Array.isArray(config.tools);
+      body = '<section class="conversation-trajectory-detail-section">'
+        + (hasRequestContent ? PageAgentCodeEditor.html(trajectoryJson(requestContent), 'json')
+          : '<span class="conversation-trace-empty">未记录请求内容</span>') + '</section>';
     } else if (activeTab === 'usage') {
       body = '<section class="conversation-trajectory-detail-section"><h4>本次请求</h4>' + usageRows(usage)
         + '<h4>会话累计</h4>' + usageRows(cumulative) + '</section>';
@@ -3158,6 +3170,9 @@
 
   function topicSnapshotDiffersFromAssistant(topic, assistant) {
     if (!topic || !assistant || !topic.assistantSnapshot) return false;
+    var sourceUpdatedAt = Number(topic.assistantSnapshot.sourceUpdatedAt) || 0;
+    // A topic-only permission edit does not mean its source assistant changed.
+    if (sourceUpdatedAt && sourceUpdatedAt === Number(assistant.updatedAt)) return false;
     return assistantSignature(topic.assistantSnapshot) !== assistantSignature(assistant);
   }
 
@@ -3186,7 +3201,7 @@
     }
     return openConversationConfirm({
       title: '使用最新助手配置？',
-      message: '这个历史话题使用的是创建时的助手配置。当前助手的模型、提示词或预算已经修改，是否用最新配置继续发送？',
+      message: '助手配置已更新。使用最新配置会替换此话题的提示词、设置和权限，是否继续？',
       okText: '使用最新配置',
       cancelText: '继续使用快照',
       danger: false,
@@ -3538,10 +3553,10 @@
       var assistantIndex = (state.assistantOrder || []).indexOf(id);
       return '<div class="conversation-assistant-row' + active + '" data-assistant-id="' + esc(id) + '" draggable="false">'
         + '<button class="conversation-assistant-item" data-conversation-action="select-assistant" data-assistant-id="' + esc(id) + '">'
-        + '<span class="conversation-assistant-drag-handle" aria-hidden="true">⋮⋮</span>'
+        + '<span class="conversation-assistant-drag-handle" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M8 5h.01M16 5h.01M8 12h.01M16 12h.01M8 19h.01M16 19h.01"></path></svg></span>'
         + '<span class="conversation-assistant-name">' + esc(item.name) + '</span>'
         + '</button>'
-        + '<button class="conversation-sidebar-icon-btn conversation-assistant-more" data-conversation-action="toggle-assistant-menu" data-assistant-id="' + esc(id) + '" title="助手操作">&#8942;</button>'
+        + '<button class="conversation-sidebar-icon-btn conversation-assistant-more" data-conversation-action="toggle-assistant-menu" data-assistant-id="' + esc(id) + '" title="助手操作" aria-label="助手操作"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm0 7a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm0 7a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z"></path></svg></button>'
         + (assistantMenuOpen === id ? '<div class="conversation-assistant-menu">'
           + (assistantIndex > 0 ? '<button data-conversation-action="pin-assistant" data-assistant-id="' + esc(id) + '">置顶</button>' : '')
           + '<button data-conversation-action="edit-assistant" data-assistant-id="' + esc(id) + '">编辑助手</button>'
@@ -3567,7 +3582,7 @@
         + '<span class="conversation-topic-title">' + esc(item.name || item.objective || '未命名话题') + '</span>'
         + (item.archived ? '<span class="conversation-topic-archive-label">归档</span>' : '')
         + '</button>'
-        + '<button class="conversation-sidebar-icon-btn conversation-assistant-more conversation-topic-more" data-conversation-action="toggle-topic-menu" data-topic-id="' + esc(id) + '" title="话题操作">&#8942;</button>'
+        + '<button class="conversation-sidebar-icon-btn conversation-assistant-more conversation-topic-more" data-conversation-action="toggle-topic-menu" data-topic-id="' + esc(id) + '" title="话题操作" aria-label="话题操作"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm0 7a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm0 7a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z"></path></svg></button>'
         + (topicMenuOpen === id ? '<div class="conversation-assistant-menu conversation-topic-menu">' + topicActions + '</div>' : '')
         + '</div>';
     }).join('');
@@ -3677,7 +3692,7 @@
       + (topic ? '<button class="conversation-chat-log-btn" data-conversation-action="export-topic-archive" data-topic-id="' + esc(topic.topicId) + '" title="导出对话 JSON、Markdown 和图片 ZIP">导出</button>' : '')
       + '<button class="conversation-chat-log-btn" data-conversation-action="import-topic-archive" title="从完整对话 ZIP 恢复对话与图片">导入</button>'
       + (archived ? '<span class="badge conversation-archived-badge">已归档</span>' : (topic ? '<span class="badge status-' + conversationStatusBadgeTone(topic.status) + '">' + esc(statusLabel(topic.status)) + '</span>' : ''))
-      + (archived ? '' : '<button class="conversation-chat-config-btn" data-conversation-action="open-topic-config" title="' + (controlledElsewhere ? '运行期间仅可查看对话' : '配置产物和运行') + '"' + (controlledElsewhere ? ' disabled' : '') + '>☷</button>')
+      + (archived ? '' : '<button class="conversation-chat-config-btn" data-conversation-action="open-topic-config" aria-label="配置产物和运行" title="' + (controlledElsewhere ? '运行期间仅可查看对话' : '配置产物和运行') + '"' + (controlledElsewhere ? ' disabled' : '') + '><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h9m4 0h3M4 17h3m4 0h9M13 4v6M7 14v6"></path></svg></button>')
       + '</div>'
       + '</div>'
       + (subtitle ? '<div class="conversation-chat-subtitle">' + esc(subtitle) + '</div>' : '')
@@ -3739,6 +3754,7 @@
         { id: 'permissions', label: '模式和权限' },
       ])
       + '<section class="conversation-tab-panel' + (activeTab === 'run' ? ' active' : '') + '" data-conversation-tab-panel-group="topic-config" data-conversation-tab-panel="run">'
+      + '<details class="reference-panel drawer-guide"><summary>配置产物与运行说明</summary><div class="drawer-guide-content"><p><b>产物运行：</b>查看本话题生成的页面、流程和流程组；入参用 JSON，可先校验再运行。</p><p><b>预算与权限：</b>预算展示轮次、工具调用和上下文用量；模式与权限调整后需底部保存。</p></div></details>'
       + renderTopicGoalConfig(topic)
       + '<div class="conversation-config-card">'
       + '<h3>配置产物</h3>'
@@ -4111,6 +4127,7 @@
       + renderStream(topic, streamAssistant, eventsHtml, controlledElsewhere)
       + '</div>';
     lastRenderKey = renderKey;
+    patchConversationShell(topic, assistant, controlledElsewhere);
     lastSidebarRenderKey = sidebarRenderKey(assistant, topic);
     hydrateConversationImages(rootEl);
     patchEventStream(topic, previousScrollState);
@@ -4389,6 +4406,7 @@
     }).then(async function () {
       if (resolvedOpenTarget) sidebarTab = 'topics';
       renderLoaded();
+      refreshModelServiceControls();
       if (resolvedOpenTarget) {
         var assistantId = resolvedOpenTarget.assistantId;
         var persistAssistant = assistantId
@@ -4681,6 +4699,7 @@
     if (!titleEl || !contentEl || !actionsEl || !overlayEl || !drawerEl) return false;
     titleEl.textContent = title;
     contentEl.innerHTML = body;
+    contentEl.scrollTop = 0;
     actionsEl.innerHTML = actions;
     overlayEl.classList.add('active');
     drawerEl.classList.add('active');
@@ -4732,32 +4751,44 @@
     var policy = normalizeResourcePolicy(assistant.resourcePolicy);
     var catalog = resourcePolicyCatalog();
     var mode = assistantModeValue(assistant);
+    var permissionLabels = {
+      'page.javascript': '执行页面 JavaScript',
+      'browser.windows.write': '创建、修改和关闭浏览器窗口',
+      'browser.downloads.read': '读取浏览器下载记录',
+      'browser.downloads.write': '发起浏览器下载',
+      'browser.debugger': '使用浏览器调试器',
+    };
     function renderPermissionRoot(root) {
-      var supportedMethods = Array.isArray(root.supportedMethods) ? root.supportedMethods : null;
+      var supportedMethods = root.supportedMethods;
       var methods = (catalog.methods || []).filter(function (method) {
-        return !supportedMethods || supportedMethods.indexOf(method.name) !== -1;
+        return supportedMethods.indexOf(method.name) !== -1;
       });
       var coreMethods = catalog.coreRootMethods && catalog.coreRootMethods[root.uri] || [];
       return '<details class="conversation-permission-group">'
         + '<summary>'
-        + '<div><b>' + esc(root.uri) + ' · ' + esc(root.label || '') + '</b><span>' + esc(root.description || '') + '</span></div>'
+        + '<b>' + esc(root.uri) + ' · ' + esc(root.label || '') + '</b>'
         + '<em>' + esc(methods.length) + ' 个方法</em>'
         + '</summary>'
         + '<div class="conversation-permission-actions">'
         + '<button type="button" class="btn-small" data-conversation-action="set-resource-root-methods" data-permission-prefix="' + esc(prefix) + '" data-resource-root="' + esc(root.uri) + '" data-permission-enabled="true">全部允许</button>'
-        + '<button type="button" class="btn-small" data-conversation-action="set-resource-root-methods" data-permission-prefix="' + esc(prefix) + '" data-resource-root="' + esc(root.uri) + '" data-permission-enabled="false">仅内省</button>'
+        + '<button type="button" class="btn-small" data-conversation-action="set-resource-root-methods" data-permission-prefix="' + esc(prefix) + '" data-resource-root="' + esc(root.uri) + '" data-permission-enabled="false">保留必需权限</button>'
         + '</div>'
         + '<div class="conversation-permission-list">'
         + methods.map(function (method) {
           var alwaysAvailable = method.name === 'OPTIONS'
             || (root.uri === '/recordings' && method.name === 'GET');
           var coreRequired = coreMethods.indexOf(method.name) !== -1;
-          var methodDescription = root.methodDescriptions && root.methodDescriptions[method.name]
-            || method.description || '';
           return '<label class="conversation-permission-item switch-label">'
             + '<input type="checkbox" data-resource-permission-prefix="' + esc(prefix) + '" data-resource-root="' + esc(root.uri) + '" data-resource-method="' + esc(method.name) + '"'
             + (resourceMethodEnabled(policy, root.uri, method.name) ? ' checked' : '') + (alwaysAvailable || coreRequired ? ' disabled' : '') + '>'
-            + '<span class="switch-slider"></span><span class="switch-text"><b>' + esc(method.name) + ' · ' + esc(method.label || '') + '</b><small>' + esc(methodDescription) + '</small></span>'
+            + '<span class="switch-slider"></span><span class="switch-text"><b>' + esc(method.name) + ' · ' + esc(method.label || '') + '</b></span>'
+            + '</label>';
+        }).join('')
+        + root.additionalPermissions.map(function (permission) {
+          return '<label class="conversation-permission-item switch-label">'
+            + '<input type="checkbox" data-resource-permission-prefix="' + esc(prefix) + '" data-resource-root="' + esc(root.uri) + '" data-resource-permission="' + esc(permission) + '"'
+            + (policy.permissions.indexOf(permission) !== -1 ? ' checked' : '') + '>'
+            + '<span class="switch-slider"></span><span class="switch-text"><b>' + esc(permissionLabels[permission] || permission) + '</b></span>'
             + '</label>';
         }).join('')
         + '</div>'
@@ -4770,9 +4801,9 @@
       });
       if (!roots.length) return '';
       roots.forEach(function (root) { renderedRoots[root.uri] = true; });
-      return '<section class="conversation-permission-section" data-permission-section="' + esc(section.id) + '">'
+      return '<section class="drawer-section conversation-permission-section" data-permission-section="' + esc(section.id) + '">'
         + '<div class="conversation-permission-section-heading">'
-        + '<div><b>' + esc(section.label || '') + '</b><span>' + esc(section.description || '') + '</span></div>'
+        + '<h4>' + esc(section.label || '') + '</h4>'
         + '<em>' + esc(roots.length) + ' 个资源</em>'
         + '</div>'
         + '<div class="conversation-permission-section-roots">' + roots.map(renderPermissionRoot).join('') + '</div>'
@@ -4780,18 +4811,33 @@
     }).join('');
     var ungroupedRoots = (catalog.roots || []).filter(function (root) { return !renderedRoots[root.uri]; });
     if (ungroupedRoots.length) {
-      sectionHtml += '<section class="conversation-permission-section">'
-        + '<div class="conversation-permission-section-heading"><div><b>其他</b><span>尚未归入 Options 菜单的资源。</span></div>'
+      sectionHtml += '<section class="drawer-section conversation-permission-section">'
+        + '<div class="conversation-permission-section-heading"><h4>其他</h4>'
         + '<em>' + esc(ungroupedRoots.length) + ' 个资源</em></div>'
         + '<div class="conversation-permission-section-roots">' + ungroupedRoots.map(renderPermissionRoot).join('') + '</div>'
         + '</section>';
     }
     return '<div class="conversation-mode-permissions">'
-      + '<div class="form-row"><label>模式</label><select id="' + esc(prefix) + '-mode">'
+      + '<details class="reference-panel drawer-guide"><summary>模式和权限说明</summary><div class="drawer-guide-content">'
+      + '<p><b>授权范围：</b>必需方法不可关闭，额外能力由独立开关控制。OPTIONS 只返回已授权能力；资源没有可用权限时会被拒绝。</p>'
+      + '<p><b>批量调整：</b>「全部允许」开启当前资源所有方法和额外能力，「保留必需权限」关闭可选授权；底部保存后生效。</p>'
+      + '<dl>' + (catalog.methods || []).map(function (method) {
+        return '<dt>' + esc(method.name + ' · ' + method.label) + '</dt><dd>' + esc(method.description || '') + '</dd>';
+      }).join('') + '</dl>'
+      + '<dl>' + (catalog.roots || []).map(function (root) {
+        var descriptions = root.methodDescriptions || {};
+        var overrides = (catalog.methods || []).filter(function (method) { return descriptions[method.name]; });
+        return '<dt>' + esc(root.uri + ' · ' + root.label) + '</dt><dd>' + esc(root.description || '')
+          + (overrides.length ? '<ul>' + overrides.map(function (method) {
+            return '<li><b>' + esc(method.name) + '：</b>' + esc(descriptions[method.name]) + '</li>';
+          }).join('') + '</ul>' : '') + '</dd>';
+      }).join('') + '</dl>'
+      + '</div></details><section class="drawer-section">'
+      + '<div class="form-row"><label for="' + esc(prefix) + '-mode">运行模式</label><select id="' + esc(prefix) + '-mode">'
       + '<option value="normal"' + (mode === 'normal' ? ' selected' : '') + '>普通模式</option>'
       + '<option value="fullAuto"' + (mode === 'fullAuto' ? ' selected' : '') + '>全自动模式</option>'
-      + '</select><div class="form-help">所有资源操作都在助手已授权的方法范围内直接执行；OPTIONS 内省始终可用。</div></div>'
-      + '<div class="conversation-permission-groups">' + sectionHtml + '</div>'
+      + '</select></div></section>'
+      + '<div class="conversation-permission-groups" role="group" aria-label="资源权限">' + sectionHtml + '</div>'
       + '</div>';
   }
 
@@ -4809,24 +4855,23 @@
       if (input.checked) roots[rootUri].methods.push(methodName);
     });
     var managedPermissions = Object.create(null);
-    var grantedPermissions = Object.create(null);
     (catalog.roots || []).forEach(function (root) {
-      var methodPermissions = root && root.methodPermissions || {};
+      var methodPermissions = root.methodPermissions;
       Object.keys(methodPermissions).forEach(function (methodName) {
         (methodPermissions[methodName] || []).forEach(function (permission) {
           managedPermissions[permission] = true;
-          if (roots[root.uri] && roots[root.uri].methods.indexOf(methodName) !== -1) {
-            grantedPermissions[permission] = true;
-          }
         });
       });
     });
     var permissions = (fallback.permissions || []).filter(function (permission) {
       return !managedPermissions[permission];
     });
-    Object.keys(grantedPermissions).forEach(function (permission) {
-      if (permissions.indexOf(permission) === -1) permissions.push(permission);
+    inputs.forEach(function (input) {
+      var permission = input.dataset.resourcePermission;
+      if (permission && input.checked && managedPermissions[permission]
+          && permissions.indexOf(permission) === -1) permissions.push(permission);
     });
+    // Method grants are derived once by the shared profile normalizer.
     var policy = { roots: roots, permissions: permissions };
     return normalizeResourcePolicy(policy, fallback);
   }
@@ -4860,13 +4905,49 @@
     traceViewerSelectedSignature = '';
   }
 
-  function closeConversationDrawer() {
+  function topicPermissionsSignature() {
+    if (!$('#conversation-topic-permissions-mode')) return '';
+    return JSON.stringify({
+      mode: $('#conversation-topic-permissions-mode').value,
+      policy: collectResourcePolicyFromControls('conversation-topic-permissions'),
+    });
+  }
+
+  function getEditState() {
+    var open = $('#drawer') && $('#drawer').classList.contains('active');
+    if (!open) return { dirty: false, busy: false };
+    var assistantDirty = assistantEditorDraft && $('#conversation-editor-name') && assistantEditorBaseline
+      && JSON.stringify(collectAssistantEditorDraft()) !== assistantEditorBaseline;
+    var topicDirty = topicPermissionsBaseline && $('#conversation-topic-permissions-mode')
+      && topicPermissionsSignature() !== topicPermissionsBaseline;
+    return { dirty: !!(assistantDirty || topicDirty), busy: editorSaving };
+  }
+
+  async function confirmEditorLeave() {
+    var editing = getEditState();
+    if (editing.busy) { toast('正在保存，请稍后再操作'); return false; }
+    return !editing.dirty || await openConversationConfirm({
+      title: '未保存的修改', message: '有未保存的修改，是否放弃？', okText: '放弃修改', cancelText: '继续编辑',
+    });
+  }
+
+  function discardEditor() {
+    assistantEditorSequence++;
+    assistantEditorDraft = null;
+    assistantEditorBaseline = '';
+    topicPermissionsBaseline = '';
+  }
+
+  async function closeConversationDrawer() {
+    if (!await confirmEditorLeave()) return false;
+    discardEditor();
     var overlayEl = $('#drawer-overlay');
     var drawerEl = $('#drawer');
     if (overlayEl) overlayEl.classList.remove('active');
     if (drawerEl) {
       drawerEl.classList.remove('active');
     }
+    return true;
   }
 
   function closeTopicTrajectory() {
@@ -5164,37 +5245,49 @@
         { id: 'permissions', label: '模式和权限' },
       ])
       + '<section class="conversation-tab-panel' + (activeTab === 'base' ? ' active' : '') + '" data-conversation-tab-panel-group="assistant-editor" data-conversation-tab-panel="base">'
+      + '<details class="reference-panel drawer-guide"><summary>助手配置说明</summary><div class="drawer-guide-content">'
+      + '<p><b>运行限制：</b>轮次、工具调用上限作用于单次运行；上下文设为 0 时跟随模型。</p>'
+      + '<p><b>模型与输出：</b>思考级别需模型支持；会话压缩减少历史上下文，流式输出逐步显示回复。</p>'
+      + '<p><b>提示词：</b>填写身份、方法和交付偏好；操作权限由「模式和权限」决定。</p>'
+      + '</div></details><section class="drawer-section"><h4>基础信息</h4>'
       + (assistantEditorDraft.mode === 'create'
         ? '<div class="form-row"><label>基于助手</label><select id="conversation-editor-base-assistant">' + templateOptions + '</select></div>'
         : '')
       + '<div class="form-row"><label>助手名称</label><input type="text" id="conversation-editor-name" value="' + esc(assistantEditorDraft.name || '') + '"></div>'
       + '<div class="form-row"><label>描述</label><input type="text" id="conversation-editor-description" value="' + esc(assistantEditorDraft.description || '') + '"></div>'
-      + '<div class="form-row"><label>模型服务</label><select id="conversation-editor-model-service">' + modelServiceOptions(assistantEditorDraft.modelServiceId) + '</select><div class="form-help">列表来自脱敏的 Model Service 资源；凭据不会发送到此页面。</div></div>'
-      + '<div class="form-grid">'
+      + '</section><section class="drawer-section"><h4>模型与运行</h4>'
+      + '<div class="form-row"><label for="conversation-editor-model-service">模型服务</label><select id="conversation-editor-model-service">' + modelServiceOptions(assistantEditorDraft.modelServiceId) + '</select></div>'
+      + '<div class="form-grid form-grid-three">'
       + '<div class="form-row"><label>最大轮次</label><input type="number" id="conversation-editor-max-iterations" value="' + esc(assistantEditorDraft.settings && assistantEditorDraft.settings.maxIterations || DEFAULT_MAX_ITERATIONS) + '"></div>'
       + '<div class="form-row"><label>最大工具调用</label><input type="number" id="conversation-editor-max-tool-calls" value="' + esc(assistantEditorDraft.settings && assistantEditorDraft.settings.maxToolCalls || DEFAULT_MAX_TOOL_CALLS) + '"></div>'
-      + '<div class="form-row"><label>最大上下文 Token</label><input type="number" id="conversation-editor-max-context-tokens" min="0" step="1024" value="' + esc(assistantEditorDraft.settings && assistantEditorDraft.settings.maxContextTokens || 0) + '"><div class="form-help">0 表示跟随当前模型服务。</div></div>'
+      + '<div class="form-row"><label for="conversation-editor-max-context-tokens">上下文上限（Token）</label><input type="number" id="conversation-editor-max-context-tokens" min="0" step="1024" placeholder="0：跟随模型" value="' + esc(assistantEditorDraft.settings && assistantEditorDraft.settings.maxContextTokens || 0) + '"></div>'
       + '</div>'
-      + '<div class="form-grid">'
+      + '<div class="form-grid form-grid-three">'
       + '<div class="form-row"><label>思考级别</label><select id="conversation-editor-reasoning-effort">' + reasoningEffortOptions(assistantEditorDraft.settings && assistantEditorDraft.settings.reasoningEffort) + '</select></div>'
       + '<div class="form-row"><label>会话压缩</label><select id="conversation-editor-context-compression">'
       + '<option value="auto"' + (!assistantEditorDraft.settings || assistantEditorDraft.settings.contextCompression !== 'off' ? ' selected' : '') + '>自动压缩</option>'
       + '<option value="off"' + (assistantEditorDraft.settings && assistantEditorDraft.settings.contextCompression === 'off' ? ' selected' : '') + '>关闭历史预压缩</option>'
       + '</select></div>'
+      + '<div class="form-row form-row-offset"><label class="switch-label"><input type="checkbox" id="conversation-editor-stream-output"' + (assistantEditorDraft.settings && assistantEditorDraft.settings.streamOutput !== false ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">流式输出</span></label></div>'
       + '</div>'
-      + '<div class="form-row"><label class="switch-label"><input type="checkbox" id="conversation-editor-stream-output"' + (assistantEditorDraft.settings && assistantEditorDraft.settings.streamOutput !== false ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">流式输出</span></label></div>'
-      + '<div class="form-row"><label>提示词</label><page-code-editor id="conversation-editor-prompt" language="markdown" rows="12">' + esc(assistantEditorDraft.prompt || '') + '</page-code-editor><div class="form-help">这个助手的身份、领域方法与交付偏好。作为用户选择的助手指令注入，权限与完成规则仍由 Runtime 决定。</div></div>'
+      + '</section><section class="drawer-section"><h4>提示词</h4>'
+      + '<page-code-editor id="conversation-editor-prompt" aria-label="助手提示词" language="markdown" rows="12">' + esc(assistantEditorDraft.prompt || '') + '</page-code-editor></section>'
       + '</section>'
       + '<section class="conversation-tab-panel' + (activeTab === 'resources' ? ' active' : '') + '" data-conversation-tab-panel-group="assistant-editor" data-conversation-tab-panel="resources">'
+      + '<details class="reference-panel drawer-guide"><summary>MCP 和 Skill 说明</summary><div class="drawer-guide-content">'
+      + '<p><b>Skill 选择：</b>每页最多 50 项；勾选目录包含折叠、跨页子项，筛选时仅选匹配项；翻页保留选择。</p>'
+      + '<p><b>上下文占用：</b>所选 Skill 正文加入普通对话，按需选择。</p>'
+      + '<p><b>HTTP MCP：</b>可多选，每轮读取最新工具定义；仅可调用已选服务器。</p>'
+      + '</div></details>'
       + '<div class="conversation-selected-resources">'
-      + '<div class="form-row conversation-resource-section">'
+      + '<div class="drawer-section form-row conversation-resource-section">'
       + '<div class="conversation-resource-heading"><label>Skill</label></div>'
       + '<div id="conversation-resource-skill">' + renderAssistantResourcePicker('skill')
-      + '</div><div class="form-help">按原目录展示，每页最多 50 个目录或 Skill 节点。勾选目录包含折叠及其他页的子项；筛选时仅勾选匹配项，选择跨页保留。所选 Skill 正文将注入普通对话，数量越多，占用的上下文越大。</div></div>'
-      + '<div class="form-row conversation-resource-section">'
+      + '</div></div>'
+      + '<div class="drawer-section form-row conversation-resource-section">'
       + '<div class="conversation-resource-heading"><label>HTTP MCP</label></div>'
       + '<div id="conversation-resource-mcp">' + renderAssistantResourcePicker('mcp')
-      + '</div><div class="form-help">支持多选和直接取消。每次新 generation 读取所选服务器的当前工具 schema，并只允许调用所选服务器。</div></div>'
+      + '</div></div>'
       + (!assistantResourceOptionsLoaded ? '<div class="form-help">正在读取可选资源…</div>' : '')
       + '</div>'
       + '</section>'
@@ -5213,6 +5306,7 @@
     openConversationDrawer('配置产物与运行', renderConfigPanelContent(displayedTopic()),
       '<button class="btn-secondary" data-conversation-action="close-conversation-drawer">关闭</button>'
       + '<button class="btn-primary" data-conversation-action="save-topic-permissions">保存模式和权限</button>');
+    topicPermissionsBaseline = topicPermissionsSignature();
   }
 
   function assistantDraftFromProfile(profile, mode) {
@@ -5235,7 +5329,9 @@
     };
   }
 
-  function beginCreateAssistantEditor() {
+  async function beginCreateAssistantEditor() {
+    if (!await confirmEditorLeave()) return;
+    discardEditor();
     var templates = getAssistantTemplates();
     var templateId = templates.order[0] || '';
     var base = templates.items[templateId] || {};
@@ -5246,6 +5342,7 @@
     sidebarTab = 'assistant';
     renderLoaded();
     renderAssistantEditorDrawer();
+    assistantEditorBaseline = JSON.stringify(collectAssistantEditorDraft());
     return loadAssistantResourceOptions().then(function () {
       refreshAssistantEditorAfterResourceLoad('', 'create');
     }).catch(function (error) {
@@ -5254,17 +5351,22 @@
     });
   }
 
-  function beginEditAssistantEditor(assistantId) {
+  async function beginEditAssistantEditor(assistantId) {
+    if (!await confirmEditorLeave()) return;
     assistantId = String(assistantId || selectedAssistant() && selectedAssistant().id || '');
     if (!assistantId) return Promise.resolve();
     assistantMenuOpen = false;
+    discardEditor();
+    var sequence = assistantEditorSequence;
     return getAssistantResource(assistantId).then(function (assistant) {
+      if (sequence !== assistantEditorSequence) return;
       projectAssistantResource(assistant);
       assistantEditorDraft = assistantDraftFromProfile(assistant, 'edit');
       assistantEditorTab = 'base';
       sidebarTab = 'assistant';
       renderLoaded();
       renderAssistantEditorDrawer();
+      assistantEditorBaseline = JSON.stringify(collectAssistantEditorDraft());
       return loadAssistantResourceOptions().then(function () {
         refreshAssistantEditorAfterResourceLoad(assistantId, 'edit');
       }).catch(function (error) {
@@ -5313,6 +5415,7 @@
   }
 
   function saveAssistantEditor() {
+    if (editorSaving) return Promise.resolve();
     var draft = collectAssistantEditorDraft();
     if (!draft) return Promise.resolve();
     if (!draft.name) {
@@ -5330,21 +5433,24 @@
       settings: canonicalAssistantRunSettings(draft.settings),
     };
     var editing = draft.mode === 'edit' && draft.assistantId;
+    editorSaving = true;
     var op = editing
       ? patchAssistantResource(draft.assistantId, payload)
       : createAssistantResource(payload);
     return op.then(function (assistant) {
       projectAssistantResource(assistant);
-      assistantEditorDraft = null;
+      editorSaving = false;
+      discardEditor();
       closeConversationDrawer();
       if (editing) return refresh();
       return activateNewAssistant(assistant);
     }).catch(function (error) {
       toast('保存助手失败: ' + resourceErrorText(error), true);
-    });
+    }).finally(function () { editorSaving = false; });
   }
 
   function saveTopicPermissions() {
+    if (editorSaving) return Promise.resolve();
     var topic = displayedTopic();
     if (!topic) return Promise.resolve();
     var assistant = assistantForTopicRun(topic, activeAssistant()) || {};
@@ -5354,6 +5460,7 @@
       settings: settings,
       resourcePolicy: resourcePolicy,
     }));
+    editorSaving = true;
     return patchConversationResource(topic.topicId, {
       assistantSnapshot: snapshot,
     }).then(function () {
@@ -5362,16 +5469,15 @@
       refresh();
     }).catch(function (err) {
       toast('保存模式和权限失败: ' + err.message, true);
-    });
+    }).finally(function () { editorSaving = false; });
   }
 
   function cancelAssistantEditor() {
-    assistantEditorDraft = null;
-    closeConversationDrawer();
-    return Promise.resolve();
+    return closeConversationDrawer();
   }
 
   function applyAssistantTemplate(templateId) {
+    if (editorSaving) return;
     if (!assistantEditorDraft || assistantEditorDraft.mode !== 'create') return;
     var templates = getAssistantTemplates();
     var base = templates.items[templateId];
@@ -6050,7 +6156,7 @@
       return;
     }
     var openCount = openCapabilityGapPlans(topic).length;
-    openConversationDrawer('能力缺口收件箱', renderCapabilityGapInbox(topic),
+    openConversationDrawer('能力缺口收件箱', '<details class="reference-panel drawer-guide"><summary>能力缺口说明</summary><div class="drawer-guide-content"><p><b>需求记录：</b>汇总本话题的能力需求、工具比较和建议；下载时导出待提交条目并更新状态。</p></div></details>' + renderCapabilityGapInbox(topic),
       '<button class="btn-primary" data-conversation-action="export-capability-gaps" data-topic-id="' + esc(topic.topicId) + '"' + (openCount ? '' : ' disabled') + '>下载需求</button>'
       + '<button class="btn-secondary" data-conversation-action="close-conversation-drawer">关闭</button>');
   }
@@ -6973,13 +7079,6 @@
       if (controlledElsewhere) refresh();
       else syncReadonlySnapshotRefresh(topic, false);
     });
-    var drawerOverlay = $('#drawer-overlay');
-    var drawerClose = $('#drawer-close');
-    function clearAssistantEditorOnDrawerClose() {
-      assistantEditorDraft = null;
-    }
-    if (drawerOverlay) drawerOverlay.addEventListener('click', clearAssistantEditorOnDrawerClose);
-    if (drawerClose) drawerClose.addEventListener('click', clearAssistantEditorOnDrawerClose);
     loadSystemSettings().catch(function () {});
     if (syncEventStream) {
       syncEventStream.subscribe(function (event) {
@@ -7008,6 +7107,7 @@
     }
     if (chrome.storage && chrome.storage.onChanged) {
       chrome.storage.onChanged.addListener(function (changes, area) {
+        if (area === 'local' && changes[globalThis.ModelSettings.SETTINGS_KEY]) refresh();
         if (area === 'local' && changes[appBindingKey]) { appBindings = changes[appBindingKey].newValue || {}; if (conversationSectionVisible()) { lastRenderKey = ''; renderLoaded(); } }
         if (area === 'local' && globalThis.PageAutomationSystemSettings
             && changes[globalThis.PageAutomationSystemSettings.SETTINGS_KEY]) {
@@ -7035,5 +7135,8 @@
     refresh: refresh,
     openTarget: openTarget,
     openApp: openApp,
+    getEditState: getEditState,
+    confirmEditorLeave: confirmEditorLeave,
+    discardEditor: discardEditor,
   };
 });

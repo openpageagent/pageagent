@@ -22,7 +22,11 @@
 
 系统默认运行权限由 `shared/system-runtime-permissions.js` 定义，对话、应用与执行层共用。
 
-默认包含页面和浏览器操作、Flow／FlowGroup／Script 运行、应用创建与执行、知识读写、触发器、系统设置、邮件设置及本地操作等权限；本地操作和邮件仍需满足连接与功能开关条件。
+授权目录来自已注册的 ARP 路由，可选方法的开关决定对应授权。页面 JavaScript、窗口、下载和调试器需单独授权。`OPTIONS` 仅返回已授权能力。
+
+话题优先使用自身的助手快照，无匹配快照时使用助手配置。权限修改保存后从下一轮生效。
+
+默认包含页面和浏览器操作、Flow／FlowGroup／Script 运行、应用创建与执行、知识读写、触发器、系统设置、邮件及本地操作等权限。本地操作还需连接就绪并具备相应目录或桌面授权；邮件需选择可用的发送连接并启用通知。
 
 默认权限不包含 `apps.delete`，`/apps` 的默认方法也不含 `DELETE`。
 
@@ -51,21 +55,11 @@ Prompt 至少说明：
 Prompt 中的每个外部动作必须有对应的资源路径、方法和权限。
 权限按任务需要配置；删除、配置修改、外部连接和高风险执行分别评估。
 
-## 模板定义与修改
+## 模板与权限
 
-内置助手模板定义在 [`options/conversation-profile-schema.js`](../options/conversation-profile-schema.js)：
+模板包含名称、描述、默认配置、任务提示词和 `resourcePolicy`。提示词说明任务方法、Knowledge/Skill 引用、交付物和完成条件；权限策略决定可调用的资源、方法和权限。
 
-- `assistantTemplates()`：模板名称、描述、默认配置和 `resourcePolicy`；
-- `buildTemplatePrompt()`：任务方法、Knowledge/Skill 引用、交付物和完成条件。
-
-新增或修改模板时，同步维护：
-
-1. 模板名称、描述、prompt 和默认配置；
-2. `resourcePolicy` 的资源路径、方法和权限；
-3. 需要的 Knowledge/Skill 引用；
-4. 交付物和完成条件。
-
-执行资源操作前，运行时检查权限；隐藏界面控件不能替代权限配置。
+每次资源操作都会检查当前权限。
 助手拥有某项权限，也不能据此扩大用户目标。
 
 ## 应用开发助手

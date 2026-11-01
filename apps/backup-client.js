@@ -80,7 +80,7 @@
       });
     });
   }
-  async function preflight(pkg, plan, scopes) {
+  async function preflight(pkg, plan, scopes, rebindConnections, confirmAction) {
     assertSelectedDependencies(pkg, plan);
     var order = importOrder(pkg, plan);
     var aliases = new Set();
@@ -95,9 +95,12 @@
       var item = pkg.modules.apps.items[appId], scope = scopes && scopes[appId] || item.generationScope;
       if (item.appId !== appId) throw new Error('应用包的条目 ID 与 appId 不一致：' + appId);
       await work('validate', { item: item, scope: scope });
-      var result = await manage('preflight-import', { item: controlItem(item), modules: dependencyModules(pkg.modules), scope: scope, plan: plan });
-      if (result.conflicts.length && !confirm('以下应用或共享依赖内容不同，是否覆盖？\n' + result.conflicts.join('\n'))) throw new Error('已取消冲突导入，尚未写入');
+      var result = await manage('preflight-import', { item: controlItem(item), modules: dependencyModules(pkg.modules), scope: scope, plan: plan, rebindConnections: rebindConnections === true });
+      if (result.conflicts.length && (!confirmAction || !await confirmAction('以下应用或共享依赖内容不同，是否覆盖？\n' + result.conflicts.join('\n')))) throw new Error('已取消冲突导入，尚未写入');
       expected[appId] = { revision: result.revision, dataRevision: result.dataRevision, bindings: result.bindings };
+      if (rebindConnections) Object.keys(item.slots).forEach(function (slot) {
+        item.slots[slot].dependencies = result.bindings[slot]; item.slots[slot].actions = result.actions[slot];
+      });
       (result.reuse || []).forEach(function (item) { reuse.set(item.module + ':' + item.id, item); });
     }
     // The resolved closure can expose app cycles hidden behind Flow dependencies.

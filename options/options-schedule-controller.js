@@ -182,6 +182,7 @@
     var initialized = false;
     var destroyed = false;
     var draft = null;
+    var draftBaseline = '';
     var conversationState = { assistants: {}, assistantOrder: [] };
     var refreshSequence = 0;
     var draftRevision = 0;
@@ -403,10 +404,11 @@
 
     function render() {
       if (destroyed) return { ok: false, destroyed: true };
+      if (isDirty()) return { ok: true, retained: true };
       var config = currentConfig();
       var list = $('#schedules-list');
       var schedules = sortedValues(config.schedules);
-      list.innerHTML = renderConfigListItems('schedules', schedules, '<div class="placeholder">还没有定时任务，点击「新建定时任务」开始</div>', function (schedule) {
+      list.innerHTML = renderConfigListItems('schedules', schedules, draft ? '' : '<div class="placeholder">还没有定时任务，点击「新建定时任务」开始</div>', function (schedule) {
         var taskKind = scheduleTaskKind(schedule);
         var flowId = scheduleFlowId(schedule);
         var flowGroupId = scheduleFlowGroupId(schedule);
@@ -423,7 +425,7 @@
             : (flow
               ? (flow.label || flowId)
               : missingReferenceLabel('流程', flowId)));
-        return '<div class="item-card' + (draft && draft.id === schedule.id ? ' selected' : '') + '" data-action="edit-schedule" data-id="' + esc(schedule.id) + '">'
+        return '<div class="item-card' + (draft && draft.id === schedule.id ? ' selected' : '') + '" role="button" tabindex="0" data-action="edit-schedule" data-id="' + esc(schedule.id) + '">'
           + '<span class="item-title">' + esc(schedule.label || '(未命名)') + '</span>'
           + '<span class="item-sub">' + esc(triggerText) + ' → ' + esc(targetText) + '</span>'
           + '<span class="badge' + (schedule.enabled ? ' on' : '') + '">' + (schedule.enabled ? '已启用' : '已停用') + '</span>'
@@ -565,6 +567,24 @@
         + (schedule.id ? '<button class="btn-danger" data-action="delete-schedule" data-id="' + esc(schedule.id) + '">删除</button>' : '')
         + '</div>';
       renderCalendarChoices(trigger.kind === 'dates' ? dateValues : null);
+      if (!draftBaseline) draftBaseline = editorSignature();
+    }
+
+    function editorSignature() {
+      var editor = $('#schedule-editor');
+      if (!editor) return '';
+      return JSON.stringify(Array.from(editor.querySelectorAll('input, select, textarea, page-code-editor')).map(function (field) {
+        return [field.type || field.tagName, field.type === 'checkbox' || field.type === 'radio' ? field.checked : field.value];
+      }));
+    }
+
+    function isDirty() {
+      return !!draft && !!draftBaseline && editorSignature() !== draftBaseline;
+    }
+
+    async function confirmDiscard() {
+      if (saveInFlight) return false;
+      return !isDirty() || await confirmAction('有未保存的修改，是否放弃？');
     }
 
     function handleEditorChange(event) {
@@ -608,8 +628,10 @@
       }
     }
 
-    function openNew() {
+    async function openNew() {
       if (destroyed) return Promise.resolve({ ok: false, destroyed: true });
+      if (!await confirmDiscard()) return { ok: false, cancelled: true };
+      draftBaseline = '';
       draft = {
         label: '',
         taskType: 'flow',
@@ -631,8 +653,10 @@
       });
     }
 
-    function edit(scheduleId) {
+    async function edit(scheduleId) {
       if (destroyed) return { ok: false, destroyed: true };
+      if (draft && draft.id === scheduleId) return { ok: true, retained: true };
+      if (!await confirmDiscard()) return { ok: false, cancelled: true };
       var nextDraft;
       try {
         nextDraft = findSchedule(scheduleId);
@@ -643,6 +667,7 @@
       }
       if (!nextDraft) return { ok: false, error: '定时任务不存在' };
       draft = nextDraft;
+      draftBaseline = '';
       draftRevision++;
       render();
       scrollOpenedEditor('#schedule-editor');
@@ -652,6 +677,7 @@
     function clearDraft(clearOptions) {
       clearOptions = clearOptions || {};
       draft = null;
+      draftBaseline = '';
       draftRevision++;
       if (clearOptions.render !== false && !destroyed && isActive()) render();
       return { ok: !destroyed, destroyed: destroyed };
@@ -780,12 +806,12 @@
       return operation;
     }
 
-    function remove(scheduleId) {
+    async function remove(scheduleId) {
       if (destroyed) return Promise.resolve({ ok: false, destroyed: true });
       scheduleId = String(scheduleId || '');
       if (!isSafeId(scheduleId)) return Promise.resolve({ ok: false, error: '定时任务不存在' });
       if (deleteInFlight[scheduleId]) return deleteInFlight[scheduleId];
-      if (!confirmAction('确定删除该定时任务？')) return Promise.resolve({ ok: false, canceled: true });
+      if (!await confirmAction('确定删除该定时任务？')) return { ok: false, canceled: true };
       if (draft && String(draft.id) === scheduleId) draftRevision++;
       var operation = Promise.resolve().then(function () {
         return mutateConfig('delete', 'schedules', scheduleId);
@@ -845,7 +871,7 @@
         return true;
       }
       if (action === 'cancel-schedule') {
-        clearDraft();
+        confirmDiscard().then(function (confirmed) { if (confirmed) clearDraft(); });
         return true;
       }
       if (action === 'delete-schedule') {
@@ -881,6 +907,8 @@
       render: render,
       handleAction: handleAction,
       clearDraft: clearDraft,
+      confirmDiscard: confirmDiscard,
+      isDirty: isDirty,
       scheduleTaskKind: scheduleTaskKind,
       getState: function () {
         return {
@@ -888,6 +916,7 @@
           destroyed: destroyed,
           refreshing: !!refreshInFlight,
           saving: !!saveInFlight,
+          dirty: isDirty(),
           deleting: Object.keys(deleteInFlight).length > 0,
           draftId: draft && draft.id || '',
         };

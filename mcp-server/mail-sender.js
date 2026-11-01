@@ -28,7 +28,7 @@ function sendMail(payload, options = {}) {
       config = settings.validate(payload && payload.config);
       message = settings.prepareMessage(payload && payload.message);
     } catch (error) {
-      reject(mailError(error.message));
+      reject(Object.assign(mailError(error.message), { performed: 'no' }));
       return;
     }
     let socket;

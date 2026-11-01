@@ -27,6 +27,7 @@
     raw = raw && typeof raw === 'object' ? raw : {};
     return {
       enabled: raw.enabled !== false,
+      connectionId: String(raw.connectionId || ''),
       host: String(raw.host === undefined ? '' : raw.host).trim(),
       port: raw.port === undefined || raw.port === '' ? 465 : Number(raw.port),
       security: String(raw.security || 'tls'),
@@ -40,6 +41,7 @@
   function validate(raw, allowUnconfigured) {
     if (raw && raw.enabled !== undefined && typeof raw.enabled !== 'boolean') throw new Error('邮件通知开关必须为布尔值');
     var config = normalize(raw);
+    if (config.connectionId && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(config.connectionId)) throw new Error('邮件连接 ID 无效');
     var unconfigured = allowUnconfigured === true && !config.host && !config.from && !config.username && !config.password;
     if (!unconfigured && (!config.host || config.host.length > 253 || /[\s/\\:@\x00-\x1f\x7f]/.test(config.host))) {
       throw new Error('SMTP 服务器请填写主机名或 IPv4 地址，不含协议和端口');

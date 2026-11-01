@@ -109,6 +109,7 @@
     }
 
     var destroyed = false;
+    var pendingConsent = null;
     var host = null;
     var panel = null;
     var title = null;
@@ -320,8 +321,11 @@
       });
     }
 
-    function showConsent() {
+    function showConsent(options) {
+      options = options || {};
+      if (pendingConsent || destroyed) return Promise.resolve(false);
       return new Promise(function (resolve) {
+        var previous = panel.getRootNode().activeElement, settled = false;
         var overlay = documentRef.createElement('div');
         overlay.className = 'recording-consent-overlay';
         overlay.setAttribute('role', 'dialog');
@@ -331,23 +335,35 @@
         dialog.className = 'recording-consent';
         var heading = documentRef.createElement('h2');
         heading.id = 'recording-consent-title';
-        heading.textContent = '开始页面操作录制';
+        heading.textContent = options.title || '开始页面操作录制';
         var copy = documentRef.createElement('p');
-        copy.textContent = CONSENT_TEXT;
+        copy.textContent = options.message || CONSENT_TEXT;
         var actions = documentRef.createElement('div');
         actions.className = 'recording-consent-actions';
         var cancel = documentRef.createElement('button');
         cancel.type = 'button'; cancel.className = 'secondary-command'; cancel.textContent = '取消';
         var start = documentRef.createElement('button');
-        start.type = 'button'; start.className = 'primary-command'; start.textContent = '开始';
-        function finish(value) { overlay.remove(); resolve(value); }
+        start.type = 'button'; start.className = 'primary-command' + (options.danger ? ' danger-command' : ''); start.textContent = options.okText || '开始';
+        function finish(value) {
+          if (settled) return;
+          settled = true; pendingConsent = null; overlay.remove();
+          if (previous && previous.isConnected && !destroyed) previous.focus({ preventScroll: true });
+          resolve(value);
+        }
+        pendingConsent = function () { finish(false); };
         cancel.addEventListener('click', function () { finish(false); });
         start.addEventListener('click', function () { finish(true); });
-        overlay.addEventListener('keydown', function (event) { if (event.key === 'Escape') finish(false); });
+        overlay.addEventListener('keydown', function (event) {
+          if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finish(false); }
+          if (event.key === 'Tab') {
+            event.preventDefault();
+            (overlay.getRootNode().activeElement === cancel ? start : cancel).focus();
+          }
+        });
         actions.appendChild(cancel); actions.appendChild(start);
         dialog.appendChild(heading); dialog.appendChild(copy); dialog.appendChild(actions); overlay.appendChild(dialog);
         panel.appendChild(overlay);
-        start.focus();
+        cancel.focus();
       });
     }
 
@@ -974,10 +990,11 @@
       }).finally(function () { recordingBusy = ''; renderRecordingControls(); renderRecordingDrawer(); });
     }
 
-    function removeRecordingSource(source) {
+    async function removeRecordingSource(source) {
       var collection = recordingCollection();
       if (!collection || recordingBusy) return;
-      if (!win.confirm('永久删除此录制？录制正文、待提交选择和读取授权都会立即删除，已提交对话中的历史附件也将无法再读取。此操作不可恢复。')) return;
+      if (!await showConsent({ title: '删除录制', message: '永久删除此录制？录制正文、待提交选择和读取授权都会立即删除，已提交对话中的历史附件也将无法再读取。此操作不可恢复。', okText: '永久删除', danger: true })) return;
+      if (destroyed || recordingBusy) return;
       recordingBusy = 'remove-source';
       renderRecordingControls();
       sendRecording(contract.TYPES.REMOVE_RECORDING_SOURCE, {
@@ -1238,10 +1255,11 @@
       conversationShared.downloadFile(String(fileName || 'download.txt'), String(text || ''), mimeType || 'application/octet-stream');
     }
 
-    function exportRecordingSource(source) {
+    async function exportRecordingSource(source) {
       var collection = recordingCollection();
       if (!collection || !source || recordingBusy) return;
-      if (!win.confirm('导出的 Recording Artifact 会包含录制到的原始页面内容、输入值和完整 URL，可能含密码、验证码、账号或其他敏感信息。是否导出这份录制？')) return;
+      if (!await showConsent({ title: '导出录制', message: '导出的 Recording Artifact 会包含录制到的原始页面内容、输入值和完整 URL，可能含密码、验证码、账号或其他敏感信息。是否导出这份录制？', okText: '导出录制' })) return;
+      if (destroyed || recordingBusy) return;
       recordingBusy = 'export';
       renderRecordingDrawer();
       var chunks = [];
@@ -2384,14 +2402,13 @@
         '.pending-option{display:flex;min-width:0;min-height:48px;align-items:flex-start;gap:7px;padding:7px 8px;border:1px solid #cbd7db;border-radius:6px;background:#fff;cursor:pointer;}',
         '.pending-option:has(input[type="radio"]:checked){border-color:#478381;background:#edf6f4;}.pending-option>input[type="radio"]{flex:0 0 auto;margin:3px 0 0;accent-color:var(--accent);}',
         '.pending-option>span{display:grid;min-width:0;flex:1;gap:2px;}.pending-option b{color:#173336;font:500 11.5px/1.35 Inter,Roboto,Arial,sans-serif;}.pending-option small{color:#71858b;font:10.5px/1.4 Inter,Roboto,Arial,sans-serif;}',
-        '.pending-other-input{display:block;width:100%;min-width:0;height:28px;margin-top:2px;padding:4px 6px;border:1px solid #cbd7db;border-radius:5px;background:#fff;color:#10282b;outline:none;}.pending-other-input:focus{border-color:#6e9999;box-shadow:0 0 0 2px rgba(0,72,73,.10);}',
+        '.pending-other-input{display:block;width:100%;min-width:0;height:28px;margin-top:2px;padding:4px 6px;border:1px solid #cbd7db;border-radius:5px;background:#fff;color:#10282b;outline:none;}',
         '.pending-input-actions{display:flex;justify-content:flex-end;margin-top:2px;}.pending-submit{height:30px;padding:0 11px;border:1px solid #006d6b;border-radius:5px;background:#006d6b;color:#fff;cursor:pointer;font:500 11.5px/1 Inter,Roboto,Arial,sans-serif;}.pending-submit:hover,.pending-submit:focus-visible{background:#075856;border-color:#075856;outline:none;}.pending-submit:disabled{cursor:default;opacity:.45;}',
         '.composer{flex:0 0 auto;padding:7px 9px 9px;border-top:1px solid rgba(220,228,231,.9);background:rgba(248,250,249,.82);}',
         '.panel:not(.expanded) .composer{padding:7px 8px 8px;}',
         '.composer-toolbar{display:flex;align-items:center;gap:6px;height:28px;margin-bottom:5px;}',
         '.panel:not(.expanded) .composer-toolbar{display:none;}',
         '.assistant-select{min-width:0;max-width:250px;height:28px;padding:0 26px 0 8px;border:1px solid #cbd7db;border-radius:5px;background:#fff;color:#274248;font:11.5px/1 Inter,Roboto,Arial,sans-serif;outline:none;text-overflow:ellipsis;}',
-        '.assistant-select:focus{border-color:#6e9999;box-shadow:0 0 0 2px rgba(0,72,73,.10);}',
         '.toolbar-spacer{flex:1;min-width:4px;}',
         '.record-button{all:unset;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:auto;min-width:46px;height:28px;padding:0 9px;flex:0 0 auto;border:1px solid rgba(186,85,74,.34);border-radius:6px;background:rgba(186,85,74,.06);color:#a6463f;font:600 11px/1 Inter,Roboto,Arial,sans-serif;cursor:pointer;transition:background .16s ease,color .16s ease,transform .16s ease,border-color .16s ease;}.record-button:hover,.record-button:focus-visible{outline:none;border-color:rgba(186,85,74,.52);background:#f4e8e7;color:#8d332d;}.record-button:focus-visible{box-shadow:0 0 0 2px rgba(0,72,73,.18);}.record-button:active{transform:scale(.94)}.record-button:disabled{cursor:default;opacity:.42}.record-button.recording{min-width:88px;max-width:156px;gap:5px;border-color:rgba(186,85,74,.42);border-radius:7px;background:rgba(186,85,74,.08);font-variant-numeric:tabular-nums}.record-button.recording svg{width:13px;height:13px}',
         '.recording-summary{display:flex;align-items:center;gap:8px;min-height:27px;margin:0 1px 5px;padding:4px 6px;border:1px solid var(--border-strong);border-radius:var(--control-radius);background:var(--control-bg);color:var(--text-secondary);font:11px/1.35 Inter,Roboto,Arial,sans-serif}.recording-summary[hidden]{display:none}.recording-summary-text{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.recording-summary button{all:unset;flex:0 0 auto;color:var(--text-secondary);font-weight:600;cursor:pointer}.panel:not(.expanded) .recording-summary button{display:none}.recording-summary button:focus-visible{outline:2px solid rgba(0,72,73,.24);outline-offset:2px}',
@@ -2405,7 +2422,7 @@
         '.icon-button:disabled,.action-button:disabled,.header-stop-button:disabled{cursor:default;opacity:.42;}',
         '.composer-row{display:flex;align-items:flex-end;gap:7px;}',
         '.message-input{display:block;min-width:0;flex:1;height:38px;min-height:34px;max-height:112px;padding:7px 9px;border:1px solid rgba(203,215,219,.94);border-radius:7px;background:rgba(255,255,255,.9);color:#10282b;font:12.5px/1.45 Inter,Roboto,Arial,sans-serif;outline:none;resize:none;overflow:auto;}',
-        '.message-input:focus{border-color:#6e9999;box-shadow:0 0 0 2px rgba(0,72,73,.10);}',
+        'input:focus,select:focus,textarea:focus{outline:1px solid var(--accent);outline-offset:-1px;box-shadow:none;}',
         '.message-input::placeholder{color:#93a1a6;}.message-input:disabled{background:#f1f4f4;color:#829298;}',
         '.action-button{width:38px;height:38px;flex:0 0 auto;border:1px solid #004849;border-radius:7px;background:#004849;color:#fff;transition:transform .16s ease,background .16s ease,border-color .16s ease,color .16s ease;}',
         '.action-button:hover,.action-button:focus-visible{outline:none;background:#103f44;border-color:#103f44;}',
@@ -2414,6 +2431,7 @@
         '.notice{margin:0 2px 6px;color:#60757b;font:11px/1.35 Inter,Roboto,Arial,sans-serif;overflow-wrap:anywhere;}.notice[hidden]{display:none;}.notice.error{color:#a3423a;}',
         '.recording-drawer{position:absolute;inset:44px 0 0;z-index:8;display:flex;flex-direction:column;background:var(--bg);color:var(--text)}.recording-drawer[hidden]{display:none}.recording-drawer-header{display:flex;align-items:center;gap:8px;min-height:42px;padding:0 10px;border-bottom:1px solid var(--border-strong)}.recording-drawer-header h2{min-width:0;flex:1;margin:0;font:650 13px/1.3 Inter,Roboto,Arial,sans-serif}.recording-drawer-close{all:unset;display:inline-flex;width:28px;height:28px;align-items:center;justify-content:center;border-radius:var(--control-radius);cursor:pointer}.recording-drawer-close:hover,.recording-drawer-close:focus-visible{outline:none;background:var(--control-bg-hover)}.recording-drawer-close svg{width:16px;height:16px}.recording-drawer-body{min-height:0;flex:1;overflow:auto;padding:10px}.recording-section{padding:9px 0;border-top:1px solid var(--border-strong)}.recording-section h3{margin:0 0 7px;color:var(--text);font:650 12px/1.3 Inter,Roboto,Arial,sans-serif}.recording-empty{margin:5px 0;color:var(--text-secondary);font-size:11px}.recording-error-hint{margin:6px 0;padding:6px;border-left:3px solid #c28a42;background:#fff9ee;color:#735526;font:10.5px/1.45 Inter,Roboto,Arial,sans-serif;overflow-wrap:anywhere}.recording-source-list{display:grid;gap:6px;padding:0;border:0}.recording-source-row{display:flex;align-items:center;gap:8px;min-height:42px;padding:7px 8px;border:1px solid var(--border-strong);border-radius:var(--control-radius);background:var(--control-bg)}.recording-source-row:hover{border-color:var(--border-strong);background:var(--control-bg-hover)}.recording-source-row.checked{border-color:var(--border-strong);background:var(--bg-muted)}.recording-source-check{width:15px;height:15px;flex:0 0 auto;margin:0;accent-color:var(--text-secondary)}.recording-source-copy{display:flex;min-width:0;flex:1;flex-direction:column}.recording-source-copy span{color:var(--text-secondary);font-size:10.5px}.recording-source-copy strong{color:var(--text);overflow-wrap:anywhere}.recording-row-actions{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.primary-command,.secondary-command{display:inline-flex;box-sizing:border-box;min-width:0;height:30px;align-items:center;justify-content:center;padding:0 10px;border-radius:var(--control-radius);cursor:pointer;font:400 12px/1 Inter,Roboto,Arial,sans-serif}.primary-command{border:1px solid var(--border-strong);background:var(--control-bg);color:var(--text-secondary)}.secondary-command{border:1px solid var(--border-strong);background:var(--control-bg);color:var(--text-secondary)}.primary-command:focus-visible,.secondary-command:focus-visible{outline:1px solid var(--border-strong);outline-offset:1px}.primary-command:hover:not(:disabled),.primary-command[aria-expanded="true"]{border-color:var(--border-strong);background:var(--bg-muted);color:var(--text)}.secondary-command:hover:not(:disabled){border-color:var(--border-strong);background:var(--control-bg-hover);color:var(--text)}.danger-command{color:var(--danger);border-color:var(--border-strong)}.danger-command:hover:not(:disabled){color:var(--danger);border-color:var(--border-strong);background:rgba(186,85,74,.08)}.recording-consent-overlay{position:absolute;inset:0;z-index:12;display:flex;align-items:center;justify-content:center;padding:14px;background:rgba(20,40,43,.34)}.recording-consent{max-height:100%;overflow:auto;padding:14px;border:1px solid var(--border-strong);border-radius:var(--control-radius);background:#fff;box-shadow:0 14px 34px rgba(10,33,36,.22)}.recording-consent h2{margin:0 0 8px;font:650 14px/1.3 Inter,Roboto,Arial,sans-serif}.recording-consent p{margin:0;color:#4f6268;font:11.5px/1.55 Inter,Roboto,Arial,sans-serif;white-space:pre-wrap}.recording-consent-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:12px}',
         '.recording-drawer-body{padding:8px}.recording-section{padding:7px 0}.recording-source-list{padding:0}.recording-source-row{min-height:42px;padding:7px 8px}.recording-preview-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}.recording-preview-title{min-width:0;flex:1}.recording-preview-title h3{margin:0}.recording-selection-bar{position:sticky;top:-8px;z-index:2;display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:7px;padding:6px;border:1px solid var(--border-strong);background:var(--bg-secondary)}.recording-selection-bar>strong{margin-right:auto;font-size:10.5px}.primary-command:disabled,.secondary-command:disabled{cursor:not-allowed;opacity:1;background:var(--bg-muted);border-color:var(--border-strong);color:var(--disabled)}.recording-timeline{margin-top:7px}.recording-action-card{position:relative;display:grid;grid-template-columns:18px 26px minmax(0,1fr);align-items:start;gap:6px;margin:0 0 6px;padding:7px;border:1px solid var(--border-strong);border-radius:var(--control-radius);background:var(--bg)}.recording-action-card:not(:last-child)::after{position:absolute;z-index:0;top:31px;bottom:-8px;left:43px;width:1px;background:#cddbdd;content:""}.recording-action-card:hover{border-color:var(--border-strong);background:var(--control-bg-hover)}.recording-action-card.selected{border-color:var(--border-strong);background:var(--bg-muted)}.recording-action-card>input{width:15px;height:15px;margin:4px 0 0;accent-color:var(--text-secondary)}.recording-action-order{z-index:1;display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;border:1px solid var(--border-strong);border-radius:50%;background:#fff;color:#61777c;font:9.5px/1 ui-monospace,SFMono-Regular,Consolas,monospace}.recording-action-copy{min-width:0}.recording-action-heading strong{color:var(--text);font:500 11px/1.4 Inter,Roboto,Arial,sans-serif;overflow-wrap:anywhere}.recording-action-meta{margin-top:2px;color:#7a8b90;font-size:9.5px}.recording-action-details{grid-column:3/4;color:var(--text-secondary);font-size:10px}.recording-action-details>summary{width:max-content;color:var(--text-secondary)}.recording-event-detail{display:grid;grid-template-columns:58px minmax(0,1fr);gap:6px;padding:4px 0;border-top:1px solid #edf1f2}.recording-event-detail>span{color:#849297}.recording-event-detail>div{min-width:0;color:#29464b;white-space:pre-wrap;overflow-wrap:anywhere}.recording-event-detail.raw-value>div{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}',
+        '.recording-selection-bar{border-radius:var(--control-radius)}',
         '.panel.expanded .messages,.panel.expanded .pending-input,.panel.expanded .composer{animation:content-reveal .24s .06s cubic-bezier(.22,1,.36,1) both;}',
         '@keyframes panel-enter{from{opacity:0;}to{opacity:1;}}',
         '@keyframes content-reveal{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}',
@@ -2422,7 +2440,7 @@
         '@media(max-width:390px){.panel-header{padding:0 8px;}.topic-label{max-width:112px;}.assistant-select{max-width:150px;}.composer{padding-left:7px;padding-right:7px;}}',
         '@media(prefers-reduced-motion:reduce){.panel,.panel *{scroll-behavior:auto!important;transition:none!important;animation:none!important;}.status-dot.running{animation:none;}}',
       ].join('') + eventView.STYLE_TEXT + [
-        '.recording-action-details>summary{display:flex;align-items:center;gap:10px;min-height:24px;list-style:none;cursor:pointer;}.recording-action-details>summary::-webkit-details-marker{display:none;}',
+        '.recording-action-details>summary{display:flex;align-items:center;gap:8px;min-height:24px;padding:0 4px;list-style:none;cursor:pointer;}.recording-action-details>summary::-webkit-details-marker{display:none;}',
         '.recording-action-details>summary::before,.recording-row-actions [aria-expanded]::before{content:"";flex:0 0 8px;width:8px;height:8px;border:solid currentColor;border-width:0 2px 2px 0;transform:translateX(-2px) rotate(-45deg);}.recording-action-details[open]>summary::before,.recording-row-actions [aria-expanded="true"]::before{transform:translateY(-2px) rotate(45deg);}',
         '.recording-row-actions [aria-expanded]{gap:8px;}.recording-action-details>summary:hover{background:var(--accent-soft);color:var(--accent);}.recording-action-details>summary:hover::before{color:var(--accent);}.recording-action-details>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}',
         '.messages.conversation-event-stream{padding:10px 10px 8px;background:rgba(255,255,255,.74);}',
@@ -2625,6 +2643,7 @@
     function destroy() {
       if (destroyed) return;
       destroyed = true;
+      if (pendingConsent) pendingConsent();
       ++requestRevision;
       stopPoll();
       if (panelPositionController) panelPositionController.destroy();

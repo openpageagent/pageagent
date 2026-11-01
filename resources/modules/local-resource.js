@@ -13,6 +13,7 @@
   function schema(properties, required) {
     return { type: 'object', properties: properties, required: required, additionalProperties: false };
   }
+  var ENVIRONMENT_INPUT_SCHEMA = Object.freeze(schema({ refresh: { type: 'boolean' } }, []));
   function action(name, properties, required) {
     return schema(Object.assign({ action: { const: name } }, properties), ['action'].concat(required || []));
   }
@@ -118,6 +119,7 @@
   });
 
   function isRead(name, input) {
+    if (name === 'environment' || name === 'disk') return true;
     var definition = OPERATIONS[name];
     return name === 'read' || name === 'grep' || definition.readOnly === true
       || (definition.readActions || []).indexOf(input.action) >= 0;
@@ -126,6 +128,7 @@
   function createAdapter(options) {
     var runtime = options.localOperations;
     async function attachScreenshot(data, context) {
+      if (context.sourceConnectionId) return data;
       var topicId = String(context.conversationId || context.topicId || '').trim();
       if (!topicId) return data; // External MCP clients consume the inline image directly.
       var part = data.modelContent[0];
@@ -134,6 +137,7 @@
       for (var index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
       var stored = await options.imageArtifactStore.put(new Blob([bytes], { type: part.mimeType }), {
         topicId: topicId, turnId: String(context.turnId || ''), sourceKind: 'desktop-screenshot',
+        serverId: data.target && data.target.serverId, connectionId: data.target && data.target.connectionId,
         representation: 'screenshot', mimeType: part.mimeType, width: data.width, height: data.height,
         detail: 'high', alt: '服务端桌面截图',
       });
@@ -146,32 +150,105 @@
         width: stored.width, height: stored.height, detail: 'high', alt: '服务端桌面截图',
       }] });
     }
-    var routes = Object.keys(OPERATIONS).map(function (name) {
+    var scope = '/local/connections/{connectionId}';
+    var workspaceScope = scope + '/workspaces/{workspaceId}';
+    var directoryOperations = ['read', 'write', 'delete', 'grep', 'bash', 'locate'];
+    var handlers = { GET: {}, POST: {} };
+    var routes = [];
+    function result(request, data) { return { statusCode: 200, primary: { uri: request.uri, type: 'LocalCapability', data: data }, schemaValue: data }; }
+    function getRoute(template, refresh) {
+      routes.push(new arp.RouteContract({ template: template, resourceType: 'LocalCapability', relation: 'local',
+        summary: '发现当前授权的服务端、目录与执行环境；名称不作为路由标识', methods: { GET: {
+          inputSchema: refresh ? ENVIRONMENT_INPUT_SCHEMA : schema(template === '/local' ? {
+            cursor: { type: 'string', maxLength: 200 }, limit: { type: 'integer', minimum: 1, maximum: 100 } } : {}, []),
+          outputSchema: { type: 'object' }, safety: 'read', idempotency: 'inherent', execution: 'sync', permissions: ['local.execute'], preconditions: [],
+          ...(refresh ? { modelProjection: { type: 'field', field: 'description' } } : {}),
+        } } }));
+    }
+    ['/local', scope, workspaceScope].forEach(function (template) { getRoute(template); });
+    getRoute(scope + '/environment', true); getRoute(workspaceScope + '/disk', true);
+    handlers.GET['/local'] = async function (request, context) {
+      var items = await runtime.discover(context); var query = request.query || {};
+      var match = /^offset:(\d+)$/.exec(query.cursor || ''); var start = match ? Number(match[1]) : 0; var limit = Math.min(100, Math.max(1, query.limit || 30));
+      return result(request, { items: items.slice(start, start + limit), total: items.length, ...(start + limit < items.length ? { nextCursor: 'offset:' + (start + limit) } : {}) });
+    };
+    [scope, workspaceScope].forEach(function (template) {
+      handlers.GET[template] = async function (request, context) { return result(request, await runtime.discover(context, request.params.connectionId, request.params.workspaceId)); };
+    });
+    [scope + '/environment', workspaceScope + '/disk'].forEach(function (template) {
+      handlers.GET[template] = async function (request, context) {
+        return result(request, await runtime.environment({ connectionId: request.params.connectionId, workspaceId: request.params.workspaceId }, context, request.query && request.query.refresh, context.abortSignal));
+      };
+    });
+    Object.keys(OPERATIONS).filter(function (name) { return name !== 'desktop'; }).forEach(function (name) {
       var definition = OPERATIONS[name];
-      return new arp.RouteContract({
-        template: '/local/' + name, resourceType: 'LocalOperationResult', relation: 'local-' + name,
+      var template = directoryOperations.includes(name) ? workspaceScope + '/' + name : scope + '/desktop/' + name;
+      routes.push(new arp.RouteContract({
+        template: template, resourceType: 'LocalOperationResult', relation: 'local-' + name,
         summary: definition.summary, aliases: [name],
         tags: definition.desktop ? ['local', 'desktop', '桌面自动化', 'macOS', 'Windows'] : ['local', 'file', '本地文件', '命令'],
-        visible: function () { return runtime.isAvailable(); },
+        visible: function (_context, href) { return href.indexOf('{') < 0; },
         methods: { POST: {
           inputSchema: definition.inputSchema, outputSchema: { type: 'object' },
           safety: isRead(name, {}) ? 'read' : 'execute',
           idempotency: 'keyed', execution: 'sync', permissions: ['local.execute'], preconditions: [],
           relation: 'local-' + name, summary: definition.summary,
         } },
-      });
-    });
-    var handlers = { POST: {} };
-    Object.keys(OPERATIONS).forEach(function (name) {
-      handlers.POST['/local/' + name] = async function (request, context) {
-        var data = await runtime.execute(name, request.body, { signal: context.abortSignal });
+      }));
+      handlers.POST[template] = async function (request, context) {
+        var data = await runtime.execute(name, request.body, { signal: context.abortSignal, context: context,
+          expectedTarget: request.targetBinding,
+          target: { connectionId: request.params.connectionId, ...(request.params.workspaceId ? { workspaceId: request.params.workspaceId } : {}) } });
         if (name === 'screenshot') data = await attachScreenshot(data, context);
         return { statusCode: 200, primary: { uri: request.uri, type: 'LocalOperationResult', data: data },
-          receipt: { performed: isRead(name, request.body) ? 'no' : 'yes' } };
+          receipt: data.receipt || { performed: isRead(name, request.body) ? 'no' : 'yes' } };
       };
     });
-    return adapters.create({ root: 'local', resource: { routeContracts: routes, handlers: handlers } });
+    Object.keys(OPERATIONS).forEach(function (name) {
+      routes.push(new arp.RouteContract({ template: '/local/' + name, resourceType: 'LocalMigrationError', relation: 'legacy-local',
+        summary: '旧入口需要显式目标', deprecated: true, visible: function () { return false; }, methods: { POST: {
+          inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, safety: 'execute', idempotency: 'keyed', execution: 'sync', permissions: ['local.execute'], preconditions: [],
+        } } }));
+      handlers.POST['/local/' + name] = function () { throw arp.arpError('INVALID_REQUEST', '请先 GET /local，使用含连接和目录 ID 的执行链接', { performed: 'no', details: { reason: 'TARGET_REQUIRED', discovery: '/local' } }); };
+    });
+    async function resolveDescriptor(request, context, route) {
+      if (request.method !== 'POST' || !route.methods.POST || route.relation === 'legacy-local') return null;
+      var params = route.match(request.uri); var name = request.uri.split('/').pop();
+      var resolved = await runtime.target(name, { connectionId: params.connectionId, ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}) }, context);
+      var method = route.methods.POST; var input = method.inputSchema;
+      if (OPERATIONS[name].desktop && input.oneOf) {
+        var actions = resolved.connection.desktop.actions[name] || [];
+        input = { oneOf: input.oneOf.filter(function (variant) { return actions.includes(variant.properties.action.const); }) };
+      }
+      return new arp.CapabilityDescriptor({ method: 'POST', href: request.uri, relation: method.relation || route.relation,
+        summary: method.summary || route.summary, inputSchema: input, outputSchema: method.outputSchema,
+        safety: method.safety, idempotency: method.idempotency, execution: method.execution,
+        requiredPermissions: method.permissions, requiredPreconditions: method.preconditions });
+    }
+    var adapter = adapters.create({ root: 'local', resource: { routeContracts: routes, handlers: handlers, resolveCapabilityDescriptor: resolveDescriptor },
+      introspect: async function (context, request) {
+        var route = routes.find(function (item) { return item.match(request.uri); });
+        if (!route) return [];
+        var descriptor = await resolveDescriptor(Object.assign({}, request, { method: 'POST' }), context, route);
+        if (route.methods.POST) return descriptor ? [descriptor] : [];
+        var params = route.match(request.uri);
+        if (params.connectionId && /\/(environment|disk)$/.test(request.uri)) {
+          await runtime.target(params.workspaceId ? 'disk' : 'environment', { connectionId: params.connectionId,
+            ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}) }, context);
+        } else await runtime.discover(context, params.connectionId, params.workspaceId);
+        var method = route.methods.GET;
+        return [new arp.CapabilityDescriptor({ method: 'GET', href: request.uri, relation: route.relation, summary: route.summary,
+          inputSchema: method.inputSchema, outputSchema: method.outputSchema, safety: method.safety, idempotency: method.idempotency,
+          execution: method.execution, requiredPermissions: method.permissions, requiredPreconditions: method.preconditions })];
+      } });
+    adapter.prepareRequest = async function (context, request, route) {
+      if (request.method !== 'POST' || route.relation === 'legacy-local') return;
+      var params = route.match(request.uri); var name = request.uri.split('/').pop();
+      var resolved = await runtime.target(name, { connectionId: params.connectionId, ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}) }, context);
+      request.targetBinding = { serverId: resolved.snapshot.serverId, workspaceId: resolved.snapshot.workspaceId || null, resolvedPath: resolved.snapshot.resolvedPath || null };
+    };
+    return adapter;
   }
 
-  return Object.freeze({ OPERATIONS: OPERATIONS, createAdapter: createAdapter });
+  return Object.freeze({ OPERATIONS: OPERATIONS, ENVIRONMENT_INPUT_SCHEMA: ENVIRONMENT_INPUT_SCHEMA, isRead: isRead, createAdapter: createAdapter });
 });

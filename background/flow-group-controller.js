@@ -275,6 +275,7 @@
 
     function runChildAndWait(flowId, context, trigger, options, parentSession) {
       var childOptions = {
+        localCallerContext: options.localCallerContext || null,
         appAuthorization: options.appAuthorization || null,
         appConfig: options.appConfig || null,
         appNodeSets: options.appNodeSets || null,

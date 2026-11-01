@@ -1254,7 +1254,11 @@
     // 页面操作的事实约束是"必须有一个目标 tab"，而非入口类型：page/sidepanel
     // 入口自带绑定 tab；其他入口通过 query 或 body 里的 tabId 显式指定目标页面。
     // 显式 tabId 优先于入口绑定，使任何入口都能操作任意标签页。
-    function targetContext(context, request) {
+    async function targetContext(context, request) {
+      if (context && context.sourceConnectionId && typeof options.resolveTargetContext === 'function') {
+        try { return await options.resolveTargetContext(context, request); }
+        catch (error) { throw translateError(error, context); }
+      }
       var explicit = Number(request && request.query && request.query.tabId
         || request && request.body && request.body.tabId) || 0;
       if (!(explicit > 0)) return context;
@@ -1267,8 +1271,8 @@
       return next;
     }
 
-    function get(context, request) {
-      context = targetContext(context, request);
+    async function get(context, request) {
+      if (request.routeTemplate !== '/page/interactions/{interactionId}') context = await targetContext(context, request);
       var template = request.routeTemplate;
       var result;
       if (template === '/page/current') result = pageService.observe(context, request.query || {});
@@ -1311,8 +1315,8 @@
       }).catch(function (error) { throw translateError(error, context); });
     }
 
-    function post(context, request) {
-      context = targetContext(context, request);
+    async function post(context, request) {
+      context = await targetContext(context, request);
       var template = request.routeTemplate;
       var body = request.body || {};
       var operation;

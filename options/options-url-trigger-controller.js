@@ -154,6 +154,7 @@
     var initialized = false;
     var destroyed = false;
     var draft = null;
+    var draftBaselineRevision = 0;
     var draftSourceKey = '';
     var draftRevision = 0;
     var saveInFlight = null;
@@ -386,12 +387,12 @@
       list.innerHTML = renderConfigListItems(
         'url-triggers',
         items,
-        '<div class="placeholder">还没有 URL 触发器，点击「新建触发器」开始</div>',
+        draft ? '' : '<div class="placeholder">还没有 URL 触发器，点击「新建触发器」开始</div>',
         function (trigger) {
           var target = targetLabel(ownDataValue(trigger, 'flowId'));
           var key = sourceKey(trigger);
           return '<div class="item-card' + (draft && draftSourceKey === key ? ' selected' : '')
-            + '" data-action="edit-url-trigger" data-id="' + esc(key) + '">'
+            + '" role="button" tabindex="0" data-action="edit-url-trigger" data-id="' + esc(key) + '">'
             + '<span class="item-title">' + esc(ownDataValue(trigger, 'label') || '(未命名)') + '</span>'
             + '<span class="item-sub">' + esc(triggerPattern(trigger)) + ' → '
             + esc((target.known && target.kind === 'flowGroup' ? '流程组 · ' : '') + target.label) + '</span>'
@@ -425,7 +426,6 @@
         + '</div>'
         + '<div class="form-row"><label>URL 匹配模式（支持通配符 * ）</label><input type="text" id="urltrig-pattern" value="'
         + esc(triggerPattern(draft)) + '" placeholder="https://erp.company.com/report*"></div>'
-        + '<p class="form-help">示例：<code>https://erp.company.com/*</code> 或 <code>https://*.internal.com/dashboard</code></p>'
         + '<div class="form-row"><label class="switch-label"><input type="checkbox" id="urltrig-enabled"'
         + (ownDataValue(draft, 'enabled') !== false ? ' checked' : '')
         + '><span class="switch-slider"></span><span class="switch-text">启用</span></label></div>'
@@ -624,7 +624,7 @@
       return operation;
     }
 
-    function remove(triggerKey) {
+    async function remove(triggerKey) {
       if (destroyed) return Promise.resolve({ ok: false, destroyed: true });
       triggerKey = String(triggerKey || '');
       var entry;
@@ -643,7 +643,7 @@
       }
       var itemId = String(ownDataValue(entry.item, 'id') || '');
       if (!isSafeKey(itemId)) return validationFailure('URL 触发器缺少可寻址 ID，无法删除');
-      if (!confirmAction('确定删除该 URL 触发器？')) {
+      if (!await confirmAction('确定删除该 URL 触发器？')) {
         return Promise.resolve({ ok: false, canceled: true });
       }
       var operation = enqueueMutation(function () {
@@ -680,8 +680,19 @@
       return operation;
     }
 
-    function openNew() {
+    function isDirty() {
+      syncDraftFromEditor();
+      return !!draft && draftRevision !== draftBaselineRevision;
+    }
+
+    async function confirmDiscard() {
+      if (saveInFlight) return false;
+      return !isDirty() || await confirmAction('有未保存的修改，是否放弃？');
+    }
+
+    async function openNew() {
       if (destroyed) return { ok: false, destroyed: true };
+      if (!await confirmDiscard()) return { ok: false, cancelled: true };
       draft = Object.create(null);
       draft.label = '';
       draft.flowId = '';
@@ -689,6 +700,7 @@
       draft.enabled = true;
       draftSourceKey = '';
       draftRevision++;
+      draftBaselineRevision = draftRevision;
       if (isActive()) {
         render();
         scrollOpenedEditor('#url-trigger-editor');
@@ -696,8 +708,10 @@
       return { ok: true };
     }
 
-    function edit(triggerKey) {
+    async function edit(triggerKey) {
       if (destroyed) return { ok: false, destroyed: true };
+      if (draft && draftSourceKey === triggerKey) return { ok: true, retained: true };
+      if (!await confirmDiscard()) return { ok: false, cancelled: true };
       var entry;
       try {
         entry = findEntry(triggerKey);
@@ -710,6 +724,7 @@
       draft = cloneData(entry.item);
       draftSourceKey = entry.key;
       draftRevision++;
+      draftBaselineRevision = draftRevision;
       if (isActive()) {
         render();
         scrollOpenedEditor('#url-trigger-editor');
@@ -736,7 +751,7 @@
         return true;
       }
       if (action === 'cancel-url-trigger') {
-        clearDraft();
+        confirmDiscard().then(function (confirmed) { if (confirmed) clearDraft(); });
         return true;
       }
       if (action === 'delete-url-trigger') {
@@ -794,11 +809,14 @@
       render: render,
       handleAction: handleAction,
       clearDraft: clearDraft,
+      confirmDiscard: confirmDiscard,
+      isDirty: isDirty,
       getState: function () {
         return {
           initialized: initialized,
           destroyed: destroyed,
           saving: !!saveInFlight,
+          dirty: isDirty(),
           deleting: Object.keys(deleteInFlight).length > 0,
           draftId: draft && ownDataValue(draft, 'id') || '',
           revision: draftRevision,

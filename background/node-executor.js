@@ -437,7 +437,9 @@
     function execSendEmail(params, execution) {
       throwIfStopped();
       if (!mailClient) throw new Error('邮件发送服务尚未初始化');
-      return mailClient.send(params, { signal: execution && execution.signal });
+      var session = deps.getSession && deps.getSession();
+      return mailClient.send(params, { signal: execution && execution.signal,
+        context: Object.assign({ actorId: 'flow:' + (session && session.runId || 'node-debug'), runId: session && session.runId }, deps.localCallerContext || {}, session && session.localCallerContext || {}) });
     }
 
     function execLocalOperation(operation, params, execution) {
@@ -447,9 +449,17 @@
         return deps.authorizeApplication ? deps.authorizeApplication({ kind: 'local', command: operation }) : null;
       }).then(function () {
         throwIfStopped();
-        return deps.executeLocalOperation(operation, params, { signal: execution && execution.signal });
+        var session = deps.getSession && deps.getSession();
+        var context = Object.assign({ actorId: session ? 'flow:' + session.runId : 'ui:node-debug', permissionScope: ['local.execute'],
+          runId: session && session.runId || null }, deps.localCallerContext || {}, session && session.localCallerContext || {});
+        return deps.executeLocalOperation(operation, params, { signal: execution && execution.signal, target: execution && execution.localTarget,
+          context: context, targetSnapshots: session && session.localTargetSnapshots || localTargetSnapshots });
+      }).catch(function (error) {
+        if (!globalThis.LocalResource || !globalThis.LocalResource.isRead(operation, params)) error.retryable = false;
+        throw error;
       });
     }
+    var localTargetSnapshots = new Map();
 
     // --- 通用数据/集成节点 ---
 
@@ -597,6 +607,8 @@
         nodeId: node.nodeId || '',
         throwIfStopped: throwIfStopped,
         signal: execution && execution.signal || null,
+        localCallerContext: Object.assign({}, deps.localCallerContext || {}, session && session.localCallerContext || {},
+          session && session.appAuthorization ? { appAuthorization: session.appAuthorization } : {}),
       }).then(function (result) {
         logForExecution(execution, '助手完成: ' + (result.assistantName || result.assistantId)
           + ' (' + result.durationMs + 'ms)');

@@ -4,12 +4,13 @@ const fs = require('fs/promises');
 const { constants } = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const arp = require('../resources/protocol/index.js');
 const { OPERATIONS } = require('../resources/modules/local-resource.js');
 const { executeDesktop } = require('./desktop-operations.js');
+const { LIMITS } = require('../shared/mcp-contract');
+const { terminateChild, observeChild } = require('./execution-control');
 
-const MAX_FILE_BYTES = 4 * 1024 * 1024;
-const MAX_OUTPUT_BYTES = 64 * 1024;
+const MAX_FILE_BYTES = LIMITS.readBytes;
+const MAX_OUTPUT_BYTES = LIMITS.outputBytes;
 
 function localPath(value, directory) {
   if (value.includes('\0')) throw new Error('路径不能包含空字符');
@@ -70,16 +71,17 @@ async function readText(file, signal) {
   } finally { await handle.close(); }
 }
 
-function bash(input, signal, cwd) {
+function bash(input, signal, cwd, executable) {
   return new Promise((resolve, reject) => {
     checkCancelled(signal);
     const grouped = process.platform !== 'win32';
-    const child = spawn('bash', ['-c', input.command], { cwd, detached: grouped, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(executable, ['-c', input.command], { cwd, detached: grouped, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+    observeChild(signal, child);
     const stdout = [];
     const stderr = [];
     let bytes = 0;
     let truncated = false;
-    let timedOut = false;
+    let spawnError = null;
     const capture = chunks => chunk => {
       const remaining = MAX_OUTPUT_BYTES - bytes;
       if (chunk.length > remaining) truncated = true;
@@ -89,35 +91,36 @@ function bash(input, signal, cwd) {
         bytes += kept.length;
       }
     };
-    const kill = () => {
-      try { if (grouped) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch (_) {}
-    };
-    const timer = setTimeout(() => { timedOut = true; kill(); }, input.timeoutMs || 30000);
-    const cleanup = () => { clearTimeout(timer); signal.removeEventListener('abort', kill); };
+    const kill = () => { terminateChild(child, signal).catch(() => {}); };
+    const cleanup = () => { signal.removeEventListener('abort', kill); };
     signal.addEventListener('abort', kill, { once: true });
+    if (signal.aborted) kill();
     child.stdout.on('data', capture(stdout));
     child.stderr.on('data', capture(stderr));
-    child.once('error', error => { cleanup(); reject(error); });
+    child.once('error', error => { spawnError = error; });
     child.once('close', (exitCode, exitSignal) => {
       cleanup();
-      if (signal.aborted) { reject(new Error('命令已取消；已经完成的修改不会撤销')); return; }
+      if (spawnError) { reject(spawnError); return; }
       resolve({ cwd, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8'),
-        exitCode, signal: exitSignal, timedOut, truncated });
+        exitCode, signal: exitSignal, timedOut: signal.aborted && signal.reason === 'timeout',
+        cancelled: signal.aborted && exitSignal !== null, truncated });
     });
   });
 }
 
-async function execute(name, input, signal, workingDirectory) {
+async function execute(name, input, signal, workingDirectory, executable) {
   checkCancelled(signal);
+  if (OPERATIONS[name].desktop && name !== 'locate') return executeDesktop(name, input, signal, workingDirectory);
   if (!path.isAbsolute(workingDirectory)) throw new Error('工作目录必须是绝对路径');
   const directory = await fs.realpath(workingDirectory);
+  if (directory !== workingDirectory) throw Object.assign(new Error('执行目录已变化，请重新确认目标'), { code: 'DEPENDENCY_CHANGED', reason: 'WORKSPACE_CHANGED' });
   if (!(await fs.stat(directory)).isDirectory()) throw new Error('工作目录不存在或不是目录');
   checkCancelled(signal);
   if (OPERATIONS[name].desktop) return executeDesktop(name, input, signal, directory);
-  if (name === 'bash') return bash(input, signal, directory);
+  if (name === 'bash') return bash(input, signal, directory, executable);
   const file = localPath(input.path, directory);
   if (name === 'write') {
-    if (Buffer.byteLength(input.content, 'utf8') > 1024 * 1024) throw new Error('写入内容超过 1MB');
+    if (Buffer.byteLength(input.content, 'utf8') > LIMITS.writeBytes) throw new Error('写入内容超过 1MB');
     await checkedPath(directory, file, true);
     try {
       if (!(await fs.stat(file)).isFile()) throw new Error('只能写入普通文件');
@@ -160,11 +163,10 @@ async function execute(name, input, signal, workingDirectory) {
   let skipped = 0;
   let bytes = 0;
   let truncated = false;
-  const deadline = Date.now() + 60000;
   async function visit(target) {
     checkCancelled(signal);
     if (truncated) return;
-    if (++visited > 5000 || Date.now() > deadline) { truncated = true; return; }
+    if (++visited > LIMITS.grepEntries) { truncated = true; return; }
     const stat = await fs.lstat(target);
     if (stat.isSymbolicLink()) { skipped++; return; }
     await checkedPath(directory, target, false);
@@ -183,6 +185,7 @@ async function execute(name, input, signal, workingDirectory) {
     catch (error) { checkCancelled(signal); skipped++; return; }
     const lines = content.split('\n');
     for (let index = 0; index < lines.length; index++) {
+      if (index % 128 === 0) { await new Promise(resolve => setImmediate(resolve)); checkCancelled(signal); }
       if (!lines[index].includes(input.pattern)) continue;
       const match = { path: target, line: index + 1, text: lines[index] };
       const size = Buffer.byteLength(JSON.stringify(match), 'utf8');
@@ -195,44 +198,4 @@ async function execute(name, input, signal, workingDirectory) {
   return { path: file, matches, skipped, truncated };
 }
 
-function createLocalConnection(reply) {
-  let enabled = false;
-  let workingDirectory = '';
-  const active = new Map();
-  const seen = new Set();
-  function configure(value, directory) {
-    const nextDirectory = typeof directory === 'string' ? directory.trim() : '';
-    enabled = value === true && nextDirectory.length <= 4096 && path.isAbsolute(nextDirectory) && !nextDirectory.includes('\0');
-    if (!enabled || workingDirectory !== nextDirectory) for (const controller of active.values()) controller.abort();
-    workingDirectory = nextDirectory;
-  }
-  function handle(message) {
-    const requestId = message.requestId;
-    if (typeof requestId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(requestId)) return;
-    const respond = body => reply(Object.assign({ type: 'local.result', requestId }, body));
-    if (message.type === 'local.cancel') {
-      if (active.has(requestId)) active.get(requestId).abort();
-      return;
-    }
-    if (!enabled) { respond({ ok: false, error: '本地操作未启用或插件连接尚未完成握手' }); return; }
-    if (message.workingDirectory !== workingDirectory) { respond({ ok: false, error: '工作目录已变更，请使用当前连接配置' }); return; }
-    if (seen.has(requestId)) return;
-    if (seen.size >= 10000 || active.size >= 4) { respond({ ok: false, error: '本地操作请求过多，请稍后重试或重新连接' }); return; }
-    seen.add(requestId);
-    const definition = Object.prototype.hasOwnProperty.call(OPERATIONS, message.operation) && OPERATIONS[message.operation];
-    if (!definition || !arp.validateJsonSchema(definition.inputSchema, message.input).valid) {
-      respond({ ok: false, error: '无效的本地操作或参数' }); return;
-    }
-    const controller = new AbortController();
-    active.set(requestId, controller);
-    const directory = workingDirectory;
-    execute(message.operation, message.input, controller.signal, directory).then(result => respond({
-      ok: true, result: Object.assign({ workingDirectory: directory }, result),
-    }),
-      error => respond({ ok: false, error: error.message || '本地操作失败' }))
-      .finally(() => active.delete(requestId));
-  }
-  return { handle, configure, close: () => { configure(false, ''); seen.clear(); } };
-}
-
-module.exports = { createLocalConnection };
+module.exports = { execute, localPath, checkedPath };

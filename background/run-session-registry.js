@@ -402,6 +402,8 @@
     function commonSnapshot(session) {
       return {
         appAuthorization: safeClone(ownDataValue(session, 'appAuthorization') || null, null),
+        localCallerContext: safeClone(session.localCallerContext || null, null),
+        localTargetSnapshots: Array.from(session.localTargetSnapshots || []),
         appNodes: safeClone(ownDataValue(session, 'appNodes') || null, null),
         appConfig: safeClone(ownDataValue(session, 'appConfig') || null, null),
         runId: ownDataValue(session, 'runId'),
@@ -514,6 +516,7 @@
         var session = sessions[id];
         var adapted = adaptSessionLike(session);
         if (!adapted || !adapted.running) return;
+        if (ownDataValue(session, '_restartPending')) return;
         var expectedVersion = snapshotVersion(id);
         var lastSnapshotAt = Number(ownDataValue(session, 'lastRunningSnapshotAt')) || 0;
         if (!force && lastSnapshotAt && timestamp - lastSnapshotAt < runningSnapshotIntervalMs) return;

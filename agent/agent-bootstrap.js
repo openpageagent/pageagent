@@ -86,6 +86,7 @@
     });
     var coordinator = deps.coordinator.create({
       journal: journal,
+      resolveLocalTarget: options.resolveLocalTarget,
       executeGeneration: runtime.executeGeneration,
       reconcileGeneration: runtime.reconcileGeneration,
       runtimeInstanceId: options.runtimeInstanceId,

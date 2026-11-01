@@ -60,6 +60,7 @@
     var scheduleTaskKind = requireFunction(deps.scheduleTaskKind, 'scheduleTaskKind');
     var toast = requireFunction(deps.toast, 'toast');
     var confirm = requireFunction(deps.confirm, 'confirm');
+    var prompt = requireFunction(deps.prompt, 'prompt');
     var openDrawer = requireFunction(deps.openDrawer, 'openDrawer');
     var closeDrawer = requireFunction(deps.closeDrawer, 'closeDrawer');
     var loadConfig = requireFunction(deps.loadConfig, 'loadConfig');
@@ -230,7 +231,7 @@
             reject(error);
             return;
           }
-          resolve(response.payload);
+          resolve(response.payload === undefined ? response.result : response.payload);
         }
         try {
           var returned = chrome.runtime.sendMessage({ type: type, payload: safeClone(payload || {}) }, finish);
@@ -641,7 +642,14 @@
 
     function connectionForBackup(connection) {
       connection = connection && typeof connection === 'object' && !Array.isArray(connection) ? connection : {};
-      return safeClone(connection);
+      return { id: connection.id, alias: connection.alias, url: connection.url, enabled: connection.enabled === true,
+        expectedServerId: connection.expectedServerId || null, runTabMode: connection.runTabMode,
+        arpPermissions: safeClone(globalThis.McpContract.arpPermissions(connection.arpPermissions)),
+        desktopEnabled: connection.desktopEnabled === true, workspaces: (connection.workspaces || []).map(function (workspace) {
+          return { id: workspace.id, kind: workspace.kind, alias: workspace.alias,
+            ...(workspace.kind === 'custom' ? { path: workspace.path } : {}),
+            ...(workspace.lastResolvedPath ? { lastResolvedPath: workspace.lastResolvedPath } : {}), permissions: safeClone(workspace.permissions) };
+        }) };
     }
 
     function mailSettingsForBackup(raw) {
@@ -1006,7 +1014,7 @@
       if (moduleId === 'knowledge') return item.title || item.summary || id;
       if (moduleId === 'skills') return item.name || id;
       if (moduleId === 'mcpServers') return item.name || item.url || id;
-      if (moduleId === 'mcpSettings') return item.clientName || item.url || id;
+      if (moduleId === 'mcpSettings') return item.alias || item.url || id;
       if (moduleId === 'mailSettings') return item.fromName ? item.fromName + ' <' + item.from + '>' : item.from || 'SMTP 发件账户';
       return id;
     }
@@ -1095,13 +1103,13 @@
       }).join('');
       $('#drawer-title').textContent = '一键导出所有数据';
       $('#drawer-content').innerHTML =
-        '<p class="drawer-hint">按模块选择要写入 v7 备份包的数据。应用的必要依赖随应用一起导出，SDK 授权不导出。模型服务密钥和授权类请求头不会导出。</p>'
-        + '<label><input id="backup-app-data" type="checkbox" checked>包含应用业务数据</label>'
+        '<details class="reference-panel drawer-guide"><summary>备份导出说明</summary><div class="drawer-guide-content"><p><b>导出范围：</b>按模块选择，应用依赖自动包含；不含 SDK 授权、模型密钥和授权类请求头。</p></div></details>'
+        + '<section class="drawer-section"><h4>导出范围</h4><div class="form-row"><label class="switch-label"><input id="backup-app-data" type="checkbox" checked><span class="switch-slider"></span><span class="switch-text">包含应用业务数据</span></label></div>'
         + '<div class="backup-toolbar">'
         + '<button class="btn-small" data-action="select-all-export-backup">全选</button>'
         + '<button class="btn-small" data-action="clear-export-backup">清空</button>'
         + '</div>'
-        + '<div class="backup-module-list" id="backup-export-list">' + rows + '</div>';
+        + '<div class="backup-module-list" id="backup-export-list">' + rows + '</div></section>';
       $('#drawer-actions').innerHTML =
         '<button class="btn-secondary" data-action="cancel-drawer">取消</button>'
         + '<button class="btn-primary" data-action="confirm-export-backup">导出备份</button>';
@@ -1291,23 +1299,25 @@
       var exportedAt = pkg.exportedAt ? fmtTime(Date.parse(pkg.exportedAt)) : '未知时间';
       $('#drawer-title').textContent = '一键导入备份数据';
       $('#drawer-content').innerHTML =
-        '<p class="drawer-hint">选择要导入的模块和明细。所选条目会按 ID/key 写入并覆盖同名数据，未勾选的数据保持不变。</p>'
+        '<details class="reference-panel drawer-guide"><summary>备份导入说明</summary><div class="drawer-guide-content"><p><b>合并与替换：</b>合并按 ID/key 覆盖所选数据；替换会替换所选 Flow/FlowGroup 集合。</p><p><b>应用权限：</b>可选择本机生成范围；导入后 SDK 关闭，需到应用权限中启用。</p></div></details>'
+        + '<section class="drawer-section"><h4>导入方式</h4>'
         + '<div class="backup-import-meta">备份时间：' + esc(exportedAt) + ' · v' + esc(pkg.version) + '</div>'
         + '<div class="backup-import-meta"><label><input type="radio" name="backup-import-mode" value="merge" checked> 合并</label> '
-        + '<label><input type="radio" name="backup-import-mode" value="replace"> 替换所选 Flow/FlowGroup 集合</label></div>'
+        + '<label><input type="radio" name="backup-import-mode" value="replace"> 替换所选 Flow/FlowGroup 集合</label></div></section>'
+        + '<section class="drawer-section"><h4>导入范围</h4>'
         + '<div class="backup-toolbar">'
         + '<button class="btn-small" data-action="select-all-import-backup">全选</button>'
         + '<button class="btn-small" data-action="clear-import-backup">清空</button>'
         + '</div>'
-        + '<div class="backup-module-list" id="backup-import-list">' + rows + '</div>';
+        + '<div class="backup-module-list" id="backup-import-list">' + rows + '</div></section>';
       if (pkg.modules.apps) {
         var scopes = Object.keys(pkg.modules.apps.items).map(function (id) {
           var item = pkg.modules.apps.items[id];
-          return '<fieldset><legend>' + esc(item.name) + ' · 本机生成范围（导入后 SDK 仍关闭）</legend>' + root.AppContract.CAPABILITIES.map(function (capability) {
+          return '<fieldset class="backup-app-scope"><legend>' + esc(item.name) + ' · 本机生成范围（导入后 SDK 仍关闭）</legend>' + root.AppContract.CAPABILITIES.map(function (capability) {
             return '<label><input type="checkbox" data-app-import-scope="' + esc(id) + '" value="' + esc(capability) + '"' + ((item.generationScope || []).indexOf(capability) !== -1 ? ' checked' : '') + '>' + esc(capability) + '</label>';
           }).join(' ') + '</fieldset>';
         }).join('');
-        $('#drawer-content').insertAdjacentHTML('beforeend', scopes);
+        $('#drawer-content').insertAdjacentHTML('beforeend', '<section class="drawer-section"><h4>应用生成范围</h4>' + scopes + '</section>');
       }
       $('#drawer-actions').innerHTML =
         '<button class="btn-secondary" data-action="cancel-drawer">取消</button>'
@@ -2342,56 +2352,91 @@
       });
     }
 
-    function applyMcpSettingsBackupImport(pkg, plan) {
-      if (!hasOwn(plan, 'mcpSettings') || !pkg.modules.mcpSettings) return Promise.resolve('');
-      var module = pkg.modules.mcpSettings;
-      var items = backupModuleItemsObject(module);
-      var ids = selectedBackupIds(module, plan.mcpSettings);
-      var failures = [];
-      var succeeded = 0;
-      return readResourceCollection('/connections').then(function (currentItems) {
-        var current = dictionary();
-        currentItems.forEach(function (item) {
-          var id = String(item && item.id || '').trim();
-          if (id) setOwn(current, id, item);
+    async function prepareMcpImport(preflight) {
+      var pkg = preflight.package, plan = preflight.plan;
+      if (!hasOwn(plan, 'mcpSettings') || !pkg.modules.mcpSettings) { unbindMissingMcpReferences(preflight, {}); return; }
+      var current = await readResourceCollection('/connections'), records = [], aliases = new Set(current.map(function (item) { return item.alias.toLowerCase(); }));
+      var items = backupModuleItemsObject(pkg.modules.mcpSettings);
+      for (var id of selectedBackupIds(pkg.modules.mcpSettings, plan.mcpSettings)) {
+        var source = connectionForBackup(items[id]), existing = current.find(function (item) {
+          return item.id === id || source.expectedServerId && item.expectedServerId === source.expectedServerId;
         });
-        return ids.reduce(function (chain, id) {
-          return chain.then(function () {
-            var backupItem = items[id];
-            if (!backupItem || !hasOwn(current, id)) {
-              failures.push({ id: id, error: '当前扩展缺少备份所需的 MCP Connection' });
-              return;
-            }
-            var patch = dictionary();
-            ['enabled', 'url', 'clientName', 'runTabMode', 'localToolsEnabled', 'localWorkingDirectory'].forEach(function (key) {
-              if (hasOwn(backupItem, key)) setOwn(patch, key, safeClone(backupItem[key]));
-            });
-            if (!Object.keys(patch).length) {
-              failures.push({ id: id, error: '备份不包含任何受支持的 MCP Connection 配置字段' });
-              return;
-            }
-            var uri = '/connections/' + resourceSegment(id);
-            return resourceClient.get(uri).then(function () {
-              return resourceClient.authorizedPatch(uri, patch, backupResourceMutationOptions({
-                ifMatch: 'cached', criteria: { relation: 'connection' },
-              }));
-            }).then(function () { succeeded += 1; }).catch(function (error) {
-              failures.push({ id: id, error: errorText(error) });
-            });
-          });
-        }, Promise.resolve());
-      }).catch(function (error) {
-        failures.push({ id: 'connections:list', error: errorText(error) });
-      }).then(function () {
-        if (failures.length) {
-          var details = failures.map(function (failure) { return failure.id + ': ' + failure.error; }).join('；');
-          var error = backupError('mcp-settings-import-partial', backupModuleLabel('mcpSettings') + '导入失败项 (' + failures.length + '): ' + details);
-          error.failures = failures;
-          error.succeeded = succeeded;
-          throw error;
+        if (!source.workspaces.length) throw new Error('旧版连接备份缺少目录授权记录，请先迁移旧配置后重新导出：' + id);
+        var overwrite = existing && await confirm('连接导入预览：' + source.alias + '\n来源服务端：' + (source.expectedServerId || '未绑定')
+          + '\n来源启用：' + source.enabled + '；导入后禁用并需重新配对。\n是否明确覆盖现有连接「' + existing.alias + '」？', '导入连接', '覆盖现有连接', '作为新连接导入');
+        if (overwrite === null) throw new Error('已取消连接导入');
+        if (overwrite) aliases.delete(existing.alias.toLowerCase());
+        while (aliases.has(String(source.alias || '').trim().normalize('NFC').toLowerCase())) {
+          var name = await prompt('导入预览：连接别名「' + source.alias + '」已存在，请填写新别名', source.alias);
+          if (name === null) throw new Error('已取消连接导入'); source.alias = name;
         }
-        return succeeded ? backupModuleLabel('mcpSettings') : '';
+        source.alias = String(source.alias || '').trim().normalize('NFC'); aliases.add(source.alias.toLowerCase());
+        records.push({ source: source, ...(overwrite ? { overwriteId: existing.id, ifMatch: '"mcp-' + existing.configRevision + '"' } : {}) });
+      }
+      var preview = await runtimeMessage('MCP_CONNECTIONS_IMPORT', { records: records, preview: true });
+      preflight.mcpImportRecords = preview.records;
+      preflight.mcpMapping = preview.mapping;
+      preview.connections.forEach(function (connection) { setOwn(pkg.modules.mcpSettings.items, connection.id, connectionForBackup(connection)); });
+      if (plan.mcpSettings !== null) plan.mcpSettings = records.map(function (record) { return preview.mapping[record.source.id].connectionId; });
+      Object.keys(pkg.modules).filter(function (name) { return name !== 'mcpSettings' && hasOwn(plan, name); }).forEach(function (name) {
+        remapMcpReferences(pkg.modules[name], preview.mapping);
       });
+      unbindMissingMcpReferences(preflight, preview.mapping);
+    }
+
+    function unbindMissingMcpReferences(preflight, imported) {
+      var known = new Set(Object.values(imported).map(function (entry) { return entry.connectionId; })), missing = Object.create(null);
+      function scan(value) {
+        if (!value || typeof value !== 'object') return;
+        var id = typeof value.connectionId === 'string' && value.connectionId;
+        var match = typeof value.uri === 'string' && /^\/(?:local\/)?connections\/([^/]+)/.exec(value.uri);
+        if (!id && match) id = decodeURIComponent(match[1]);
+        if (id && !known.has(id)) {
+          if (!hasOwn(missing, id)) missing[id] = { connectionId: crypto.randomUUID(), workspaces: Object.create(null) };
+          if (value.workspaceId) missing[id].workspaces[value.workspaceId] = value.workspaceId;
+          var workspace = match && /\/workspaces\/([^/]+)/.exec(value.uri);
+          if (workspace) missing[id].workspaces[decodeURIComponent(workspace[1])] = decodeURIComponent(workspace[1]);
+        }
+        Object.keys(value).filter(function (key) { return !['journalBackup', 'history', 'events', 'messages'].includes(key); }).forEach(function (key) { scan(value[key]); });
+      }
+      Object.keys(preflight.package.modules).filter(function (name) { return name !== 'mcpSettings' && hasOwn(preflight.plan, name); }).forEach(function (name) { scan(preflight.package.modules[name]); });
+      Object.keys(preflight.package.modules).filter(function (name) { return name !== 'mcpSettings' && hasOwn(preflight.plan, name); }).forEach(function (name) { remapMcpReferences(preflight.package.modules[name], missing); });
+      preflight.unboundMcpReferences = Object.keys(missing).length;
+    }
+
+    function remapMcpReferences(value, mapping) {
+      if (!value || typeof value !== 'object') return;
+      if (!Array.isArray(value) && typeof value.connectionId === 'string' && hasOwn(mapping, value.connectionId)) {
+        var target = mapping[value.connectionId]; value.connectionId = target.connectionId;
+        if (typeof value.workspaceId === 'string') {
+          if (!hasOwn(target.workspaces, value.workspaceId)) throw new Error('导入引用的 MCP 目录不存在：' + value.workspaceId);
+          value.workspaceId = target.workspaces[value.workspaceId];
+        }
+      }
+      if (value.module === 'mcpSettings' && typeof value.id === 'string' && hasOwn(mapping, value.id)) value.id = mapping[value.id].connectionId;
+      Object.keys(value).filter(function (key) { return !['journalBackup', 'history', 'events', 'messages'].includes(key); }).forEach(function (key) { remapMcpReferences(value[key], mapping); });
+      if (typeof value.uri === 'string') {
+        var match = /^\/(?:local\/)?connections\/([^/]+)(.*)$/.exec(value.uri);
+        if (match && hasOwn(mapping, decodeURIComponent(match[1]))) {
+          var entry = mapping[decodeURIComponent(match[1])], tail = match[2];
+          tail = tail.replace(/^\/workspaces\/([^/]+)/, function (_all, id) {
+            if (!hasOwn(entry.workspaces, decodeURIComponent(id))) throw new Error('导入引用的 MCP 目录不存在');
+            return '/workspaces/' + encodeURIComponent(entry.workspaces[decodeURIComponent(id)]);
+          });
+          value.uri = (value.uri.startsWith('/local/') ? '/local' : '') + '/connections/' + encodeURIComponent(entry.connectionId) + tail;
+        }
+      }
+    }
+
+    async function applyMcpSettingsBackupImport(pkg, plan, preflight) {
+      if (!hasOwn(plan, 'mcpSettings') || !pkg.modules.mcpSettings) return Promise.resolve('');
+      var result = await runtimeMessage('MCP_CONNECTIONS_IMPORT', { records: preflight.mcpImportRecords });
+      result.connections.forEach(function (connection) { setOwn(pkg.modules.mcpSettings.items, connection.id, connectionForBackup(connection)); });
+      preflight.importSource = plainClone(pkg);
+      var importedItems = dictionary(), importedIds = result.connections.map(function (connection) { setOwn(importedItems, connection.id, connectionForBackup(connection)); return connection.id; });
+      preflight.importSource.modules.mcpSettings = { label: backupModuleLabel('mcpSettings'), source: '/connections', items: importedItems, order: importedIds };
+      preflight.importSourcePlan = plainClone(preflight.originalPlan || plan); preflight.importSourcePlan.mcpSettings = importedIds;
+      return result.connections.length ? backupModuleLabel('mcpSettings') + '（已禁用，需重新配对；引用已重映射）' : '';
     }
 
     function importedModelSettingsFocusServiceId(pkg, plan) {
@@ -2439,6 +2484,9 @@
       var plan = preflight.plan;
       var steps = [];
       function add(id, run) { steps.push({ id: id, run: run }); }
+      if (hasOwn(plan, 'mcpSettings')) {
+        add('mcpSettings', function () { return applyMcpSettingsBackupImport(pkg, plan, preflight); });
+      }
       if (hasOwn(plan, 'modelSettings')) {
         add('modelSettings', function () { return applyModelSettingsBackupImport(pkg, plan); });
       }
@@ -2460,9 +2508,6 @@
       if (hasOwn(plan, 'mcpServers')) {
         add('mcpServers', function () { return applyMcpServersBackupImport(pkg, plan); });
       }
-      if (hasOwn(plan, 'mcpSettings')) {
-        add('mcpSettings', function () { return applyMcpSettingsBackupImport(pkg, plan); });
-      }
       if (hasOwn(plan, 'mailSettings')) {
         add('mailSettings', function () { return applyMailSettingsBackupImport(pkg, plan); });
       }
@@ -2474,8 +2519,8 @@
 
     function retryData(preflight) {
       return {
-        package: preflight.package,
-        plan: plainClone(preflight.originalPlan || preflight.plan),
+        package: preflight.importSource || preflight.package,
+        plan: plainClone(preflight.importSourcePlan || preflight.originalPlan || preflight.plan),
         mode: preflight.importMode,
       };
     }
@@ -2484,6 +2529,7 @@
       var steps = buildImportSteps(preflight);
       var completed = [];
       var summary = [];
+      if (preflight.unboundMcpReferences) summary.push('未一并导入的连接引用已标记失效，请在目标编辑器重新绑定');
       var failures = [];
       var index = 0;
 
@@ -2522,6 +2568,8 @@
         }).catch(function (error) {
           if (error && Array.isArray(error.completed)) completed.push.apply(completed, error.completed);
           failures.push({ step: step.id, error: errorText(error), items: error && error.failures || [] });
+          if (step.id === 'mcpSettings') return { ok: false, partial: completed.length > 0, completed: completed.slice(), failedStep: step.id,
+            failures: failures.slice(), error: errorText(error), retry: retryData(preflight) };
           index++;
           return runNext();
         });
@@ -2535,6 +2583,8 @@
       var operation = Promise.resolve().then(function () {
         return preflightImport(raw, rawPlan, rawMode);
       }).then(async function (preflight) {
+        preflight.importSource = plainClone(preflight.package); preflight.importSourcePlan = plainClone(preflight.plan);
+        await prepareMcpImport(preflight);
         if (preflight.plan.apps !== undefined) {
           if (preflight.importMode !== 'merge') throw new Error('导入应用及其共享依赖请使用“合并”，以保留兼容资源及其他应用的配置');
           var scopes = {};
@@ -2543,10 +2593,11 @@
             scopes[id] = inputs.length ? inputs.filter(function (input) { return input.checked; }).map(function (input) { return input.value; }) : preflight.package.modules.apps.items[id].generationScope;
           });
           preflight.appScopes = scopes;
-          var appCheck = await root.AppBackup.preflight(preflight.package, preflight.plan, scopes);
+          var appCheck = await root.AppBackup.preflight(preflight.package, preflight.plan, scopes, !!preflight.mcpMapping, confirm);
           preflight.appExpected = appCheck.revisions;
           preflight.originalPlan = plainClone(preflight.plan);
           appCheck.reuse.forEach(function (item) {
+            if (item.module === 'mcpSettings') return;
             if (!hasOwn(preflight.plan, item.module)) return;
             if (preflight.plan[item.module] === null) preflight.plan[item.module] = selectableBackupIds(item.module, preflight.package.modules[item.module]);
             preflight.plan[item.module] = preflight.plan[item.module].filter(function (id) { return id !== item.id; });
@@ -2576,7 +2627,7 @@
       return operation;
     }
 
-    function importSelectedBackup() {
+    async function importSelectedBackup() {
       if (importUiInFlight) return importUiInFlight;
       if (!pendingBackupImport || !pendingBackupImport.package) {
         if (!destroyed) toast('请先选择备份文件', true);
@@ -2590,7 +2641,7 @@
         if (!destroyed) toast('请选择至少一个模块或明细', true);
         return Promise.resolve({ ok: false, partial: false, completed: [], failedStep: 'selection', retry: null, error: '请选择至少一个模块或明细' });
       }
-      if (!confirm(importMode === 'replace'
+      if (!await confirm(importMode === 'replace'
           ? '替换模式会先删除现有的所选 Flow/FlowGroup 集合，再导入备份条目。确定继续？'
           : '导入将写入所选数据，并覆盖相同 ID/key 的现有数据。未勾选数据会保留。确定继续？')) {
         return Promise.resolve({ ok: false, canceled: true, partial: false, completed: [], failedStep: null, retry: null, error: '用户取消导入' });
@@ -2781,7 +2832,8 @@
       handleAction: handleAction,
       openExportBackupDrawer: openExportBackupDrawer,
       exportApp: async function (appId) {
-        var includeData = confirm('导出时包含此应用的业务数据？选择“取消”将仅导出源码、主题与依赖。');
+        var includeData = await confirm('导出时是否包含此应用的业务数据？', '导出应用', '包含业务数据', '仅导出源码与依赖');
+        if (includeData === null || destroyed) return;
         var modules = await root.AppBackup.exportApps([appId], includeData);
         var pkg = createBackupPackage(modules, Object.keys(modules));
         var blob = await root.AppBackup.work('serialize', { value: pkg, limit: maxBackupBytes });

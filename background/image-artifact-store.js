@@ -78,6 +78,7 @@
       turnId: String(record.turnId || ''),
       sourcePage: record.sourcePage && typeof record.sourcePage === 'object' ? Object.assign({}, record.sourcePage) : null,
       sourceKind: String(record.sourceKind || ''),
+      serverId: String(record.serverId || ''), connectionId: String(record.connectionId || ''),
       acquisitionSource: String(record.acquisitionSource || ''),
       representation: String(record.representation || ''),
       mimeType: String(record.mimeType || ''),
@@ -414,7 +415,7 @@
       }
       var dimensions = await decodedDimensions(blob);
       var digest = await sha256(sourceBuffer);
-      var dedupKey = digest + '|' + mimeType;
+      var dedupKey = digest + '|' + mimeType + (metadata.connectionId ? '|' + metadata.serverId + '|' + metadata.connectionId : '');
       var topicId = String(metadata.topicId || '').trim();
       var bindingKey = topicBindingKey(topicId);
       var existing = await findByDedupKey(dedupKey);
@@ -456,6 +457,7 @@
           ? { tabId: Number(metadata.sourcePage.tabId) || 0, origin: String(metadata.sourcePage.origin || '') }
           : null,
         sourceKind: String(metadata.sourceKind || ''),
+        serverId: String(metadata.serverId || ''), connectionId: String(metadata.connectionId || ''),
         acquisitionSource: String(metadata.acquisitionSource || ''),
         representation: String(metadata.representation || ''),
         mimeType: mimeType,
@@ -542,6 +544,7 @@
         turnId: String(metadata.turnId || ''),
         sourcePage: null,
         sourceKind: String(metadata.sourceKind || 'imported-conversation-media'),
+        serverId: String(metadata.serverId || ''), connectionId: String(metadata.connectionId || ''),
         acquisitionSource: String(metadata.acquisitionSource || 'imported-artifact'),
         representation: String(metadata.representation || 'original'),
         mimeType: mimeType,

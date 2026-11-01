@@ -784,14 +784,22 @@
         derivedFacts.createdTab = factContract.clone(createdTab || {});
         derivedFacts.tabId = actualTabId;
         derivedFacts.url = String(createdTab && (createdTab.pendingUrl || createdTab.url) || createProperties.url || '');
+        // The browser response proves tab creation, independently of page loading.
+        derivedFacts.businessState = { kind: 'createTab', confirmed: actualTabId > 0, tabId: actualTabId };
         responses.push({ method: 'chrome.tabs.create', response: factContract.clone(createdTab || {}), completedAt: new Date().toISOString() });
       } else if (intent.kind === 'activateTab') {
         beginExecution();
         var tab = await boundedCall(function () { return chromeApi.tabs.get(intent.tabId); }, actionDeadline, 'read-tab', intent.signal);
         mutationAttempted = true;
-        responses.push({ method: 'chrome.tabs.update', response: await boundedCall(function () { return chromeApi.tabs.update(intent.tabId, { active: true }); }, actionDeadline, 'activate-tab', intent.signal), completedAt: new Date().toISOString() });
+        var activatedTab = await boundedCall(function () { return chromeApi.tabs.update(intent.tabId, { active: true }); }, actionDeadline, 'activate-tab', intent.signal);
+        responses.push({ method: 'chrome.tabs.update', response: activatedTab, completedAt: new Date().toISOString() });
+        derivedFacts.businessState = { kind: 'activateTab', tabId: intent.tabId,
+          confirmed: !!activatedTab && Number(activatedTab.id) === intent.tabId && activatedTab.active === true };
         if (intent.input.focusWindow === true) {
-          responses.push({ method: 'chrome.windows.update', response: await boundedCall(function () { return chromeApi.windows.update(tab.windowId, { focused: true }); }, actionDeadline, 'focus-window', intent.signal), completedAt: new Date().toISOString() });
+          var focusedWindow = await boundedCall(function () { return chromeApi.windows.update(tab.windowId, { focused: true }); }, actionDeadline, 'focus-window', intent.signal);
+          responses.push({ method: 'chrome.windows.update', response: focusedWindow, completedAt: new Date().toISOString() });
+          derivedFacts.businessState.windowFocused = !!focusedWindow && Number(focusedWindow.id) === Number(tab.windowId) && focusedWindow.focused === true;
+          derivedFacts.businessState.confirmed = derivedFacts.businessState.confirmed && derivedFacts.businessState.windowFocused;
         }
       } else if (intent.kind === 'closeTab') {
         beginExecution();
@@ -804,6 +812,7 @@
           throw error;
         }
         responses.push({ method: 'chrome.tabs.remove', response: { closed: true }, completedAt: new Date().toISOString() });
+        derivedFacts.businessState = { kind: 'closeTab', confirmed: true, tabId: intent.tabId, closed: true };
       } else if (intent.kind === 'handleDialog') {
           var dialogStartedAt = new Date().toISOString();
           derivedFacts.dialog = await armDialog(intent, beginExecution, actionDeadline, function () { mutationAttempted = true; });

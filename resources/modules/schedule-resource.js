@@ -72,6 +72,10 @@
     taskType: { type: 'string', enum: ['flow', 'flowGroup', 'conversation'] },
     flowId: { type: 'string', maxLength: 240 }, flowGroupId: { type: 'string', maxLength: 240 },
     assistantId: { type: 'string', maxLength: 240 }, message: { type: 'string', maxLength: 200000 },
+    localTarget: { type: ['object', 'null'], properties: {
+      connectionId: { type: 'string', minLength: 1, maxLength: 200 }, serverId: { type: 'string', minLength: 1, maxLength: 200 },
+      workspaceId: { type: 'string', minLength: 1, maxLength: 200 }, resolvedPath: { type: 'string', minLength: 1, maxLength: 4096 },
+    }, required: ['connectionId', 'serverId'], additionalProperties: false },
     context: { type: 'object', description: '每次运行的输入参数；流程/流程组使用初始上下文，对话附加 JSON 内容' },
     calendar: CALENDAR_SCHEMA,
     includeCalendar: { type: 'boolean', description: '将已保存的日历信息放入 context.calendar；日期筛选启用时自动传入，不联网' },
@@ -106,6 +110,7 @@
       taskType: SCHEDULE_PROPERTIES.taskType, flowId: SCHEDULE_PROPERTIES.flowId,
       flowGroupId: SCHEDULE_PROPERTIES.flowGroupId, assistantId: SCHEDULE_PROPERTIES.assistantId,
       message: SCHEDULE_PROPERTIES.message, trigger: TRIGGER_PATCH_SCHEMA,
+      localTarget: SCHEDULE_PROPERTIES.localTarget,
       context: SCHEDULE_PROPERTIES.context,
       calendar: { anyOf: [CALENDAR_SCHEMA, { type: 'null' }], description: '设为 null 可删除已保存的日历配置' },
       includeCalendar: SCHEDULE_PROPERTIES.includeCalendar,

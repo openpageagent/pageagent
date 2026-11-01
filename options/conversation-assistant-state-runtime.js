@@ -115,15 +115,14 @@
       if (!state || !topic) return topic;
       var snapshotAssistantId = topic.assistantSnapshot
         && String(topic.assistantSnapshot.id || '').trim();
-      if (!ownValue(state.assistants, topic.assistantId)
+      if (!topic.assistantId
           && snapshotAssistantId && ownValue(state.assistants, snapshotAssistantId)) {
         topic.assistantId = snapshotAssistantId;
         markStateNeedsPersist(state);
       }
       var assistant = ownValue(state.assistants, topic.assistantId);
-      // A missing Assistant makes the topic an orphan. Keep its original
-      // identity intact so the background reconciler can delete the complete
-      // topic/Journal/artifact chain instead of silently reassigning it.
+      // Configuration switching can temporarily remove an Assistant. Preserve
+      // the topic's identity so restoring that Assistant reconnects its history.
       if (!assistant) return topic;
       if (!topic.assistantSnapshot) {
         topic.assistantSnapshot = snapshot(assistant);
@@ -151,11 +150,15 @@
       return state;
     }
 
-    function createAssistant(state, input) {
+    function createAssistant(state, input, restoredId) {
       input = input && typeof input === 'object' && !Array.isArray(input)
         ? schemaApi.safeMerge(input)
         : {};
-      var assistantId = nowId('asst');
+      if (restoredId !== undefined && (typeof restoredId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(restoredId)
+          || ['constructor', 'prototype', '__proto__'].includes(restoredId) || ownValue(state.assistants, restoredId))) {
+        throw new Error('配置恢复助手 ID 无效或已存在');
+      }
+      var assistantId = restoredId || nowId('asst');
       var assistant = profileSchema.normalizeProfile(input, { id: assistantId });
       assistant.id = assistantId;
       assistant.name = compactString(

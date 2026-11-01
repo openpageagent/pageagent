@@ -26,6 +26,8 @@
     var getInitialRunTabMode = deps.getInitialRunTabMode || (function () { return DEFAULT_RUN_TAB_MODE; });
     var onRunTabModeChanged = deps.onRunTabModeChanged || (function () {});
     var fixedTabId = 0;
+    var requestTabId = 0;
+    var requestTargetQueue = Promise.resolve();
 
     function errorMessage(error) {
       return String(error && error.message || error || '');
@@ -224,6 +226,61 @@
       });
     }
 
+    // External /page requests have no configured page source. Bind their
+    // default target independently of flow/node tab allocation.
+    function resolveRequestTab(options) {
+      options = options || {};
+      var mode = normalizeRunTabMode(getInitialRunTabMode(), DEFAULT_RUN_TAB_MODE);
+      function targetError(code, message) {
+        return Object.assign(new Error(message), { code: code, performed: 'no', retryable: false });
+      }
+      function checkCancelled() {
+        if (options.signal && options.signal.aborted) throw targetError('UPSTREAM_FAILED', 'MCP 页面请求已取消，尚未执行页面操作');
+      }
+      function checkTab(tab) {
+        checkCancelled();
+        if (!tab || !(Number(tab.id) > 0)) throw targetError('RESOURCE_NOT_FOUND', '没有可用的当前标签页；请显式指定 tabId');
+        if (tab.incognito !== (options.incognito === true)) throw targetError('FORBIDDEN', '目标标签页不属于当前普通／隐私上下文');
+        return tab;
+      }
+      async function resolve() {
+        checkCancelled();
+        if (Number(options.tabId) > 0) {
+          try { return checkTab(await chrome.tabs.get(Number(options.tabId))); }
+          catch (error) {
+            if (!isMissingTabError(error)) throw error;
+            throw targetError('RESOURCE_NOT_FOUND', '指定的标签页不存在: tabId=' + options.tabId);
+          }
+        }
+        if (mode === RUN_TAB_MODE_REUSE_OPEN) return checkTab(await getCurrentTab());
+        if (requestTabId) {
+          try { return checkTab(await chrome.tabs.get(requestTabId)); }
+          catch (error) {
+            if (!isMissingTabError(error)) throw error;
+            throw targetError('RESOURCE_GONE', 'MCP 固定标签页已关闭；请显式指定 tabId，或重新连接以重新绑定');
+          }
+        }
+        var current = checkTab(await getCurrentTab());
+        if (mode === RUN_TAB_MODE_FIXED_CURRENT) {
+          requestTabId = current.id;
+          return current;
+        }
+        var url = String(current.pendingUrl || current.url || '');
+        if (!/^https?:\/\//i.test(url)) throw targetError('INVALID_REQUEST', '固定打开标签需要当前页为 HTTP(S) 页面；也可显式指定 tabId');
+        // Once creation starts, retain its result even if the caller cancels.
+        // This prevents a later request from creating another untracked tab.
+        var created = await createTab({ url: url, windowId: current.windowId, active: false });
+        requestTabId = created.id;
+        return checkTab(created);
+      }
+      if (Number(options.tabId) > 0 || mode === RUN_TAB_MODE_REUSE_OPEN) return resolve();
+      // Serialize only default target selection, not page operations. Concurrent
+      // first requests must see the same fixed tab.
+      var pending = requestTargetQueue.then(resolve);
+      requestTargetQueue = pending.catch(function () {});
+      return pending;
+    }
+
     function ensurePageTab(pageId, options) {
       options = options || {};
       var source = 'page:' + pageId;
@@ -364,6 +421,7 @@
     }
 
     return {
+      resolveRequestTab: resolveRequestTab,
       ensurePageTab: ensurePageTab,
       getPageTabForDebug: ensurePageTab,
       createTabAccess: createTabAccess,

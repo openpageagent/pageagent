@@ -6,6 +6,8 @@
   <title>Page Agent 配置中心</title>
   <link rel="stylesheet" href="options.css">
   <link rel="stylesheet" href="options-app.css">
+  <link rel="stylesheet" href="../ui/tabs.css">
+  <link rel="stylesheet" href="../builtin-apps/shared/drag-preview.css">
 </head>
 <body>
   <div id="app">
@@ -51,7 +53,17 @@
           <h2>页面配置</h2>
           <button class="btn-primary" id="btn-new-page">新建页面</button>
         </header>
-        <p class="section-desc">定义网页地址与匹配规则，按需设置页面会话保活、网络请求捕获和标签页关闭行为。</p>
+        <p class="section-desc">点击卡片编辑网页地址、匹配规则和页面行为，修改后点击「保存」。内置页面需复制为用户页面后编辑。</p>
+        <details class="reference-panel drawer-guide">
+          <summary>页面配置说明</summary>
+          <div class="drawer-guide-content">
+            <p><b>页面匹配：</b>URL 的域名自动纳入匹配；额外域名每行一个，「URL 包含」区分同域名页面。</p>
+            <p><b>网络捕获：</b>供「获取请求返回数据」节点使用，修改开关后需刷新目标页面。</p>
+            <p><b>自动关闭：</b>流程成功后仅关闭本次新开的标签页，保留复用标签页。</p>
+            <p><b>会话保活：</b>在已打开且未被浏览器丢弃的匹配页面中定时请求，携带 Cookie，不刷新页面。请用无业务副作用的查询接口；能否延长会话取决于服务端。</p>
+            <p><b>保活参数：</b>URL 可用相对路径，间隔单位为分钟；请求头支持 JSON 或每行 <code>Key: Value</code>，请求体仅用于 POST。状态码用逗号分隔，支持 <code>200-299,304</code> 等范围。</p>
+          </div>
+        </details>
         <div id="pages-list" class="item-list"></div>
         <div id="page-editor" class="editor hidden"></div>
       </section>
@@ -66,7 +78,16 @@
             <input type="file" id="file-import-flow" accept="application/json" hidden>
           </div>
         </header>
-        <p class="section-desc">将节点编排为顺序执行的流程。流程可在运行时接收输入，节点输出会形成流程输出并供下游节点引用。</p>
+        <p class="section-desc">将节点编排为顺序执行的流程。点击卡片编辑，节点输出可供后续节点引用；内置流程需复制为用户流程后修改。</p>
+        <details class="reference-panel drawer-guide">
+          <summary>流程配置说明</summary>
+          <div class="drawer-guide-content">
+            <p><b>输入输出：</b>说明用途、前置页面状态和数据结构；入参示例仅预填 JSON，不生成表单或强制校验。</p>
+            <p><b>标签策略：</b>决定运行时使用的标签页，流程组步骤可覆盖。</p>
+            <p><b>数据集：</b>填写 JSON 数组，每项运行一遍；用 <code>{{data.字段}}</code> 引用当前数据。</p>
+            <p><b>编辑与保存：</b>点击节点主体编辑，拖拽图标与标题区域排序；节点和通知修改后，还需「保存流程」。</p>
+          </div>
+        </details>
         <div id="flows-list" class="item-list"></div>
         <div id="flow-editor" class="editor hidden"></div>
       </section>
@@ -81,7 +102,15 @@
             <input type="file" id="file-import-flowGroup" accept="application/json" hidden>
           </div>
         </header>
-        <p class="section-desc">将多个已保存流程编排为业务流程。流程组按顺序运行流程，后一个流程自动接收上一个流程的输出。</p>
+        <p class="section-desc">将多个已保存流程编排为业务流程。点击卡片编辑；内置流程组需复制为用户流程组后修改。</p>
+        <details class="reference-panel drawer-guide">
+          <summary>流程组合说明</summary>
+          <div class="drawer-guide-content">
+            <p><b>输入输出：</b>说明场景和数据约定；入参示例仅预填 JSON，不生成表单、设置出参路径或强制校验。</p>
+            <p><b>执行顺序：</b>第一步接收流程组入参，后续步骤接收上一步输出。</p>
+            <p><b>步骤策略：</b>可覆盖标签策略，设置失败后是否继续。点击主体编辑，拖拽标题区域排序；修改后还需「保存流程组」。</p>
+          </div>
+        </details>
         <div id="flowGroups-list" class="item-list"></div>
         <div id="flowGroup-editor" class="editor hidden"></div>
       </section>
@@ -144,7 +173,16 @@ return result                                          // 返回值写入节点�
           <h2>定时任务</h2>
           <button class="btn-primary" id="btn-new-schedule">新建定时任务</button>
         </header>
-        <p class="section-desc">按间隔、每天多个时刻、指定日期或 Cron 运行流程、流程组或对话，支持输入参数。指定日期时可用日历批量选择工作日、节假日。时刻以浏览器所在时区为准；浏览器需保持运行，错过超过 5 分钟的固定时刻不补跑。</p>
+        <p class="section-desc">按固定间隔、每天多个时刻、指定日期或 Cron，自动运行流程、流程组或对话，支持输入参数。</p>
+        <details class="reference-panel drawer-guide">
+          <summary>定时任务说明</summary>
+          <div class="drawer-guide-content">
+            <p><b>任务配置：</b>绑定流程、流程组或助手并设置触发方式；修改配置或启停状态后需保存。</p>
+            <p><b>输入参数：</b>填写 JSON 对象，流程和流程组会预填示例；对话任务还需填写消息。</p>
+            <p><b>指定日期：</b>手动添加或从日历勾选；点击「采用勾选日期」后保存，按已存日期运行。</p>
+            <p><b>运行条件：</b>使用浏览器时区，浏览器需保持运行；错过超过 5 分钟的固定时刻不补跑。</p>
+          </div>
+        </details>
         <div id="schedules-list" class="item-list"></div>
         <div id="schedule-editor" class="editor hidden"></div>
       </section>
@@ -155,7 +193,14 @@ return result                                          // 返回值写入节点�
           <h2>URL 触发器</h2>
           <button class="btn-primary" id="btn-new-url-trigger">新建触发器</button>
         </header>
-        <p class="section-desc">当浏览器打开匹配的页面时自动执行流程。URL 模式支持通配符 <code>*</code>，如 <code>https://erp.company.com/*</code>。</p>
+        <p class="section-desc">当浏览器打开匹配的页面时，自动执行绑定的流程或流程组。</p>
+        <details class="reference-panel drawer-guide">
+          <summary>URL 触发器说明</summary>
+          <div class="drawer-guide-content">
+            <p><b>匹配规则：</b>绑定流程或流程组，URL 支持通配符 <code>*</code>，如 <code>https://*.example.com/*</code>。</p>
+            <p><b>启停与结果：</b>关闭「启用」并保存后停止后续触发；运行结果见「流程报告」。</p>
+          </div>
+        </details>
         <div id="url-triggers-list" class="item-list"></div>
       </section>
 
@@ -172,173 +217,107 @@ return result                                          // 返回值写入节点�
           </div>
         </header>
         <p class="section-desc">集中查看流程与流程组的运行结果、节点统计、失败样本、warn/error 事件和可导出的流程报告。</p>
+        <details class="reference-panel drawer-guide">
+          <summary>流程报告说明</summary>
+          <div class="drawer-guide-content">
+            <p><b>报告详情：</b>点击记录查看节点结果、耗时、失败样本和警告／错误；顶部展示汇总统计。</p>
+            <p><b>导出：</b>支持单次或批量 JSON、HTML，以及失败样本 CSV。</p>
+            <p><b>历史清理：</b>支持单条、按日期或全部清理，保留活动中的记录。</p>
+          </div>
+        </details>
         <div id="runs-list" class="item-list"></div>
       </section>
 
       <!-- MCP 服务器 -->
       <section id="section-mcp" class="section">
+        <div class="mcp-settings-group" role="group" aria-labelledby="mcp-connections-title">
         <header class="section-header">
-          <h2>MCP 服务器连接</h2>
+          <h2 id="mcp-connections-title">MCP 服务器连接</h2>
+          <div>
+            <button type="button" id="btn-mcp-client-settings" class="btn-secondary" aria-haspopup="dialog" aria-expanded="false" aria-controls="drawer">客户端设置</button>
+            <button id="btn-mcp-add" class="btn-primary" aria-expanded="false" aria-controls="mcp-connection-editor">新增服务端</button>
+          </div>
         </header>
-        <p class="section-desc">管理当前扩展环境与 MCP 服务的连接。连接用于外部客户端配置和管理自动化流程，也用于邮件通知及可选的本地文件、命令与桌面操作。</p>
-
+        <p class="section-desc">连接 Page Agent 服务端，让本扩展使用本地能力、发送邮件，并与同一服务端的其他客户端通信。外部 MCP 客户端也可通过 HTTP 访问服务端。</p>
         <details class="reference-panel">
           <summary>MCP 连接与使用说明</summary>
+          <div class="mcp-info help-doc">
+            <p>先启动服务端，再按用途选择连接方式：</p>
+            <table aria-label="MCP 连接方式与用途">
+              <thead><tr><th scope="col">用途</th><th scope="col">连接方式</th><th scope="col">是否需要插件在线</th></tr></thead>
+              <tbody>
+                <tr><td>服务端本地操作</td><td>外部 Agent 使用 HTTP MCP + HTTP 令牌</td><td>不需要</td></tr>
+                <tr><td>浏览器与插件操作</td><td>外部 Agent 连接 HTTP MCP，再选择目标客户端</td><td>目标插件已配对并连接</td></tr>
+                <tr><td>插件本地能力与互调</td><td>插件使用 WebSocket 配对连接</td><td>本插件已连接；互调时目标也需在线</td></tr>
+              </tbody>
+            </table>
+          </div>
           <div class="mcp-info">
-            <h4>内置单文件 MCP 服务器</h4>
-            <p>内部发布 ZIP 已包含 MCP 服务器单文件。解压后文件固定在：</p>
-            <p><code>mcp-server/page-agent-mcp-server.cjs</code></p>
-
-            <div class="setting-item">
-              <label>扩展解压目录（用于生成 Cherry Studio 配置）</label>
+            <h4>1. 启动服务端</h4>
+            <p><b>运行环境：</b>Node 22.16.0+。填写发布包解压目录，在终端切换到希望使用的工作目录，再运行下方命令。示例使用本机默认端口。</p>
+            <div class="form-row">
+              <label for="mcp-extension-dir">扩展解压目录</label>
               <input type="text" id="mcp-extension-dir" placeholder="/path/to/page-agent-extension">
-              <small>浏览器扩展无法读取开发者模式加载目录的真实本机路径；从文件管理器复制解压目录到这里即可。</small>
             </div>
-
             <label class="mcp-snippet-label">启动命令</label>
-            <page-code-editor readonly language="shell" rows="3" id="mcp-start-command"></page-code-editor>
-
-            <label class="mcp-snippet-label">Cherry Studio 配置</label>
-            <page-code-editor readonly language="json" id="mcp-cherry-config"></page-code-editor>
-
-            <p class="mcp-note">一键写入 Cherry Studio 配置需要 Cherry Studio 提供官方导入协议或本机助手。当前扩展只能生成配置并复制，不能直接修改桌面应用配置文件。</p>
+            <page-code-editor readonly language="shell" rows="3" id="mcp-start-command" aria-label="MCP 服务端启动命令"></page-code-editor>
+            <p><b>工作目录：</b>上方路径只定位服务端程序；文件操作和 Bash 的起始目录取终端当前目录。认证、审计及状态默认保存在该目录下的 <code>./data</code>，可用 <code>--state-dir &lt;目录&gt;</code> 指定。</p>
+            <p><b>两种凭据：</b>配对密码用于插件首次配对，HTTP 令牌用于外部 MCP 客户端，分别生成。未配置时先复用已保存的凭据，没有才自动生成；自动生成的明文只显示一次，请保存。</p>
+            <p><b>显式设置：</b><code>--password &lt;密码&gt;</code> 设置或重置配对密码，重置会撤销已有配对；<code>PAGE_AGENT_HTTP_BEARER_TOKEN</code> 设置 HTTP 令牌。重启时继续使用同一数据目录才能保留身份和凭据。</p>
+            <p><b>名称与端口：</b>服务端名称默认取 hostname，可用 <code>--server-name "开发机"</code> 设置；WebSocket 默认 9999，HTTP 默认 9998，可分别用 <code>--ws-port</code>、<code>--http-port</code> 修改。</p>
           </div>
 
           <div class="mcp-info">
-            <h4>Codex / Claude Code 连接</h4>
-            <p>使用内置单文件 MCP 服务器 <code>mcp-server/page-agent-mcp-server.cjs</code>；上方填写扩展目录后会自动生成完整路径。</p>
-
-            <label class="mcp-snippet-label">Codex 配置</label>
-            <page-code-editor readonly language="shell" id="mcp-codex-config"></page-code-editor>
-
-            <label class="mcp-snippet-label">Claude Code 配置</label>
-            <page-code-editor readonly language="shell" id="mcp-claude-config"></page-code-editor>
-
-            <p class="mcp-note">Claude Code 本地 stdio MCP 使用 <code>claude mcp add ... -- command args</code> 格式；Codex 和 Claude Code 添加后均可用自然语言调用 <code>page-agent</code> 创建流程。</p>
-          </div>
-
-          <div class="mcp-info">
-            <h4>MCP 能力与接口</h4>
-            <p>MCP 服务器启动后同时提供三类通道：MCP 客户端通过 stdio 调用工具，浏览器插件通过 WebSocket 连接 Server，外部系统可以通过 HTTP API 触发流程。</p>
+            <h4>2. 插件连接服务端（按需）</h4>
             <ol>
-              <li><b>MCP stdio</b>：Codex、Claude Code、Cherry Studio 等客户端通过 stdio 连接 MCP 服务器，调用下面这些工具和资源。</li>
-              <li><b>插件 WebSocket</b>：浏览器插件默认连接 <code>ws://127.0.0.1:9999</code>（可用 <code>--ws-port</code> 或 <code>WS_PORT</code> 覆盖），用于 MCP 服务器和 Extension 之间传递页面观测、操作、配置、运行及邮件发送请求。</li>
-              <li><b>多插件客户端</b>：同一个 MCP 服务器可接受多个浏览器插件连接。普通窗口和隐私窗口在 split incognito 模式下是两个独立客户端。先用 <code>list_mcp_clients</code> 或 <code>GET /mcp/clients</code> 查看 <code>mcpClientId</code>，再在 MCP 工具参数、HTTP header 或 query 中指定目标。</li>
-              <li><b>能力发现</b>：<code>list_capabilities</code>、<code>list_node_catalog</code>、<code>get_node_type_details</code> 用于了解可用节点和参数。</li>
-              <li><b>配置与检索</b>：<code>list_context_catalog</code>、<code>search_context</code>、<code>get_context_detail</code> 按证据缺口读取页面源、流程、流程组、运行历史等信息。</li>
-              <li><b>页面观测</b>：<code>inspect_structure</code>、<code>inspect_element</code>、<code>inspect_form_fields</code>、<code>search_page</code>、<code>inspect_text</code>、<code>inspect_html</code>、<code>inspect_css</code>、<code>inspect_javascript</code> 用于定位 DOM、表单、文本、样式和脚本状态。</li>
-              <li><b>页面操作验证</b>：<code>act_click</code>、<code>act_fill</code>、<code>assert_element</code>、<code>assert_text</code>、<code>fill_form_fields</code> 可先验证交互和断言，再转成流程节点。</li>
-              <li><b>流程搭建</b>：描述目标页面、执行步骤和输入输出，助手可以创建页面源、流程、节点和流程组。</li>
-              <li><b>运行与验收</b>：先观察关键节点的输入输出，再完整运行流程或流程组，根据报告确认结果。</li>
-              <li><b>只读诊断</b>：<code>cdp.inspect_dom_snapshot</code>、<code>cdp.inspect_ax_tree</code>、<code>cdp.inspect_network</code>、<code>cdp.analyze_performance</code> 用于补充统一感知证据；普通页面动作没有第二条 CDP 或 DOM fallback 路径。</li>
-              <li><b>资源接口</b>：MCP 还提供 <code>flow://list</code>、<code>flow-group://list</code>、<code>page://list</code>、<code>status://current</code>、<code>history://runs</code> 等只读资源。</li>
-              <li><b>HTTP API（默认启动）</b>：Server 默认监听 <code>http://localhost:9998</code>（可用 <code>--http-port</code> 或 <code>HTTP_PORT</code> 覆盖），提供 <code>GET /healthz</code>、<code>GET /mcp/clients</code>、<code>POST /webhook/run/{流程ID}</code>、<code>POST /webhook/run-group/{流程组ID}</code>、<code>GET /webhook/result/{runId}</code>。</li>
-              <li><b>HTTP 目标选择</b>：多客户端场景下，请求可加 header <code>x-page-agent-mcp-client-id</code>/<code>x-page-agent-mcp-client-name</code>，或 query <code>?mcpClientId=...</code>/<code>?mcpClientName=...</code>/<code>?incognito=true</code>。</li>
-              <li><b>HTTP 输入参数</b>：Webhook 请求体推荐写成 <code>{"input":{"keyword":"测试","limit":10}}</code>，流程节点里用 <code>{{input.keyword}}</code>、<code>{{input.limit}}</code> 取值；如果请求体没有 <code>input</code> 字段，则整个 JSON 会作为 <code>input</code>。</li>
-              <li><b>HTTP 等待参数</b>：默认等待流程结束后返回结果；加 <code>?wait=false</code> 会立即返回 <code>runId</code>，之后用 <code>GET /webhook/result/{runId}</code> 查询；加 <code>?timeoutMs=120000</code> 可以调整等待超时。</li>
+              <li><b>新增服务端：</b>填写别名和 WebSocket 地址并保存；本机默认 <code>ws://127.0.0.1:9999</code>，远程填写实际的 <code>wss://</code> 地址。</li>
+              <li><b>首次配对：</b>点击「配对服务端」并输入配对密码，成功后即可操作连接开关。</li>
+              <li><b>开启连接：</b>配对后打开连接开关；关闭开关会断开连接并停止自动重连，配对信息会保留。</li>
+              <li><b>按需授权：</b>插件使用服务端文件、命令能力时，在「权限」中配置目录；桌面操作需开启「允许操作服务端桌面」。仅操作浏览器页面无需授权服务端目录或桌面。</li>
             </ol>
-            <p class="mcp-note">推荐流程：先说明任务和验收标准，再观察页面并保存必要节点，最后完整运行一次确认结果。</p>
+            <p><b>名称与身份：</b>连接别名由本插件保存，服务端名称由服务端设置；连接日志同时显示双方名称和 ID，可点击复制。当前浏览环境的连接共用客户端身份，普通与隐私环境的身份和配对信息独立。</p>
+            <p><b>凭据恢复：</b>密钥丢失或凭据失效时，连接开关保持不变，点击「重新配对」更新密钥。开关开着就自动连接，关着就保持断开；更换服务端会重置目录和桌面授权。</p>
+            <p><b>连接重试：</b>网络故障最多自动重试 20 次；凭据缺失或明确失效时停止尝试，等待重新配对。</p>
+            <p><b>标签策略：</b>未指定 <code>tabId</code> 时，「复用已打开标签」取当前页，「固定当前标签」首次请求时绑定，「固定打开标签」按当前 HTTP(S) 地址新建并固定。显式 <code>tabId</code> 优先；流程使用自身策略。</p>
           </div>
 
           <div class="mcp-info">
-            <h4>使用说明</h4>
+            <h4>3. 外部 Agent 连接 HTTP MCP（按需）</h4>
+            <p><b>接入方式：</b>在 Codex、Claude Code 或其他 MCP 客户端中配置 Streamable HTTP，服务端保持运行即可。只使用服务端本地能力时可跳过插件配对；操作页面时再连接目标插件。不支持 stdio。</p>
+            <p><b>连接配置：</b>将 <code>&lt;HTTP令牌&gt;</code> 替换为启动时显示或自行设置的 HTTP 令牌；保留 <code>Bearer </code> 前缀。远程连接使用实际 HTTPS 地址和端口，HTTP 地址不能由 WebSocket 地址直接推算。</p>
+            <label class="mcp-snippet-label">通用连接信息</label>
+            <page-code-editor readonly language="plaintext" rows="4" id="mcp-client-guide" aria-label="外部 MCP 客户端连接信息"></page-code-editor>
+            <label class="mcp-snippet-label">Cherry Studio JSON 示例</label>
+            <page-code-editor readonly language="json" id="mcp-cherry-config" aria-label="Cherry Studio MCP 配置示例"></page-code-editor>
+            <p class="mcp-note">按客户端要求填写对应字段，此处只生成可复制的示例。默认 URL 不绑定插件，可直接使用本地能力，也可选择不同客户端。</p>
+            <p><b>固定目标（可选）：</b>URL 可追加 <code>?mcpClientId=&lt;目标客户端ID&gt;</code>，之后可直接访问该插件的 <code>/page/current</code> 等资源；同一会话不能更换目标。<code>/local</code> 始终指向当前服务端。</p>
+          </div>
+
+          <div class="mcp-info">
+            <h4>4. 使用本地能力与调用客户端</h4>
+            <p>外部 MCP 提供 <code>GET / POST / PUT / PATCH / DELETE / OPTIONS</code> 六个方法工具。下面的路径是工具的 ARP 参数，都经 <code>/mcp</code> 调用。</p>
             <ol>
-              <li><b>解压插件 ZIP</b>：开发者模式加载解压后的 <code>page-agent-extension</code> 目录</li>
-              <li><b>配置 Cherry Studio</b>：复制上方配置，把路径替换为实际解压目录</li>
-              <li><b>启动 MCP 服务器</b>：由 Cherry Studio 启动，或在终端运行上方启动命令</li>
-              <li><b>开启连接</b>：勾选下方开关，Extension 会自动连接到 MCP 服务器</li>
-              <li><b>通过 MCP 客户端配置</b>：在 Cherry Studio 中说"列出所有自动化能力"或"创建一个流程"</li>
-              <li><b>配置完成后</b>：不依赖 MCP 服务器的流程可继续独立运行；邮件通知需要保持连接</li>
+              <li><b>发现服务端能力：</b><code>OPTIONS /</code> 查看目录；<code>GET /local</code> 获取本地能力和工作目录。用 <code>GET /local/environment</code> 查询环境，或 <code>POST /local/read</code> 读取文件，body 示例为 <code>{"path":"README.md","limit":20}</code>。</li>
+              <li><b>选择目标插件：</b><code>GET /clients</code> 查看名称、ID 和连接状态，选择已就绪的客户端。</li>
+              <li><b>调用目标插件：</b><code>POST /clients/{clientId}/arp</code>，body 为 <code>{"method":"GET","request":{"uri":"/page/current"}}</code>。将内层方法改为 <code>OPTIONS</code>、URI 改为 <code>/</code> 可发现插件能力；响应链接仍需通过同一客户端转发。</li>
             </ol>
-            <p><b>邮件通知</b>：发送邮件时必须连接支持邮件发送的 MCP 服务器。</p>
-          </div>
-        </details>
-
-        <div class="mcp-settings">
-          <div class="setting-item">
-            <label class="switch-label">
-              <input type="checkbox" id="mcp-enabled">
-              <span class="switch-slider"></span>
-              <span class="switch-text">启用 MCP 服务器连接</span>
-            </label>
-            <small role="status" aria-live="polite">
-              <span class="status-indicator">
-                <span class="status-dot" id="mcp-status-dot" aria-hidden="true"></span>
-                <span id="mcp-status-text">正在读取状态…</span>
-              </span>
-            </small>
+            <p><b>插件之间通信：</b>扩展内 Agent 先 <code>GET /connections</code> 选择服务端连接，再沿 <code>clients</code> 链接查询全部客户端及总数（含自己），通过 <code>POST /connections/{connectionId}/clients/{clientId}/arp</code> 调用其他客户端。<code>connectionId</code> 是本插件保存的服务端连接 ID，<code>clientId</code> 是目标客户端 ID。查询需 <code>connections.read</code>，调用需 <code>connections.execute</code>；服务端拒绝自己调用自己，原因为 <code>SELF_CALL_FORBIDDEN</code>。</p>
+            <label class="mcp-snippet-label">发给外部 Agent 的使用提示词</label>
+            <page-code-editor readonly language="plaintext" id="mcp-usage-prompt" aria-label="MCP 使用提示词"></page-code-editor>
           </div>
 
-          <div class="setting-item">
-            <label>WebSocket 地址</label>
-            <input type="text" id="mcp-url" value="ws://127.0.0.1:9999" placeholder="ws://127.0.0.1:9999">
-            <small>MCP 服务器的 WebSocket 地址</small>
-          </div>
-
-          <div class="setting-item">
-            <label>当前连接名称</label>
-            <input type="text" id="mcp-client-name" placeholder="输入连接名称">
-            <small>用于在本地 MCP 服务中识别当前扩展环境。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>当前连接 ID</label>
-            <input type="text" id="mcp-client-id" readonly>
-            <small>由当前扩展环境生成，可用于精确选择这个连接。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>MCP 页面操作标签策略</label>
-            <select id="mcp-run-tab-mode">
-              <option value="reuseOpenTab">复用已打开标签</option>
-              <option value="fixedCurrentTab">固定当前标签</option>
-              <option value="fixedNewTab">固定打开标签</option>
-            </select>
-            <small>仅影响 MCP 观测、点击、填充、evaluate、CDP 等页面操作；运行流程仍按流程或流程组步骤配置。</small>
-          </div>
-
-          <div class="mcp-actions">
-            <button class="btn-primary" id="btn-mcp-save-settings" disabled>保存连接设置</button>
-          </div>
-
-          <div class="mcp-log-panel">
-            <div class="mcp-log-header">
-              <h4>MCP 连接日志</h4>
-              <div>
-                <button class="btn-small" id="btn-mcp-reconnect">重新连接</button>
-                <button class="btn-small" id="btn-mcp-clear-logs">清空日志</button>
-              </div>
-            </div>
-            <div class="mcp-log-list" id="mcp-log-list">
-              <div class="mcp-log-empty">暂无日志</div>
-            </div>
-          </div>
-
-          <section class="local-tools-settings" aria-labelledby="local-tools-title">
-            <h3 id="local-tools-title">本地文件、命令与桌面</h3>
-            <p class="form-help">通过 MCP Server 操作本地文件、执行 Bash，并控制鼠标、键盘、剪贴板、截图、图片定位、应用和窗口。默认开启，仅在连接成功且服务端支持时向对话提供。</p>
-            <p class="form-help">文件和命令使用下方工作目录；桌面操作作用于服务端机器，仅支持 macOS 和 Windows。鼠标和图片定位等能力需服务端安装 robotjs，可通过 desktop 查询支持范围；macOS 还支持窗口移动和缩放。</p>
-
-            <div class="setting-item">
-              <label class="switch-label">
-                <input type="checkbox" id="mcp-local-tools-enabled" disabled>
-                <span class="switch-slider"></span>
-                <span class="switch-text">启用本地文件、命令与桌面</span>
-              </label>
-              <small id="mcp-local-tools-status" role="status" aria-live="polite"></small>
-            </div>
-
-            <div class="setting-item">
-              <label for="mcp-local-working-directory">本地操作工作目录（必填）</label>
-              <input type="text" id="mcp-local-working-directory" required maxlength="4096" placeholder="连接 MCP Server 后回显其运行目录">
-              <small>填写 MCP Server 上的绝对目录，保存后生效。</small>
-              <button class="btn-small" id="btn-mcp-local-directory-save" disabled>保存工作目录</button>
-            </div>
-
+          <div class="mcp-info">
+            <h4>5. 权限与执行范围</h4>
+            <p><b>HTTP 本地能力：</b>HTTP 令牌代表服务端操作者，文件操作以服务端启动工作目录为根，可用平台支持的桌面能力，不依赖插件的目录或桌面授权。</p>
+            <p><b>插件本地能力：</b>扩展内 <code>GET /local</code> 返回已授权连接和目录，使用返回的完整链接调用。新目录先保存、确认路径，再授权；修改路径会清除权限，父目录授权覆盖子目录。</p>
+            <p><b>命令与桌面：</b>Bash 按服务端进程权限执行，工作目录不是命令沙箱。桌面操作作用于服务端登录桌面，受系统权限限制；Linux 不支持桌面操作。</p>
+            <p><b>客户端转发：</b>可读取资源、操作页面／浏览器及使用目标插件在当前服务端已授权的本地能力。流程、脚本、对话、定时任务和应用动作的创建与运行由扩展内管理；转发请求不能再调用其他客户端。</p>
+            <p><b>断线或取消：</b>不自动重放请求；结果未知时先核对实际效果，再决定是否重新提交。</p>
             <div class="help-doc">
               <table aria-label="本地文件、命令与桌面能力">
                 <thead><tr><th scope="col">能力</th><th scope="col">名称</th><th scope="col">用途</th></tr></thead>
                 <tbody>
+                  <tr><td><code>environment / disk</code></td><td>环境与磁盘</td><td>查询服务端系统、运行环境、内存及工作目录所在文件系统的空间。</td></tr>
                   <tr><td><code>read</code></td><td>读取文件</td><td>读取文本文件，支持按行分页查看内容。</td></tr>
                   <tr><td><code>write</code></td><td>写入文件</td><td>创建或覆盖文本文件，自动创建所需目录。</td></tr>
                   <tr><td><code>delete</code></td><td>删除文件</td><td>删除单个文件或符号链接，不递归删除目录。</td></tr>
@@ -352,12 +331,194 @@ return result                                          // 返回值写入节点�
                 </tbody>
               </table>
             </div>
-          </section>
+          </div>
 
-          <form id="mail-settings-form" class="mail-settings-form">
-            <h3>邮件通知</h3>
-            <p class="form-help">通过 MCP Server 发送测试邮件、流程结束通知和邮件节点消息。默认开启，连接成功且服务端支持时可发送；关闭后停止后续发送，账户配置仍可编辑和保存。</p>
-            <p class="form-help">支持标准 SMTP（TLS / STARTTLS），请按邮件服务商提供的信息填写服务器、端口和认证信息。配置一个发件账户；整个流程的成功／失败通知请在「流程」编辑页配置，邮件节点可分别指定收件人、抄送和密送。</p>
+        </details>
+
+        <p id="mcp-connections-status" class="section-desc" role="status" aria-live="polite">正在读取服务端连接…</p>
+        <div id="mcp-connections-list" class="item-list" aria-label="服务端连接列表"></div>
+        <div id="mcp-connection-editor" class="editor mcp-settings hidden" role="region" aria-labelledby="mcp-connection-editor-title">
+          <h3 id="mcp-connection-editor-title">编辑服务端连接</h3>
+          <div class="setting-item"><label for="mcp-alias">服务端本地别名</label><input type="text" id="mcp-alias" maxlength="200" placeholder="留空使用地址中的主机名"></div>
+          <div class="setting-item">
+            <label for="mcp-url">WebSocket 地址</label>
+            <div class="mcp-url-row">
+              <input type="text" id="mcp-url" value="ws://127.0.0.1:9999" placeholder="ws://127.0.0.1:9999">
+              <button type="button" class="btn-primary" id="btn-mcp-pair" aria-haspopup="dialog" aria-expanded="false" aria-controls="drawer" aria-describedby="mcp-status-text">配对服务端</button>
+            </div>
+          </div>
+          <div class="setting-item">
+            <label class="switch-label">
+              <input type="checkbox" id="mcp-enabled" aria-describedby="mcp-status-text">
+              <span class="switch-slider"></span>
+              <span class="switch-text">开启连接（断线后有限重试）</span>
+            </label>
+            <small role="status" aria-live="polite">
+              <span class="status-indicator">
+                <span class="status-dot" id="mcp-status-dot" aria-hidden="true"></span>
+                <span id="mcp-status-text">正在读取状态…</span>
+              </span>
+            </small>
+          </div>
+
+          <div class="setting-item">
+            <label class="switch-label">
+              <input type="checkbox" id="mcp-local-tools-enabled" aria-describedby="mcp-local-tools-status" disabled>
+              <span class="switch-slider"></span>
+              <span class="switch-text">允许操作服务端桌面</span>
+            </label>
+            <small id="mcp-local-tools-status" role="status" aria-live="polite">操作系统：待确认；桌面操作支持情况：待确认。请先连接服务端。</small>
+          </div>
+
+          <div class="setting-item">
+            <label>MCP 页面操作标签策略</label>
+            <select id="mcp-run-tab-mode">
+              <option value="reuseOpenTab">复用已打开标签</option>
+              <option value="fixedCurrentTab">固定当前标签</option>
+              <option value="fixedNewTab">固定打开标签</option>
+            </select>
+          </div>
+
+          <div class="mcp-log-panel" role="region" aria-labelledby="mcp-log-title">
+            <div class="mcp-log-header">
+              <div class="mcp-log-heading">
+                <h4 id="mcp-log-title">MCP 连接日志</h4>
+                <div id="mcp-log-identity" class="mcp-log-identity">
+                  <span>客户端 <button type="button" class="mcp-log-copy mcp-log-name" id="mcp-log-client-name" aria-label="复制客户端名称" disabled>未设置</button> · <button type="button" class="mcp-log-copy mcp-log-id" id="mcp-log-client-id" aria-label="复制客户端 ID" disabled>尚未生成</button></span>
+                  <span>服务端 <button type="button" class="mcp-log-copy mcp-log-name" id="mcp-log-server-name" aria-label="复制服务端名称" disabled>待连接</button> · <button type="button" class="mcp-log-copy mcp-log-id" id="mcp-log-server-id" aria-label="复制服务端 ID" disabled>尚未配对</button></span>
+                </div>
+              </div>
+              <div class="mcp-log-actions">
+                <button type="button" class="btn-small" id="btn-mcp-reconnect">重新连接</button>
+                <button type="button" class="btn-small" id="btn-mcp-clear-logs">清空日志</button>
+              </div>
+            </div>
+            <div class="mcp-log-list" id="mcp-log-list">
+              <div id="mcp-log-events"><div class="mcp-log-empty">暂无日志</div></div>
+            </div>
+          </div>
+
+          <div class="editor-actions">
+            <button class="btn-primary" id="btn-mcp-save-settings" disabled>保存</button>
+            <button type="button" class="btn-secondary" id="btn-mcp-cancel-settings">取消</button>
+            <button type="button" class="btn-secondary" id="btn-mcp-permissions" aria-haspopup="dialog" aria-expanded="false" aria-controls="drawer" disabled>权限</button>
+            <span class="spacer"></span>
+            <button class="btn-danger" id="btn-mcp-delete">删除连接</button>
+          </div>
+        </div>
+        </div>
+
+        <div id="archive-panel" class="mcp-settings-group" role="group" aria-labelledby="archive-title" hidden>
+          <header class="section-header">
+            <h2 id="archive-title">自动备份</h2>
+            <button type="button" id="archive-reload" class="btn-secondary">刷新状态</button>
+          </header>
+          <p class="section-desc">按连接设置自动备份，也可立即备份。</p>
+          <details class="reference-panel">
+            <summary>备份说明</summary>
+            <div class="mcp-info">
+              <p><b>备份设置：</b>各连接独立设置开关、间隔和保留数，保存后生效，支持同时备份。关闭自动备份仍可「立即备份」。</p>
+              <p><b>范围与保留：</b>不含密钥、连接身份和对话记录；使用中的版本额外保留。</p>
+            </div>
+          </details>
+          <p id="archive-status" role="status" aria-live="polite" hidden></p>
+          <div id="archive-controls" class="mcp-settings-group" hidden>
+            <div id="archive-connections-list" class="item-list" aria-label="自动备份连接列表"></div>
+            <div id="archive-connection-editor" class="editor mcp-settings hidden" role="region" aria-labelledby="archive-editor-title">
+              <h3 id="archive-editor-title">备份配置</h3>
+              <p id="archive-connection-status" class="section-desc"></p>
+              <div class="setting-item">
+                <label for="archive-bucket">桶</label>
+                <input id="archive-bucket" type="text" maxlength="80" value="default" required pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,79}" placeholder="例如 project-a" spellcheck="false" autocapitalize="none" aria-describedby="archive-bucket-hint">
+                <small id="archive-bucket-hint">用于归集备份版本。必填，1–80 个字符，以英文字母或数字开头，仅允许英文字母、数字、下划线和连字符，不允许中文；不能使用保留名称 constructor、prototype。Docker 自动同步的 PAGE_AGENT_BUCKET 须填写相同桶名。</small>
+              </div>
+              <div class="setting-item">
+                <label class="switch-label"><input id="archive-auto-backup" type="checkbox" role="switch"><span class="switch-slider" aria-hidden="true"></span><span class="switch-text">自动备份</span></label>
+                <small>仅控制此连接的定时备份，不影响手动备份。</small>
+              </div>
+              <div class="setting-item"><label for="archive-interval">备份间隔（分钟）</label><input id="archive-interval" type="number" min="1" max="525600" step="1" value="60" required></div>
+              <div class="setting-item"><label for="archive-retain">保留版本数</label><input id="archive-retain" type="number" min="1" max="1000" step="1" value="20" required><small>仅影响当前实例在此连接上的备份。可同步版本和待完成、待恢复操作引用的版本额外保留。</small></div>
+              <div class="mcp-log-panel" role="region" aria-labelledby="archive-log-title">
+                <div class="mcp-log-header">
+                  <div class="mcp-log-heading">
+                    <h4 id="archive-log-title">同步和备份日志</h4>
+                    <div id="archive-log-identity" class="mcp-log-identity">
+                      <span>客户端 <button type="button" class="mcp-log-copy mcp-log-name" id="archive-log-client-name" aria-label="复制客户端名称" disabled>未设置</button> · <button type="button" class="mcp-log-copy mcp-log-id" id="archive-log-client-id" aria-label="复制客户端 ID" disabled>尚未生成</button></span>
+                      <span>服务端 <button type="button" class="mcp-log-copy mcp-log-name" id="archive-log-server-name" aria-label="复制服务端名称" disabled>待连接</button> · <button type="button" class="mcp-log-copy mcp-log-id" id="archive-log-server-id" aria-label="复制服务端 ID" disabled>尚未配对</button></span>
+                      <span id="archive-log-bucket"></span>
+                    </div>
+                  </div>
+                  <div class="mcp-log-actions">
+                    <button type="button" id="archive-log-reload" class="btn-small">刷新日志</button>
+                    <button type="button" id="archive-log-clear" class="btn-small" title="仅清空已完成日志的显示，失败日志和服务端记录仍保留">清空完成日志</button>
+                  </div>
+                </div>
+                <div id="archive-log-list" class="mcp-log-list"><div id="archive-operations"><div class="mcp-log-empty">No events</div></div></div>
+              </div>
+              <p id="archive-description" class="section-desc" hidden></p>
+              <div class="editor-actions">
+                <button type="button" id="archive-save" class="btn-primary">保存</button>
+                <button type="button" id="archive-cancel" class="btn-secondary">取消</button>
+                <button type="button" id="archive-create-version" class="btn-secondary">立即备份</button>
+                <button type="button" id="archive-versions" class="btn-secondary" aria-haspopup="dialog" aria-expanded="false" aria-controls="drawer">备份版本</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="archive-auto-panel" class="mcp-settings-group" role="group" aria-labelledby="archive-auto-title" hidden>
+          <header class="section-header"><h2 id="archive-auto-title">自动同步</h2></header>
+          <p id="archive-auto-description" class="section-desc">自动同步仅在容器版本中启用，且需指定同步参数。</p>
+          <details class="reference-panel">
+            <summary>同步说明</summary>
+            <div class="mcp-info">
+              <p><b>启动同步：</b>下次启动时加载指定的可同步版本，未指定则跳过。</p>
+              <p><b>同步条件：</b>运行设置允许、连接就绪且版本兼容；容器指定的目标同步完成前暂缓任务执行。</p>
+              <p><b>配置替换：</b>覆盖同步范围内的配置，删除版本中缺少的项；执行前保留恢复副本。手动同步见「备份版本」。</p>
+              <p><b>历史保留：</b>保留话题、消息、附件和运行报告；助手缺失时话题暂不可见，恢复相同 ID 的助手后重新显示。</p>
+            </div>
+          </details>
+          <p id="archive-summary" class="section-desc" role="status"></p>
+          <p id="archive-auto-status" class="section-desc" role="status" aria-live="polite" hidden></p>
+          <div id="archive-auto-controls" hidden>
+            <div id="archive-sources-list" class="item-list" role="radiogroup" aria-label="自动同步源" aria-describedby="archive-auto-description"></div>
+            <label class="switch-label"><input id="archive-auto-sync" type="checkbox" role="switch"><span class="switch-slider" aria-hidden="true"></span><span class="switch-text">启动时自动同步</span></label>
+            <div class="editor-actions">
+              <button type="button" id="archive-save-auto" class="btn-primary">保存</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="mcp-settings-group" role="group" aria-labelledby="mail-connections-title">
+          <header class="section-header">
+            <h2 id="mail-connections-title">邮件服务器连接</h2>
+          </header>
+          <p class="section-desc">配置 SMTP 发件账户，通过支持邮件发送的 MCP Server 发送测试邮件、流程结束通知和邮件节点消息。</p>
+          <details class="reference-panel">
+            <summary>邮件连接与使用说明</summary>
+            <div class="mcp-info">
+              <ol>
+                <li><b>选择服务端：</b>MCP 配对并连接后，在 SMTP 卡片选择支持邮件发送的服务端。</li>
+                <li><b>填写账户：</b>按服务商要求填写 SMTP、认证及发件邮箱；TLS 通常用 465，STARTTLS 用 587。</li>
+                <li><b>保存与测试：</b>测试使用当前配置发送真实邮件，不会自动保存；修改后仍需点击「保存」。</li>
+              </ol>
+              <p><b>流程通知：</b>在流程编辑页设置成功／失败通知，或添加邮件节点；共用已保存账户与服务端。</p>
+              <p><b>通知总开关：</b>默认开启，切换立即保存；关闭后停止后续发送及测试。</p>
+              <p><b>账户存储：</b>配置保存在扩展中，发送时交给 MCP Server，服务端不保存账户。</p>
+            </div>
+          </details>
+          <div class="item-list" aria-label="邮件服务器连接">
+            <button type="button" id="mail-connection-card" class="item-card connection-card" aria-expanded="false" aria-controls="mail-settings-form" disabled>
+              <span class="connection-summary">
+                <span class="item-title" id="mail-summary-title">SMTP 服务器</span>
+                <span class="item-sub" id="mail-summary-description">正在读取配置…</span>
+                <span class="item-sub" id="mail-summary-from"></span>
+              </span>
+              <span class="badge" id="mail-summary-status">读取中</span>
+            </button>
+          </div>
+          <form id="mail-settings-form" class="editor mail-settings-form mcp-settings hidden" aria-labelledby="mail-editor-title">
+            <h3 id="mail-editor-title">编辑邮件服务器连接</h3>
             <div class="setting-item">
               <label class="switch-label">
                 <input type="checkbox" id="mail-enabled" disabled>
@@ -367,6 +528,7 @@ return result                                          // 返回值写入节点�
               <small id="mail-connection-status" role="status" aria-live="polite">正在读取状态…</small>
             </div>
             <fieldset id="mail-settings-fields" disabled>
+              <div class="form-row"><label for="mail-connection-id">发送邮件的服务端</label><select id="mail-connection-id"><option value="">请选择明确的连接</option></select></div>
               <div class="setting-item">
                 <label for="mail-host">SMTP 服务器</label>
                 <input id="mail-host" type="text" required maxlength="253" placeholder="smtp.example.com">
@@ -386,7 +548,6 @@ return result                                          // 返回值写入节点�
               <div class="setting-item">
                 <label for="mail-password">SMTP 密码 / 授权码</label>
                 <input id="mail-password" type="password" autocomplete="new-password">
-                <small>填写服务商要求的 SMTP 密码、授权码或应用专用密码。配置保存在插件中，发送时经 WebSocket 交给已连接的 MCP Server，服务端不保存账户配置。远程服务须使用 wss:// 连接。</small>
               </div>
               <div class="setting-item">
                 <label for="mail-from">发件邮箱</label>
@@ -396,143 +557,132 @@ return result                                          // 返回值写入节点�
                 <label for="mail-from-name">发件人名称（默认 Page Agent）</label>
                 <input id="mail-from-name" type="text" maxlength="200" placeholder="Page Agent">
               </div>
-              <div class="mcp-actions">
-                <button type="submit" class="btn btn-primary">保存邮件配置</button>
-                <button id="mail-test-open" type="button" class="btn btn-secondary">发送测试邮件</button>
-              </div>
             </fieldset>
             <p id="mail-settings-status" role="status" aria-live="polite"></p>
+            <div class="editor-actions">
+              <button id="mail-save-settings" type="submit" class="btn-primary" disabled>保存</button>
+              <button id="mail-test-open" type="button" class="btn-secondary">发送测试邮件</button>
+            </div>
           </form>
         </div>
       </section>
 
       <!-- 模型配置 -->
       <section id="section-model-settings" class="section">
-        <header class="section-header">
-          <h2>模型配置</h2>
-        </header>
-        <p class="section-desc">配置一个或多个模型服务后，可给「请求模型断言」「请求模型数据提取」「请求模型自定义动作」节点、脚本 <code>api.model.chat()</code> 与对话使用。</p>
-
-        <div class="mcp-settings model-settings-panel">
-          <div class="setting-item">
-            <label>当前编辑服务</label>
-            <div class="model-service-picker">
-              <select id="model-service-select"></select>
-              <button class="btn-secondary" id="btn-model-add-service">新增</button>
-              <button class="btn-secondary" id="btn-model-copy-service">复制</button>
-              <button class="btn-secondary" id="btn-model-delete-service">删除</button>
+        <div class="mcp-settings-group" role="group" aria-labelledby="model-services-title">
+          <header class="section-header">
+            <h2 id="model-services-title">模型配置</h2>
+            <button class="btn-primary" id="btn-model-add-service">新增服务</button>
+          </header>
+          <p class="section-desc">管理流程、脚本和对话使用的模型服务，配置默认服务及全局上下文设置。</p>
+          <details class="reference-panel">
+            <summary>模型连接与使用说明</summary>
+            <div class="mcp-info">
+              <p><b>默认服务：</b>用于未指定服务的调用，助手可另选；脚本通过 <code>api.model.chat()</code> 调用。</p>
+              <p><b>新增与保存：</b>新增先编辑，保存后创建服务；「保存并测试」只保存当前服务，全局上下文需点击「保存」。复制服务不复制密钥。</p>
+              <p><b>协议与地址：</b>选择服务支持的协议，填版本根地址或完整接口地址，系统自动补全接口路径。</p>
+              <p><b>密钥：</b>不回显，留空保留原值，点击「清除密钥」移除。User-Agent 仅用于当前服务，留空用浏览器默认值。</p>
+              <p><b>视觉与摘要：</b>留空使用文本模型；截图需支持图片输入，摘要共用服务地址和凭据。思考级别 <code>auto</code> 不传参数。</p>
+              <p><b>请求重试：</b>0–50 次，默认 15，0 为关闭；仅重试瞬时故障，配额和账单错误不重试。</p>
+              <p><b>全局上下文：</b>对所有服务生效，1 K = 1000 Token；压缩阈值为 50–90%，90% 使用默认阈值。</p>
             </div>
-            <small>全局默认服务：<span id="model-default-service-name">未配置</span>。Assistant 仍可显式选择其他模型服务。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>协议</label>
-            <select id="model-protocol">
-              <option value="chat_completions" selected>OpenAI Chat Completions</option>
-              <option value="responses">OpenAI Responses</option>
-              <option value="anthropic">Claude Anthropic Messages</option>
-            </select>
-            <small>协议决定请求与响应格式；标准 Provider 保持协议纯净，已识别服务的必要方言由兼容层补齐。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>服务名称</label>
-            <input type="text" id="model-service-name" placeholder="输入服务名称">
-          </div>
-
-          <div class="setting-item">
-            <label>服务地址（Base URL）</label>
-            <input type="text" id="model-base-url" placeholder="https://api.example.com/v1">
-            <small>可填写版本根地址或完整接口地址；系统会按协议补全 /chat/completions、/responses 或 /messages。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>API Key</label>
-            <div class="model-service-picker">
-              <input type="password" id="model-api-key" placeholder="输入 API Key" autocomplete="new-password">
+          </details>
+          <div id="model-services-list" class="item-list" aria-label="模型服务列表"></div>
+          <div id="model-service-editor" class="editor hidden" role="region" aria-labelledby="model-editor-title">
+            <h3 id="model-editor-title">编辑模型服务</h3>
+            <div class="form-grid model-settings-fields">
+              <div class="form-row">
+                <label for="model-service-name">服务名称</label>
+                <input type="text" id="model-service-name" placeholder="输入服务名称">
+              </div>
+              <div class="form-row">
+                <label for="model-protocol">协议</label>
+                <select id="model-protocol">
+                  <option value="chat_completions" selected>OpenAI Chat Completions</option>
+                  <option value="responses">OpenAI Responses</option>
+                  <option value="anthropic">Claude Anthropic Messages</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <label for="model-base-url">服务地址（Base URL）</label>
+                <input type="text" id="model-base-url" placeholder="https://api.example.com/v1">
+              </div>
+              <div class="form-row">
+                <label for="model-api-key">API Key</label>
+                <input type="password" id="model-api-key" placeholder="输入 API Key" autocomplete="new-password" aria-describedby="model-api-key-help">
+                <small id="model-api-key-help" class="form-help">尚未配置密钥</small>
+              </div>
+              <div class="form-row">
+                <label for="model-name">模型名（文本任务）</label>
+                <input type="text" id="model-name" placeholder="gpt-4o-mini / qwen-plus / local-model">
+              </div>
+              <div class="form-row">
+                <label for="model-user-agent">User-Agent（可选）</label>
+                <input type="text" id="model-user-agent" placeholder="使用浏览器默认值">
+              </div>
+              <div class="form-row">
+                <label for="model-vision-model">视觉模型名（可选）</label>
+                <input type="text" id="model-vision-model" placeholder="默认使用文本模型">
+              </div>
+              <div class="form-row">
+                <label for="model-summary-model">摘要模型名（可选）</label>
+                <input type="text" id="model-summary-model" placeholder="默认使用文本模型">
+              </div>
+              <div class="form-row">
+                <label for="model-reasoning-effort">思考级别</label>
+                <select id="model-reasoning-effort">
+                  <option value="auto">auto（不传参数）</option>
+                  <option value="none">none</option>
+                  <option value="minimal">minimal</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="xhigh">xhigh</option>
+                  <option value="max">max</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <label for="model-max-retries">请求重试次数</label>
+                <input type="number" id="model-max-retries" min="0" max="50" step="1" inputmode="numeric" placeholder="15">
+              </div>
+            </div>
+            <div class="model-global-settings">
+              <h3>全局上下文设置</h3>
+              <div class="form-grid model-settings-fields">
+                <div class="form-row">
+                  <label for="model-max-context-tokens">最大上下文 Token</label>
+                  <div class="input-with-unit">
+                    <input type="number" id="model-max-context-tokens" min="0" max="1000" step="0.001" inputmode="decimal" placeholder="1000">
+                    <span class="unit-suffix">K</span>
+                  </div>
+                </div>
+                <div class="form-row">
+                  <label for="model-auto-compact-token-limit">自动压缩阈值</label>
+                  <div class="input-with-unit">
+                    <input type="number" id="model-auto-compact-token-limit" min="50" max="90" step="1" inputmode="numeric" placeholder="90">
+                    <span class="unit-suffix">%</span>
+                  </div>
+                </div>
+                <div class="form-row">
+                  <label for="model-context-compression">会话压缩</label>
+                  <select id="model-context-compression">
+                    <option value="auto">自动摘要压缩</option>
+                    <option value="off">关闭摘要压缩</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div id="model-test-result" class="form-help" role="status" aria-live="polite"></div>
+            <div class="editor-actions">
+              <button class="btn-primary" id="btn-model-save">保存</button>
+              <button class="btn-secondary" id="btn-model-cancel">取消</button>
+              <button class="btn-secondary" id="btn-model-test">保存并测试</button>
+              <button class="btn-secondary" id="btn-model-set-default">设为全局默认</button>
+              <button class="btn-secondary" id="btn-model-copy-service">复制服务</button>
+              <span class="spacer"></span>
               <button class="btn-secondary" id="btn-model-clear-key">清除密钥</button>
+              <button class="btn-danger" id="btn-model-delete-service">删除服务</button>
             </div>
-            <small id="model-api-key-help">服务端只返回是否已配置；密钥不会回显。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>User-Agent（可选）</label>
-            <input type="text" id="model-user-agent" placeholder="输入自定义 User-Agent">
-            <small>通过浏览器网络规则随该服务请求发送；留空时使用浏览器默认值，始终独立于系统 User-Agent。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>模型名（文本任务）</label>
-            <input type="text" id="model-name" placeholder="gpt-4o-mini / qwen-plus / local-model">
-          </div>
-
-          <div class="setting-item">
-            <label>最大上下文 Token</label>
-            <div class="input-with-unit">
-              <input type="number" id="model-max-context-tokens" min="0" max="1000" step="0.001" inputmode="decimal" placeholder="1000">
-              <span class="unit-suffix">K</span>
-            </div>
-            <small>Agent 全局上下文预算；通过 Agent Settings 保存，不属于单个模型服务表单。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>自动压缩阈值</label>
-            <div class="input-with-unit">
-              <input type="number" id="model-auto-compact-token-limit" min="50" max="90" step="1" inputmode="numeric" placeholder="90">
-              <span class="unit-suffix">%</span>
-            </div>
-            <small>取值 50-90；90 表示使用默认阈值。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>思考级别</label>
-            <select id="model-reasoning-effort">
-              <option value="auto">auto（不传参数）</option>
-              <option value="none">none</option>
-              <option value="minimal">minimal</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-              <option value="xhigh">xhigh</option>
-              <option value="max">max</option>
-            </select>
-            <small>auto 不传参数；各协议先按标准字段发送，再由服务地址匹配到的 compat 适配器补充厂商必要方言。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>请求重试次数</label>
-            <input type="number" id="model-max-retries" min="0" max="50" step="1" inputmode="numeric" placeholder="15">
-            <small>网络错误、429 限流、5xx、流中断等瞬时故障自动重试（带退避并尊重 Retry-After）；0 表示不重试，默认 15。配额与账单类错误不会重试。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>会话压缩</label>
-            <select id="model-context-compression">
-              <option value="auto">自动摘要压缩</option>
-              <option value="off">关闭摘要压缩</option>
-            </select>
-            <small>Agent 全局压缩策略；通过 Agent Settings 保存。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>视觉模型名（可选，截图类节点使用）</label>
-            <input type="text" id="model-vision-model" placeholder="gpt-4o / qwen-vl-plus / glm-4v">
-            <small>留空默认使用「模型名（文本任务）」；「请求模型断言」「请求模型数据提取」选择截图来源时需要支持图片输入的模型。</small>
-          </div>
-
-          <div class="setting-item">
-            <label>摘要模型名（可选）</label>
-            <input type="text" id="model-summary-model" placeholder="默认使用「模型名（文本任务）」">
-            <small>留空默认使用「模型名（文本任务）」；仅用于同一模型服务内的上下文摘要请求，不会切换 Base URL、凭据、请求头或服务。</small>
-          </div>
-
-          <div class="mcp-status">
-            <div class="status-indicator">
-              <span id="model-test-result"></span>
-            </div>
-            <button class="btn-secondary" id="btn-model-set-default">设为全局默认</button>
-            <button class="btn-primary" id="btn-model-save">保存</button>
-            <button class="btn-secondary" id="btn-model-test">测试当前服务</button>
           </div>
         </div>
       </section>
@@ -543,6 +693,14 @@ return result                                          // 返回值写入节点�
           <h2>对话</h2>
         </header>
         <p class="section-desc">在配置中心用助手和话题创建、修复、校验流程。生成的页面和流程会直接写入自动化配置，并可从运行记录查看结果。</p>
+        <details class="reference-panel drawer-guide">
+          <summary>对话使用说明</summary>
+          <div class="drawer-guide-content">
+            <p><b>助手与话题：</b>选择助手后新建话题；同一话题保留上下文，不同任务建议分开。</p>
+            <p><b>助手配置：</b>从操作菜单进入「编辑助手」，调整模型、提示词、资源和权限，底部保存。</p>
+            <p><b>运行控制：</b>可查看执行轨迹、回答追问或停止运行；归档话题只读。</p>
+          </div>
+        </details>
         <div id="conversation-root" class="conversation-root">
           <div class="placeholder">正在加载对话...</div>
         </div>
@@ -557,7 +715,16 @@ return result                                          // 返回值写入节点�
             <button class="btn-primary" id="btn-knowledge-new">新建知识</button>
           </div>
         </header>
-        <p class="section-desc">集中维护对话可检索的知识、Skill 和 HTTP MCP 工具。内置内容保持只读，用户内容可编辑归档；外部工具会按服务器的真实连接和发现结果更新。</p>
+        <p class="section-desc">集中维护对话可检索的知识、Skill 和 HTTP MCP 工具。</p>
+        <details class="reference-panel drawer-guide">
+          <summary>知识使用说明</summary>
+          <div class="drawer-guide-content">
+            <p><b>知识条目：</b>点击卡片编辑，内置内容只读；勾选「包含归档」查看归档内容。</p>
+            <p><b>Skill：</b>导入后可查看指令、资源，设置启用或归档状态。</p>
+            <p><b>HTTP MCP：</b>配置地址与认证，检查连接并刷新工具目录。</p>
+            <p><b>助手使用：</b>在助手的「MCP 和 Skill」中选择所需 Skill 与服务器。</p>
+          </div>
+        </details>
         <div id="knowledge-root" class="knowledge-root">
           <div class="placeholder">正在加载知识...</div>
         </div>
@@ -568,7 +735,26 @@ return result                                          // 返回值写入节点�
         <header class="section-header">
           <h2>更新日志</h2>
         </header>
+        <p class="section-desc">按版本查看新增功能、功能改进与问题修复。</p>
+        <details class="reference-panel drawer-guide">
+          <summary>更新日志说明</summary>
+          <div class="drawer-guide-content">
+            <p><b>版本查找：</b>按新到旧排列，可用浏览器查找搜索版本号或功能名；配置方法见对应页面说明。</p>
+          </div>
+        </details>
         <div class="help-doc">
+
+          <h3>v1.2.0</h3>
+          <ul>
+            <li><b>扩展入口</b>：新增图标菜单，快速打开应用、侧边栏和配置中心，支持侧边栏开关及配置中心快捷键。</li>
+            <li><b>侧边栏应用</b>：新增应用页签，支持搜索、收藏筛选和拖拽排序；扩展菜单支持仅显示收藏。</li>
+            <li><b>应用管理</b>：支持 Ctrl／Command 点击新开标签页，显示打开次数，优化拖拽预览和管理入口。</li>
+            <li><b>配置体验</b>：统一配置卡片、分组编辑和确认弹窗，新增未保存修改提醒。</li>
+            <li><b>助手权限</b>：支持页面脚本、窗口、下载和调试器独立授权，完善话题权限配置与生效逻辑。</li>
+            <li><b>对话轨迹</b>：支持查看完整模型请求，修正工具调用状态显示。</li>
+            <li><b>运行报告</b>：优化状态分布、耗时趋势和失败统计，新增触发来源图表。</li>
+            <li><b>备份同步</b>：新增自动备份、版本保留和手动同步。</li>
+          </ul>
 
           <h3>v1.1.0</h3>
           <ul>
@@ -582,18 +768,15 @@ return result                                          // 返回值写入节点�
 
           <h3>v1.0.3</h3>
           <ul>
-            <li><b>邮件通知</b>：新增统一 SMTP 发件账户、通知总开关和测试邮件入口，支持 TLS / STARTTLS；发送邮件需连接支持邮件发送的 MCP Server。</li>
-            <li><b>邮件节点</b>：新增「邮件通知」节点，支持收件人、抄送、密送、变量模板、纯文本或 HTML 正文，以及文本和 Base64 附件，邮件节点不自动重试。</li>
-            <li><b>流程通知</b>：支持按整个流程的成功或失败结果发送邮件，可自定义主题与正文模板，多轮运行汇总为一封通知；异步投递并记录结果，通知失败不影响流程结果，主动停止和单节点调试不发送。</li>
-            <li><b>本地文件、命令与桌面</b>：对话可通过 MCP Server 操作文件、执行 Bash，并调用服务端支持的鼠标、键盘、剪贴板、截图、图片定位、应用和窗口能力；使用统一开关和工作目录。</li>
-            <li><b>定时运行</b>：支持每天多个时刻、指定日期和 JSON 输入参数，可按工作日、节假日或休息日批量选日，支持中国大陆调休与国外全国公众假日，并可将保存的日历信息传入运行参数。</li>
-            <li><b>知识与 Skill</b>：新增 Skill 目录树、搜索分页和知识与 Skill 批量删除，导入与删除支持进度、失败详情和停止后续处理；优化大量 Skill 的存储，支持按需预览资源文件。</li>
-            <li><b>助手配置</b>：Skill 支持按目录批量勾选、搜索、分页和仅看已选，跨页保留选择，并取消最多选择 50 个 Skill 的限制。</li>
-            <li><b>对话执行</b>：取消对话生成和流程内助手调用的默认总时长限制。</li>
-            <li><b>页面管理</b>：支持流程成功完成后自动关闭本次新打开的标签页。</li>
-            <li><b>后台运行</b>：统一管理流程运行期间的 CDP 连接，结束后自动释放，普通页面操作减少标签页切换；移除旧的防节流保活和节点聚焦开关。</li>
-            <li><b>运行报告</b>：支持一键复制报告中保存的完整输入与输出，覆盖单流程和流程组结果。</li>
-            <li><b>系统配置</b>：新增扩展非模型请求的 User-Agent 配置，模型请求独立使用模型配置。</li>
+            <li><b>邮件通知</b>：新增 SMTP 配置、邮件节点和流程结果通知，支持模板与附件。</li>
+            <li><b>本地操作</b>：对话支持文件操作、Bash 命令和桌面控制。</li>
+            <li><b>定时运行</b>：支持多时刻、指定日期、节假日选日和 JSON 入参。</li>
+            <li><b>知识与 Skill</b>：新增目录浏览、搜索分页、批量删除和资源预览。</li>
+            <li><b>助手配置</b>：支持按目录批量选择 Skill，取消 50 项上限。</li>
+            <li><b>对话执行</b>：取消对话和流程内助手调用的默认总时长限制。</li>
+            <li><b>页面与后台</b>：支持流程成功后关闭新建标签页，优化连接释放和标签页切换。</li>
+            <li><b>运行报告</b>：支持一键复制流程及流程组的完整输入与输出。</li>
+            <li><b>系统配置</b>：支持自定义非模型请求的 User-Agent。</li>
           </ul>
 
           <h3>v1.0.2</h3>
@@ -624,68 +807,336 @@ return result                                          // 返回值写入节点�
 
       <!-- 系统配置 -->
       <section id="section-system-settings" class="section">
-        <header class="section-header">
-          <h2>系统配置</h2>
-        </header>
-        <div class="system-settings">
-          <div class="setting-item">
-            <label class="switch-label">
-              <input type="checkbox" id="system-floating-entry-disabled">
-              <span class="switch-slider"></span>
-              <span class="switch-text">关闭悬浮入口</span>
-            </label>
-            <small>在网页中隐藏悬浮入口；重新打开后会恢复显示。</small>
-          </div>
-          <div class="setting-item">
-            <label for="system-user-agent">User-Agent（可选）</label>
-            <input type="text" id="system-user-agent" maxlength="512" placeholder="输入自定义 User-Agent">
-            <small>用于流程 HTTP 请求、资源下载和 MCP 连接；留空时使用浏览器默认值。</small>
-          </div>
-          <h3>代理设置</h3>
-          <div class="setting-item">
-            <label for="system-proxy-server">浏览器代理（可选）</label>
-            <input type="text" id="system-proxy-server" maxlength="2048" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080">
-            <small>支持 HTTP / SOCKS5，作用于网页、模型和 MCP 连接。</small>
-          </div>
-          <div class="setting-item">
-            <label for="system-proxy-username">代理用户名（可选）</label>
-            <input type="text" id="system-proxy-username" maxlength="1024" autocomplete="off" placeholder="HTTP 代理用户名">
-          </div>
-          <div class="setting-item">
-            <label for="system-proxy-password">代理密码（可选）</label>
-            <input type="password" id="system-proxy-password" maxlength="1024" autocomplete="new-password" placeholder="HTTP 代理密码">
-            <small>仅 HTTP / HTTPS 代理支持用户名密码认证。</small>
-          </div>
-          <div class="setting-item">
-            <label for="system-proxy-host-patterns">匹配域名</label>
-            <textarea id="system-proxy-host-patterns" rows="3" maxlength="8192" placeholder="example.com, *.example.com"></textarea>
-            <small>每行一个或逗号分隔，支持通配符；留空匹配全部。</small>
-          </div>
-          <div class="setting-item">
-            <label for="system-proxy-bypass-list">绕过域名</label>
-            <textarea id="system-proxy-bypass-list" rows="3" maxlength="8192" placeholder="localhost, *.internal.example.com"></textarea>
-            <small>每行一个或逗号分隔，支持通配符。</small>
-          </div>
-          <div class="setting-item">
-            <button type="button" class="btn-primary" id="btn-save-system-proxy">保存代理设置</button>
-          </div>
-          <div class="mcp-log-panel">
-            <div class="mcp-log-header">
-              <h4>代理控制状态</h4>
-              <button type="button" class="btn-small" id="btn-refresh-system-proxy-status">刷新状态</button>
+        <div class="mcp-settings-group" role="group" aria-labelledby="system-settings-title">
+          <header class="section-header">
+            <h2 id="system-settings-title">系统设置</h2>
+          </header>
+          <p class="section-desc">管理网页悬浮入口、侧边栏应用、左键菜单展示和非模型请求的 User-Agent。</p>
+          <details class="reference-panel">
+            <summary>系统设置说明</summary>
+            <div class="mcp-info">
+              <p><b>自动保存：</b>修改开关或完成 User-Agent 输入后生效。</p>
+              <p><b>悬浮入口：</b>开启「关闭悬浮入口」后隐藏，关闭后恢复。</p>
+              <p><b>侧边栏收藏：</b>先收藏应用再开启；无搜索词时仅显示收藏，搜索仍覆盖全部应用。</p>
+              <p><b>左键菜单：</b>开启收藏模式后按收藏顺序展示，关闭后显示最近使用；需先收藏应用。</p>
+              <p><b>User-Agent：</b>用于 HTTP 请求、资源下载和 MCP 连接；留空用浏览器默认值，模型请求单独配置。</p>
             </div>
-            <div class="mcp-log-list mcp-log-message" id="system-proxy-status" role="status" aria-live="polite">正在读取…</div>
+          </details>
+          <div class="item-list" aria-label="系统设置">
+            <button type="button" id="system-settings-card" class="item-card connection-card" aria-expanded="false" aria-controls="system-settings-editor">
+              <span class="connection-summary">
+                <span class="item-title">通用配置</span>
+                <span class="item-sub">悬浮入口 · 侧边栏收藏 · 左键菜单 · User-Agent</span>
+              </span>
+            </button>
+          </div>
+          <div id="system-settings-editor" class="editor system-settings hidden" aria-labelledby="system-settings-editor-title">
+            <h3 id="system-settings-editor-title">编辑系统设置</h3>
+            <div class="setting-item">
+              <label class="switch-label">
+                <input type="checkbox" id="system-floating-entry-disabled" aria-describedby="system-floating-entry-disabled-hint">
+                <span class="switch-slider"></span>
+                <span class="switch-text">关闭悬浮入口</span>
+              </label>
+              <small id="system-floating-entry-disabled-hint">开启后，在网页中隐藏悬浮入口；关闭此开关后恢复显示。</small>
+            </div>
+            <div class="setting-item">
+              <label class="switch-label">
+                <input type="checkbox" id="system-sidebar-apps-favorites-only" aria-describedby="system-sidebar-apps-favorites-hint" disabled>
+                <span class="switch-slider"></span>
+                <span class="switch-text">侧边栏仅展示收藏</span>
+              </label>
+              <small id="system-sidebar-apps-favorites-hint">请先在应用入口收藏应用，才可开启此开关。</small>
+            </div>
+            <div class="setting-item">
+              <label class="switch-label">
+                <input type="checkbox" id="system-popup-apps-favorites-only" aria-describedby="system-popup-apps-favorites-hint" disabled>
+                <span class="switch-slider"></span>
+                <span class="switch-text">左键菜单仅显示收藏列表</span>
+              </label>
+              <small id="system-popup-apps-favorites-hint">请先在应用入口收藏应用，才可开启此开关。</small>
+            </div>
+            <div class="setting-item">
+              <label for="system-user-agent">User-Agent（可选）</label>
+              <input type="text" id="system-user-agent" maxlength="512" placeholder="输入自定义 User-Agent">
+            </div>
+          </div>
+        </div>
+
+        <div class="mcp-settings-group" role="group" aria-labelledby="system-proxy-title">
+          <header class="section-header">
+            <h2 id="system-proxy-title">代理设置</h2>
+          </header>
+          <p class="section-desc">配置浏览器代理，支持 HTTP / SOCKS5，作用于网页、模型和 MCP 连接。</p>
+          <details class="reference-panel">
+            <summary>代理设置说明</summary>
+            <div class="mcp-info">
+              <p><b>保存与关闭：</b>点击「保存代理设置」生效；地址留空并保存可关闭代理。</p>
+              <p><b>认证：</b>仅 HTTP / HTTPS 代理支持用户名密码。</p>
+              <p><b>域名规则：</b>支持通配符，每行一个或逗号分隔；匹配域名留空表示全部。</p>
+              <p><b>控制状态：</b>显示代理是否由本插件控制，可点击「刷新状态」更新。</p>
+            </div>
+          </details>
+          <div class="item-list" aria-label="代理设置">
+            <button type="button" id="system-proxy-card" class="item-card connection-card" aria-expanded="false" aria-controls="system-proxy-editor">
+              <span class="connection-summary">
+                <span class="item-title">浏览器代理</span>
+                <span class="item-sub">服务器 · 认证 · 域名规则</span>
+              </span>
+            </button>
+          </div>
+          <div id="system-proxy-editor" class="editor system-settings hidden" aria-labelledby="system-proxy-editor-title">
+            <h3 id="system-proxy-editor-title">编辑代理设置</h3>
+            <div class="setting-item">
+              <label for="system-proxy-server">浏览器代理（可选）</label>
+              <input type="text" id="system-proxy-server" maxlength="2048" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080">
+            </div>
+            <div class="setting-item">
+              <label for="system-proxy-username">代理用户名（可选）</label>
+              <input type="text" id="system-proxy-username" maxlength="1024" autocomplete="off" placeholder="HTTP 代理用户名">
+            </div>
+            <div class="setting-item">
+              <label for="system-proxy-password">代理密码（可选）</label>
+              <input type="password" id="system-proxy-password" maxlength="1024" autocomplete="new-password" placeholder="HTTP 代理密码">
+            </div>
+            <div class="setting-item">
+              <label for="system-proxy-host-patterns">匹配域名</label>
+              <textarea id="system-proxy-host-patterns" rows="3" maxlength="8192" placeholder="example.com, *.example.com"></textarea>
+            </div>
+            <div class="setting-item">
+              <label for="system-proxy-bypass-list">绕过域名</label>
+              <textarea id="system-proxy-bypass-list" rows="3" maxlength="8192" placeholder="localhost, *.internal.example.com"></textarea>
+            </div>
+            <div class="setting-item">
+              <button type="button" class="btn-primary" id="btn-save-system-proxy">保存代理设置</button>
+            </div>
+            <div class="mcp-log-panel">
+              <div class="mcp-log-header">
+                <h4>代理控制状态</h4>
+                <button type="button" class="btn-small" id="btn-refresh-system-proxy-status">刷新状态</button>
+              </div>
+              <div class="mcp-log-list mcp-log-message" id="system-proxy-status" role="status" aria-live="polite">正在读取…</div>
+            </div>
           </div>
         </div>
       </section>
     </main>
   </div>
 
+  <div id="archive-versions-host" class="hidden">
+    <div id="archive-versions-content">
+      <details class="reference-panel drawer-guide">
+        <summary>备份版本说明</summary>
+        <div id="archive-versions-description" class="drawer-guide-content">
+          <p>同步前先备份，再覆盖同步范围内的本地配置，删除版本中不存在的项。</p>
+          <p>备份标记为可同步后，可手动同步，或由客户端在启动设置中指定该版本自动同步。</p>
+        </div>
+      </details>
+      <p id="archive-version-status" role="status" aria-live="polite" hidden></p>
+      <div id="archive-versions-list" class="item-list" aria-label="备份版本列表"></div>
+      <div id="archive-version-actions" class="editor" role="region" aria-labelledby="archive-version-title" hidden>
+        <h3 id="archive-version-title">版本操作</h3>
+        <div class="archive-actions">
+          <button type="button" id="archive-apply" class="btn-primary">同步所选版本</button>
+          <button type="button" id="archive-syncable" class="btn-secondary">标记为可同步</button>
+        </div>
+      </div>
+    </div>
+    <button type="button" id="archive-versions-close" class="btn-secondary" data-action="cancel-drawer">关闭</button>
+  </div>
+
+  <div id="mcp-action-host" class="hidden">
+    <form id="mcp-client-settings-form" class="mcp-action-form">
+      <details class="reference-panel drawer-guide">
+        <summary>客户端设置说明</summary>
+        <div class="drawer-guide-content">
+          <p><b>共用身份：</b>当前浏览环境的所有 MCP 连接共用名称和 ID；改名不改变身份。</p>
+          <p><b>重置身份：</b>清除本环境所有连接凭据，需全部重新配对；服务端旧配对需另行撤销。</p>
+        </div>
+      </details>
+      <div class="drawer-section">
+        <div class="form-row">
+          <label for="mcp-client-name">客户端名称</label>
+          <input type="text" id="mcp-client-name" maxlength="300" placeholder="输入客户端名称">
+        </div>
+        <div class="form-row">
+          <label for="mcp-client-id">当前客户端 ID</label>
+          <input type="text" id="mcp-client-id" readonly>
+        </div>
+      </div>
+    </form>
+    <div id="mcp-client-settings-actions" class="mcp-action-buttons">
+      <button type="submit" form="mcp-client-settings-form" class="btn-primary" id="btn-mcp-client-save">保存</button>
+      <button type="button" class="btn-secondary" data-action="cancel-drawer">取消</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn-danger" id="btn-mcp-reset-id">重置客户端身份</button>
+    </div>
+    <form id="mcp-pair-form" class="mcp-action-form">
+      <details class="reference-panel drawer-guide">
+        <summary>配对说明</summary>
+        <div class="drawer-guide-content">
+          <p><b>配对凭据：</b>验证成功后保存凭据，密码用后清除。配对保持开关原状态；连接关闭时，配对只临时联系服务端，完成后立即断开。</p>
+          <p><b>重新配对：</b>更新密钥，不改变连接开关。开关开启时自动使用新密钥连接，关闭时保持断开。</p>
+          <p><b>更换服务端：</b>保留连接开关和目录配置；工作目录恢复只读，其他目录及桌面权限关闭，需重新授权。</p>
+        </div>
+      </details>
+      <div class="drawer-section">
+        <div class="form-row">
+          <label for="mcp-pair-target">配对目标</label>
+          <input type="text" id="mcp-pair-target" readonly>
+        </div>
+        <div class="form-row">
+          <label for="mcp-pair-password">配对密码</label>
+          <input type="password" id="mcp-pair-password" required autocomplete="new-password" maxlength="512" placeholder="输入服务端配对密码">
+        </div>
+      </div>
+    </form>
+    <div id="mcp-pair-actions" class="mcp-action-buttons">
+      <button type="submit" form="mcp-pair-form" class="btn-primary" id="btn-mcp-confirm-pair">确认配对</button>
+      <button type="button" class="btn-secondary" data-action="cancel-drawer">取消</button>
+    </div>
+  </div>
+
+  <div id="mcp-permissions-host" class="hidden">
+    <div id="mcp-permissions-content">
+      <section class="mcp-settings-group mcp-permission-section" aria-labelledby="mcp-workspaces-title">
+        <header class="section-header">
+          <h3 id="mcp-workspaces-title">目录权限</h3>
+          <button type="button" class="btn-primary" id="btn-mcp-local-directory-add" aria-expanded="false" aria-controls="mcp-local-directory-form">新增目录</button>
+        </header>
+        <details class="reference-panel">
+          <summary>目录权限说明</summary>
+          <div class="mcp-info">
+            <p><b>编辑保存：</b>点击目录卡片编辑，保存后生效；工作目录默认可读。</p>
+            <p><b>目录授权：</b>新目录先保存并确认路径，再授权；修改路径会关闭全部权限。</p>
+            <p><b>权限边界：</b>命令使用服务端进程权限，不受文件开关限制；父目录授权可能覆盖子目录，关闭子目录权限不构成系统级拒绝。</p>
+          </div>
+        </details>
+        <div id="mcp-workspace-list" class="item-list" aria-label="目录权限列表"></div>
+          <form id="mcp-local-directory-form" class="editor hidden" aria-labelledby="mcp-directory-form-title">
+            <h4 id="mcp-directory-form-title">编辑目录</h4>
+            <div class="form-grid">
+              <div class="form-row">
+                <label for="mcp-local-working-directory">远端绝对路径</label>
+                <input type="text" id="mcp-local-working-directory" required maxlength="4096" placeholder="服务端上的绝对路径" aria-describedby="mcp-directory-form-hint">
+              </div>
+              <div class="form-row">
+                <label for="mcp-new-workspace-alias">目录别名（可选）</label>
+                <input type="text" id="mcp-new-workspace-alias" maxlength="200" placeholder="留空保留当前别名">
+              </div>
+            </div>
+            <p class="form-help" id="mcp-directory-form-hint" role="status"></p>
+            <div id="mcp-workspace-controls" class="mcp-workspace-permissions" role="group" aria-label="目录权限">
+              <div class="form-row">
+                <label class="switch-label">
+                  <input type="checkbox" id="mcp-workspace-read" data-permission="read" aria-describedby="mcp-directory-form-hint">
+                  <span class="switch-slider"></span>
+                  <span class="switch-text">读取文件</span>
+                </label>
+                <small id="mcp-workspace-read-hint" class="hidden">工作目录默认开启</small>
+              </div>
+              <div class="form-row">
+                <label class="switch-label">
+                  <input type="checkbox" id="mcp-workspace-write" data-permission="write" aria-describedby="mcp-directory-form-hint">
+                  <span class="switch-slider"></span>
+                  <span class="switch-text">写入文件</span>
+                </label>
+              </div>
+              <div class="form-row">
+                <label class="switch-label">
+                  <input type="checkbox" id="mcp-workspace-execute" data-permission="execute" aria-describedby="mcp-directory-form-hint">
+                  <span class="switch-slider"></span>
+                  <span class="switch-text">执行命令</span>
+                </label>
+              </div>
+            </div>
+            <p class="form-help">目录信息和权限修改后，点击「保存」生效。</p>
+            <div class="editor-actions">
+              <button type="submit" class="btn-primary" id="btn-mcp-local-directory-save" disabled>保存</button>
+              <button type="button" class="btn-secondary" id="btn-mcp-local-directory-cancel">取消</button>
+              <span class="spacer"></span>
+              <button type="button" class="btn-danger hidden" id="btn-mcp-local-directory-delete">删除</button>
+            </div>
+          </form>
+      </section>
+
+      <section class="mcp-settings-group mcp-permission-section" aria-labelledby="mcp-server-info-title">
+        <header class="section-header">
+          <h3 id="mcp-server-info-title">服务端信息</h3>
+          <div>
+            <select id="mcp-disk-workspace" aria-label="工作目录" aria-describedby="mcp-disk-hint" disabled><option value="">暂无已授权目录</option></select>
+            <button type="button" class="btn-small" id="btn-mcp-refresh-info" title="更新运行环境和所选工作目录的磁盘信息" disabled>刷新信息</button>
+          </div>
+        </header>
+        <p class="form-help" id="mcp-disk-hint"></p>
+        <div class="mcp-info-panel">
+          <p class="mcp-info-status" id="mcp-environment-status" role="status"></p>
+          <div class="mcp-local-info" id="mcp-environment-info"></div>
+        </div>
+        <div class="mcp-info-panel">
+          <p class="mcp-info-status" id="mcp-disk-status" role="status"></p>
+          <div class="mcp-local-info" id="mcp-disk-info"></div>
+        </div>
+      </section>
+
+      <section class="mcp-settings-group mcp-permission-section" aria-labelledby="mcp-arp-permissions-title">
+        <header class="section-header">
+          <h3 id="mcp-arp-permissions-title">远程操作权限</h3>
+        </header>
+        <details class="reference-panel">
+          <summary>远程操作权限说明</summary>
+          <div class="mcp-info">
+            <p><b>作用范围：</b>控制外部 Agent 和其他客户端通过此连接操作当前插件的权限。</p>
+          </div>
+        </details>
+        <form id="mcp-arp-permissions-form">
+          <div id="mcp-arp-permission-controls" class="mcp-workspace-permissions" role="group" aria-label="远程操作权限">
+            <div class="form-row">
+              <label class="switch-label">
+                <input type="checkbox" id="mcp-arp-read" data-permission="read">
+                <span class="switch-slider"></span><span class="switch-text">读取／查询</span>
+              </label>
+            </div>
+            <div class="form-row">
+              <label class="switch-label">
+                <input type="checkbox" id="mcp-arp-write" data-permission="write">
+                <span class="switch-slider"></span><span class="switch-text">创建／修改</span>
+              </label>
+            </div>
+            <div class="form-row">
+              <label class="switch-label">
+                <input type="checkbox" id="mcp-arp-execute" data-permission="execute">
+                <span class="switch-slider"></span><span class="switch-text">执行</span>
+              </label>
+            </div>
+            <div class="form-row mcp-arp-delete-row">
+              <label class="switch-label">
+                <input type="checkbox" id="mcp-arp-delete" data-permission="delete">
+                <span class="switch-slider"></span><span class="switch-text">删除</span>
+              </label>
+            </div>
+          </div>
+          <div class="editor-actions">
+            <button type="submit" class="btn-primary" id="btn-mcp-arp-permissions-save" disabled>保存</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </div>
+
   <template id="mail-test-template">
     <form id="mail-test-form" class="mail-test-form">
-      <p class="form-help">使用当前填写的 SMTP 配置发送真实邮件，测试不会自动保存配置。多个邮箱用逗号、分号或空格分隔，收件人、抄送、密送至少填一项。</p>
+      <details class="reference-panel drawer-guide">
+        <summary>邮件测试说明</summary>
+        <div class="drawer-guide-content">
+          <p><b>测试发送：</b>使用当前 SMTP 配置发送真实邮件，不自动保存配置。</p>
+          <p><b>收件地址：</b>收件人、抄送、密送至少填一项，多个地址用逗号、分号或空格分隔。</p>
+          <p><b>附件限制：</b>最多 20 个，总计不超过 20MB。</p>
+        </div>
+      </details>
       <p id="mail-test-connection-status" class="form-help" role="status" aria-live="polite"></p>
-      <fieldset id="mail-test-fields">
+      <fieldset id="mail-test-fields" class="drawer-section">
+        <h4>收件人与附件</h4>
         <div class="form-row">
           <label for="mail-test-to">测试收件人</label>
           <input id="mail-test-to" type="text" placeholder="recipient@example.com">
@@ -699,7 +1150,7 @@ return result                                          // 返回值写入节点�
           <input id="mail-test-bcc" type="text">
         </div>
         <div class="form-row">
-          <label for="mail-test-attachments">测试附件（可选，最多 20 个，总计 20MB）</label>
+          <label for="mail-test-attachments">测试附件（可选）</label>
           <input id="mail-test-attachments" type="file" multiple>
         </div>
       </fieldset>
@@ -709,7 +1160,7 @@ return result                                          // 返回值写入节点�
 
   <!-- 抽屉 -->
   <div class="drawer-overlay" id="drawer-overlay" data-action="cancel-drawer"></div>
-  <div class="drawer" id="drawer">
+  <div class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
     <div class="drawer-header">
       <h3 id="drawer-title">编辑</h3>
       <button class="drawer-close" id="drawer-close" data-action="cancel-drawer" title="关闭">×</button>
@@ -748,6 +1199,7 @@ return result                                          // 返回值写入节点�
   <script src="../agent/providers/browser-provider-transport.js"></script>
   <script src="../agent/providers/compat/index.js"></script>
   <script src="../agent/tool-result-projection.js"></script>
+  <script src="../shared/server-info-description.js"></script>
   <script src="../agent/providers/provider-message-normalizer.js"></script>
   <script src="../agent/providers/openai-chat-completions-provider.js"></script>
   <script src="../agent/providers/openai-responses-provider.js"></script>
@@ -761,6 +1213,8 @@ return result                                          // 返回值写入节点�
   <script src="../apps/backup-client.js"></script>
   <script src="../ui/lifecycle.js"></script>
   <script src="../ui/feedback.js"></script>
+  <script src="../builtin-apps/shared/sort-layout.js"></script>
+  <script type="module" src="options-drag-preview.js"></script>
   <script src="../shared/sync-event-stream.js"></script>
   <script src="../ui/image-artifact-client.js"></script>
   <script src="../ui/zip-store.js"></script>
@@ -808,10 +1262,12 @@ return result                                          // 返回值写入节点�
   <script src="../shared/schedule-utils.js"></script>
   <script src="options-schedule-controller.js"></script>
   <script src="options-url-trigger-controller.js"></script>
+  <script src="../shared/mcp-contract.js"></script>
   <script src="options-backup-controller.js"></script>
   <script src="options-app-controller.js"></script>
   <script src="options-run-report-controller.js"></script>
   <script src="options-mail-controller.js"></script>
+  <script src="options-archive.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

@@ -27,7 +27,7 @@
 .gitlab-app .field-heading { height: 28px; margin-bottom: 5px; display: flex; flex-direction: row; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-secondary); }
 .gitlab-app .field-actions { display: flex; align-items: center; gap: 6px; }
 .gitlab-app .project-filters { position: relative; margin: 0; padding: 0; border: 0; background: transparent; }
-.gitlab-app .project-filters > summary { min-height: 26px; padding: 0 6px; margin: 0; font-size: 12px; border-radius: 4px; }
+.gitlab-app .project-filters > summary { min-height: 26px; padding: 0 4px; margin: 0; font-size: 12px; border-radius: 4px; }
 .gitlab-app .project-filters > summary::before, .gitlab-app .project-filters > summary::after { display: none; }
 .gitlab-app .project-filters > summary:hover, .gitlab-app .project-filters[open] > summary, .gitlab-app .project-filters[data-active="true"] > summary { background: var(--accent-soft); color: var(--accent); }
 .gitlab-app .filter-popover { position: absolute; z-index: 2; top: 32px; right: -34px; width: min(340px, calc(100vw - 64px)); padding: 16px; display: grid; gap: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px #0002; }
@@ -75,7 +75,7 @@
 .gitlab-app .results { flex: 1; min-height: 0; height: auto; white-space: pre-wrap; }
 .gitlab-app .results:empty::before { content: '执行后，这里按分支显示结果。'; color: var(--text-secondary); }
 .gitlab-app .results p { margin: 0; }
-.gitlab-app .settings-dialog { width: min(500px, calc(100vw - 32px)); padding: 22px; border-radius: 12px; box-shadow: 0 20px 70px #0003; }
+.gitlab-app .settings-dialog { width: min(500px, calc(100vw - 32px)); padding: 22px; border-radius: 12px; }
 .gitlab-app .dialog-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
 .gitlab-app .dialog-heading h2 { font-size: 18px; }
 .gitlab-app #connection-fields { display: grid; gap: 14px; }

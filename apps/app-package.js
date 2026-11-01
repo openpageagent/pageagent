@@ -154,6 +154,7 @@
           assets.forEach(function (asset) { t.store('app_assets').put(asset); });
           if (!preserveData) data.forEach(function (record) { t.store('app_data').put(record); });
           var meta = { appId: item.appId, name: item.name, normalizedName: C.normalizeName(item.name), slug: C.slug(item.slug === undefined && current ? current.slug : item.slug), icon: Object.prototype.hasOwnProperty.call(C.ICONS, item.icon) ? item.icon : 'fa-cube', description: item.description || '', createdAt: current && builtin ? current.createdAt : item.createdAt || Date.now(), updatedAt: Date.now(), lastUsedAt: current && current.lastUsedAt || 0, revision: revision, dataRevision: builtin && current ? current.dataRevision : C.revision(), sourceConversationId: builtin ? '' : item.sourceConversationId || '', slots: slots, unpublished: item.unpublished === true || !slots.published, bytes: bytes + assetBytes + dataBytes, dataBytes: dataBytes, assetBytes: assetBytes, assetBytesBySlot: assetBytesBySlot };
+          if (current && Number.isSafeInteger(current.openCount)) meta.openCount = current.openCount;
           if (builtin) Object.assign(meta, { __builtin: true, __builtinFile: builtin.file, __builtinHash: builtin.hash });
           if (defaults) meta.__builtinDefaultPermissions = defaults;
           // Commit the marker atomically with the initialized permissions, never from a declaration alone.

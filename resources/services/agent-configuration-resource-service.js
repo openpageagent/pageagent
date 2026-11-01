@@ -354,7 +354,7 @@
       return getModelService(serviceId).then(function () { return cleanId(serviceId, 'modelServiceId'); });
     }
 
-    function createAssistant(body) {
+    function createAssistant(body, restoredId) {
       body = isRecord(body) ? clone(body) : {};
       assertOnly(body, ASSISTANT_MUTABLE_KEYS, 'Assistant');
       if (!String(body.name || '').trim()) fail('SCHEMA_VALIDATION_FAILED', 'Assistant name is required');
@@ -381,7 +381,7 @@
           modelServiceId: resource.modelServiceId,
           resourcePolicy: resource.resourcePolicy,
           settings: resource.settings,
-        });
+        }, restoredId);
       }).then(function (result) {
         var assistant = result && result.assistant;
         if (!assistant || !assistant.id) fail('INTERNAL_ERROR', 'ConversationState.createAssistant did not return an Assistant');
@@ -428,10 +428,13 @@
       }, Promise.resolve());
     }
 
-    function deleteAssistant(assistantId) {
+    function deleteAssistant(assistantId, internalOptions) {
       assistantId = cleanId(assistantId, 'assistantId');
       return loadConversationState().then(function (state) {
         assistantFromState(state, assistantId);
+        if (internalOptions && internalOptions.preserveConversations === true) {
+          return conversationState.deleteAssistant(assistantId);
+        }
         return deleteAssistantConversations(state, assistantId).then(function () {
           return conversationState.deleteAssistant(assistantId);
         });
@@ -492,14 +495,14 @@
       return normalized;
     }
 
-    function createModelService(body) {
+    function createModelService(body, internalOptions) {
       body = isRecord(body) ? clone(body) : {};
       var serviceId = cleanId(body.id || modelSettings.makeServiceId(), 'modelServiceId');
       return queuedWrite(function () {
         return loadModelBundle().then(function (bundle) {
           if (modelSettings.getService(bundle.settings, serviceId, false)) fail('RESOURCE_CONFLICT', 'Model Service already exists: ' + serviceId);
           var service = normalizedModelService(body, serviceId, null, true);
-          if (!bundle.settings.generatorServiceId && isRecord(bundle.agentSettingsMeta)) {
+          if (!(internalOptions && internalOptions.restoring) && !bundle.settings.generatorServiceId && isRecord(bundle.agentSettingsMeta)) {
             var globalBudget = isRecord(bundle.agentSettingsMeta.contextBudget)
               ? bundle.agentSettingsMeta.contextBudget
               : {};
@@ -560,7 +563,7 @@
       });
     }
 
-    function deleteModelService(serviceId) {
+    function deleteModelService(serviceId, internalOptions) {
       serviceId = cleanId(serviceId, 'modelServiceId');
       return queuedWrite(function () {
         return Promise.all([loadModelBundle(), loadConversationState()]).then(function (values) {
@@ -572,6 +575,9 @@
           if (bundle.settings.defaultServiceId === serviceId) bundle.settings.defaultServiceId = fallbackServiceId;
           if (bundle.settings.generatorServiceId === serviceId) bundle.settings.generatorServiceId = fallbackServiceId;
           delete bundle.meta[serviceId];
+          if (internalOptions && internalOptions.preserveConversations === true) {
+            return saveModelBundle(bundle).then(function () { return { id: serviceId, deleted: true }; });
+          }
           var assistantIds = Object.keys(conversation && conversation.assistants || {}).filter(function (assistantId) {
             var assistant = conversation.assistants[assistantId];
             return String(assistant && assistant.modelServiceId || '') === serviceId;
@@ -872,6 +878,11 @@
       listModelServices: listModelServices,
       getModelService: getModelService,
       createModelService: createModelService,
+      validateModelService: function (input) {
+        var body = {};
+        Object.keys(MODEL_MUTABLE_KEYS).forEach(function (key) { if (hasOwn(input, key)) body[key] = clone(input[key]); });
+        return normalizedModelService(body, cleanId(input.id, 'modelServiceId'), null, true);
+      },
       patchModelService: patchModelService,
       deleteModelService: deleteModelService,
       createConnectionAttempt: createConnectionAttempt,

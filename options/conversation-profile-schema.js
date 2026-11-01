@@ -28,17 +28,8 @@
     Object.freeze({ id: 'mcp', label: '连接配置', description: '插件与本地 MCP Server 的 WebSocket 连接及邮件配置。' }),
     Object.freeze({ id: 'system-settings', label: '系统配置', description: '系统配置、公开配置分区与 Agent 默认设置。' }),
   ]);
-  var RESOURCE_ROOTS = Object.freeze([
-    Object.freeze({ uri: '/apps', section: 'apps', label: '应用', description: '发现、创建和修改应用，读取当前 SDK 授权并执行已授权动作。',
-      supportedMethods: Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']),
-      methodPermissions: Object.freeze({
-        GET: Object.freeze(['apps.read']),
-        POST: Object.freeze(['apps.write', 'apps.execute']),
-        PUT: Object.freeze(['apps.write']),
-        PATCH: Object.freeze(['apps.write']),
-        DELETE: Object.freeze(['apps.delete']),
-      }),
-    }),
+  var RESOURCE_ROOT_METADATA = Object.freeze([
+    Object.freeze({ uri: '/apps', section: 'apps', label: '应用', description: '发现、创建和修改应用，读取当前 SDK 授权并执行已授权动作。' }),
     Object.freeze({ uri: '/conversations', section: 'conversation', label: '对话', description: '管理对话及其持久化状态。' }),
     Object.freeze({ uri: '/assistants', section: 'conversation', label: '助手', description: '管理助手配置。' }),
 
@@ -47,7 +38,6 @@
     Object.freeze({
       uri: '/mcp-servers', section: 'knowledge', label: 'HTTP MCP 服务器与工具',
       description: '知识菜单：读取外部 HTTP MCP 服务器与工具目录，并创建工具调用。',
-      supportedMethods: Object.freeze(['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS']),
       methodDescriptions: Object.freeze({
         GET: '读取已配置的 HTTP MCP 服务器及已同步的工具 schema。',
         POST: '添加或检查 HTTP MCP 服务器、刷新工具目录，或发起工具调用。',
@@ -55,23 +45,13 @@
         DELETE: '删除 HTTP MCP 服务器及其托管的知识条目。',
         OPTIONS: '内省 HTTP MCP 服务器、工具发现与调用路由。',
       }),
-      methodPermissions: Object.freeze({
-        GET: Object.freeze(['mcp-servers.read']),
-        POST: Object.freeze(['mcp-servers.write', 'mcp-servers.call']),
-        PATCH: Object.freeze(['mcp-servers.write']),
-        DELETE: Object.freeze(['mcp-servers.delete']),
-      }),
     }),
     Object.freeze({
       uri: '/mcp-calls', section: 'knowledge', label: 'HTTP MCP 调用结果',
       description: '知识菜单：读取异步 HTTP MCP 调用结果；调用入口在 /mcp-servers。',
-      supportedMethods: Object.freeze(['GET', 'OPTIONS']),
       methodDescriptions: Object.freeze({
         GET: '读取已发起的 HTTP MCP 工具调用状态和结果。',
         OPTIONS: '内省 HTTP MCP 调用结果读取路由。',
-      }),
-      methodPermissions: Object.freeze({
-        GET: Object.freeze(['mcp-calls.read']),
       }),
     }),
     Object.freeze({ uri: '/knowledge-settings', section: 'knowledge', label: '知识设置', description: '知识菜单：管理 Knowledge 行为设置。' }),
@@ -80,36 +60,21 @@
 
     Object.freeze({
       uri: '/connections', section: 'mcp', label: '本地 MCP WebSocket 连接',
-      description: '连接配置菜单：管理 Extension 与本地 MCP Server 的连接；不读取或调用 HTTP MCP 工具。',
-      supportedMethods: Object.freeze(['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS']),
+      description: '查询服务端连接、已连接客户端和总数，通过 ARP 调用其他客户端；连接及授权配置仅由配置页修改。',
       methodDescriptions: Object.freeze({
-        GET: '读取本地 WebSocket 连接状态、连接尝试和日志。',
-        POST: '发起一次真实的本地 MCP WebSocket 连接尝试。',
+        GET: '读取 WebSocket 连接状态、连接尝试和日志，查询对应服务端的全部客户端及总数。',
+        POST: '发起 WebSocket 连接尝试，或通过服务端调用其他客户端的 ARP 能力。',
         PATCH: '修改本地连接地址、启用状态和标签页模式。',
         DELETE: '清空本地连接日志；不会删除 HTTP MCP 服务器。',
-        OPTIONS: '内省本地 MCP WebSocket 连接管理路由。',
-      }),
-      methodPermissions: Object.freeze({
-        GET: Object.freeze(['connections.read']),
-        POST: Object.freeze(['connections.execute']),
-        PATCH: Object.freeze(['connections.write']),
-        DELETE: Object.freeze(['connections.write']),
+        OPTIONS: '发现 WebSocket 连接、客户端列表与 ARP 转发能力。',
       }),
     }),
 
     Object.freeze({ uri: '/mail-settings', section: 'mcp', label: '邮件配置',
       description: '管理邮件通知开关、SMTP 账号和发件信息，查询邮件服务状态或发送测试邮件；密码只写不读。',
-      supportedMethods: Object.freeze(['GET', 'PATCH', 'POST', 'OPTIONS']),
-      methodPermissions: Object.freeze({
-        GET: Object.freeze(['mail-settings.read']),
-        PATCH: Object.freeze(['mail-settings.write']),
-        POST: Object.freeze(['mail-settings.execute']),
-      }),
     }),
     Object.freeze({ uri: '/local', section: 'mcp', label: '本地文件、命令与桌面',
       description: '在连接配置开启后，通过服务端操作文件、执行 Bash，以及调用平台支持的鼠标、键盘、剪贴板、截图、图片定位、应用和窗口能力。',
-      supportedMethods: Object.freeze(['POST', 'OPTIONS']),
-      methodPermissions: Object.freeze({ POST: Object.freeze(['local.execute']) }),
     }),
     Object.freeze({ uri: '/flow-groups', section: 'flow-groups', label: '流程组', description: '管理 FlowGroup 并启动流程组运行。' }),
 
@@ -124,20 +89,8 @@
     Object.freeze({ uri: '/scripts', section: 'scripts', label: '脚本', description: '管理并运行可复用脚本。' }),
     Object.freeze({ uri: '/schedules', section: 'schedules', label: '定时任务', description: '管理定时任务并立即运行。' }),
     Object.freeze({ uri: '/url-triggers', section: 'url-triggers', label: 'URL 触发器', description: '管理 URL 自动触发规则。' }),
-    Object.freeze({ uri: '/runs', section: 'logs', label: '运行与报告', description: '读取运行和报告、停止活动流程、继续可恢复流程，以及清理运行记录。',
-      supportedMethods: Object.freeze(['GET', 'POST', 'DELETE', 'OPTIONS']),
-      methodPermissions: Object.freeze({
-        GET: Object.freeze(['runs.read', 'runs.report.read', 'runs.debug.read']),
-        POST: Object.freeze(['runs.execute', 'runs.cancel']),
-        DELETE: Object.freeze(['runs.delete']),
-      }),
-    }),
+    Object.freeze({ uri: '/runs', section: 'logs', label: '运行与报告', description: '读取运行和报告、停止活动流程、继续可恢复流程，以及清理运行记录。' }),
     Object.freeze({ uri: '/system-settings', section: 'system-settings', label: '系统配置', description: '管理网页悬浮入口、非模型请求 User-Agent 和浏览器代理。',
-      supportedMethods: Object.freeze(['GET', 'PATCH', 'OPTIONS']),
-      methodPermissions: Object.freeze({
-        GET: Object.freeze(['system-settings.read']),
-        PATCH: Object.freeze(['system-settings.write']),
-      }),
     }),
     Object.freeze({ uri: '/config', section: 'system-settings', label: '公开配置', description: '读取允许公开的配置分区。' }),
     Object.freeze({ uri: '/agent-settings', section: 'system-settings', label: 'Agent 设置', description: '管理 Agent 默认设置。' }),
@@ -149,40 +102,16 @@
     Object.freeze({ name: 'PUT', label: '完整替换', description: '用完整表示创建或替换已知资源。' }),
     Object.freeze({ name: 'PATCH', label: '局部修改', description: '只修改资源的指定部分。' }),
     Object.freeze({ name: 'DELETE', label: '删除/取消', description: '删除资源或取消活动运行。' }),
-    Object.freeze({ name: 'OPTIONS', label: '内省', description: '询问当前资源还能做什么；安全且始终可用。' }),
+    Object.freeze({ name: 'OPTIONS', label: '内省', description: '查询已授权能力；资源没有可用权限时会被拒绝。' }),
   ]);
   var RESOURCE_METHOD_SET = Object.freeze(RESOURCE_METHODS.reduce(function (set, method) {
     set[method.name] = true;
     return set;
   }, Object.create(null)));
-  var RESOURCE_PERMISSION_NAMES = Object.freeze([
-    'page.read', 'page.interact', 'page.javascript',
-    'browser.read', 'browser.tabs.write', 'browser.navigate',
-    'browser.windows.write', 'browser.downloads.read', 'browser.downloads.write', 'browser.debugger',
-    'flows.read', 'flows.write', 'flows.nodes.read', 'flows.nodes.write', 'flows.nodes.delete', 'flows.delete',
-    'flow-groups.read', 'flow-groups.write', 'flow-groups.delete',
-    'node-types.read', 'recordings.read',
-    'pages.read', 'pages.write', 'pages.delete',
-    'url-triggers.read', 'url-triggers.write', 'url-triggers.delete',
-    'scripts.read', 'scripts.write', 'scripts.delete',
-    'apps.read', 'apps.write', 'apps.execute', 'apps.delete',
-    'runs.read', 'runs.report.read', 'runs.debug.read', 'runs.execute', 'runs.cancel', 'runs.delete',
-    'schedules.read', 'schedules.write', 'schedules.delete',
-    'knowledge.read', 'knowledge.write', 'knowledge.delete',
-    'skills.read', 'skills.write', 'skills.delete',
-    'assistants.read', 'assistants.write', 'assistants.delete',
-    'model-services.read', 'model-services.write', 'model-services.delete', 'model-services.execute',
-    'agent-settings.read', 'agent-settings.write',
-    'system-settings.read', 'system-settings.write',
-    'mail-settings.read', 'mail-settings.write', 'mail-settings.execute',
-    'connections.read', 'connections.write', 'connections.execute',
-    'local.execute',
-    'mcp-servers.read', 'mcp-servers.write', 'mcp-servers.delete', 'mcp-servers.call',
-    'mcp-calls.read',
-    'conversations.read', 'conversations.write', 'conversations.delete', 'conversations.execute',
-    'conversations.trace.read', 'conversations.export.read',
-    'config.read',
-  ]);
+  // Installed from AgentCore.resourcePermissionCatalog, backed by registered routes.
+  // UI metadata never defines executable methods or permission names.
+  var RESOURCE_ROOTS = null;
+  var RESOURCE_PERMISSION_NAMES = null;
   var BLOCKED_KEYS = Object.create(null);
   BLOCKED_KEYS.__proto__ = true;
   BLOCKED_KEYS.prototype = true;
@@ -257,6 +186,57 @@
     return stableStringify(left) === stableStringify(right);
   }
 
+  function coreMethodsForRoot(uri) {
+    return uri === '/local' ? ['GET'] : runtimePermissions.rootMethods[uri] || [];
+  }
+
+  function installResourcePermissionCatalog(catalog) {
+    if (!isRecord(catalog) || !Object.keys(catalog).length) {
+      throw new Error('资源权限目录为空，无法配置授权');
+    }
+    var metadata = {};
+    RESOURCE_ROOT_METADATA.forEach(function (entry) { metadata[entry.uri] = entry; });
+    var names = new Set(runtimePermissions.permissions);
+    var uris = RESOURCE_ROOT_METADATA.map(function (entry) { return entry.uri; });
+    Object.keys(catalog).forEach(function (uri) {
+      // These internal resources have their own owner/context checks, not UI grants.
+      if (uri !== '/current' && uri !== '/image-artifacts' && uris.indexOf(uri) === -1) uris.push(uri);
+    });
+    RESOURCE_ROOTS = uris.filter(function (uri) { return isRecord(catalog[uri]); }).map(function (uri) {
+      var methods = {};
+      var coreMethods = coreMethodsForRoot(uri);
+      var additional = new Set();
+      var methodGrants = new Set();
+      RESOURCE_METHODS.forEach(function (method) {
+        var permissions = catalog[uri][method.name];
+        if (!Array.isArray(permissions)) return;
+        methods[method.name] = Array.from(new Set(permissions));
+        permissions.forEach(function (permission) {
+          names.add(permission);
+          if (coreMethods.indexOf(method.name) === -1) methodGrants.add(permission);
+          else if (runtimePermissions.permissions.indexOf(permission) === -1) additional.add(permission);
+        });
+      });
+      methods.OPTIONS = [];
+      return Object.assign({}, metadata[uri] || { uri: uri, label: uri, description: '' }, {
+        supportedMethods: Object.keys(methods),
+        methodPermissions: methods,
+        // Core methods stay enabled without granting optional capabilities such as
+        // page JavaScript, browser windows, downloads or debugger access.
+        additionalPermissions: Array.from(additional).filter(function (permission) {
+          return !methodGrants.has(permission);
+        }).sort(),
+      });
+    });
+    RESOURCE_PERMISSION_NAMES = Array.from(names).sort();
+  }
+
+  function hasResourcePermissionCatalog() { return RESOURCE_ROOTS !== null; }
+
+  function requireResourcePermissionCatalog() {
+    if (!hasResourcePermissionCatalog()) throw new Error('资源权限目录尚未加载，无法配置授权');
+  }
+
   function normalizedMethods(value, fallback) {
     var source = Array.isArray(value)
       ? value
@@ -273,16 +253,19 @@
   }
 
   function fullResourcePolicy() {
+    requireResourcePermissionCatalog();
     var roots = {};
-    var methods = RESOURCE_METHODS.map(function (method) { return method.name; });
-    RESOURCE_ROOTS.forEach(function (root) { roots[root.uri] = { methods: methods.slice() }; });
+    RESOURCE_ROOTS.forEach(function (root) { roots[root.uri] = { methods: root.supportedMethods.slice() }; });
     return { roots: roots, permissions: RESOURCE_PERMISSION_NAMES.slice() };
   }
 
   function defaultRuntimeResourcePolicy() {
+    requireResourcePermissionCatalog();
     var roots = {};
     RESOURCE_ROOTS.forEach(function (root) {
-      roots[root.uri] = { methods: (runtimePermissions.rootMethods[root.uri] || ['OPTIONS']).slice() };
+      roots[root.uri] = { methods: (runtimePermissions.rootMethods[root.uri] || ['OPTIONS']).filter(function (method) {
+        return root.supportedMethods.indexOf(method) !== -1;
+      }) };
     });
     return { roots: roots, permissions: runtimePermissions.permissions.slice() };
   }
@@ -294,16 +277,19 @@
       permission = String(permission || '').trim();
       if (RESOURCE_PERMISSION_NAMES.indexOf(permission) !== -1) selected[permission] = true;
     });
-    runtimePermissions.permissions.forEach(function (permission) { selected[permission] = true; });
+    runtimePermissions.permissions.forEach(function (permission) { if (permission !== 'local.execute') selected[permission] = true; });
     return RESOURCE_PERMISSION_NAMES.filter(function (permission) { return !!selected[permission]; });
   }
 
   function permissionsForRootMethods(roots) {
     var selected = Object.create(null);
     RESOURCE_ROOTS.forEach(function (root) {
-      var methodPermissions = root.methodPermissions || {};
+      var methodPermissions = root.methodPermissions;
+      var coreMethods = coreMethodsForRoot(root.uri);
       var methods = roots[root.uri] && roots[root.uri].methods || [];
       methods.forEach(function (method) {
+        // A mandatory method is not consent to every capability behind it.
+        if (coreMethods.indexOf(method) !== -1) return;
         (methodPermissions[method] || []).forEach(function (permission) {
           selected[permission] = true;
         });
@@ -313,6 +299,7 @@
   }
 
   function normalizeResourcePolicy(policy, base) {
+    requireResourcePermissionCatalog();
     var sourceProvided = isRecord(policy);
     var baseProvided = isRecord(base);
     var source = sourceProvided ? policy : {};
@@ -356,12 +343,12 @@
           return methods.indexOf(method) !== -1;
         });
       }
-      var requiredMethods = runtimePermissions.rootMethods[root.uri] || [];
+      var requiredMethods = coreMethodsForRoot(root.uri);
       requiredMethods.forEach(function (method) {
         if (methods.indexOf(method) === -1) methods.push(method);
       });
       methods = RESOURCE_METHODS.map(function (method) { return method.name; }).filter(function (method) {
-        return methods.indexOf(method) !== -1;
+        return methods.indexOf(method) !== -1 && root.supportedMethods.indexOf(method) !== -1;
       });
       roots[root.uri] = { methods: methods };
     });
@@ -378,6 +365,7 @@
   }
 
   function createResourcePolicy(input) {
+    requireResourcePermissionCatalog();
     input = isRecord(input) ? input : {};
     if (input.full === true) return fullResourcePolicy();
     if (Array.isArray(input.methods)) {
@@ -402,13 +390,14 @@
   }
 
   function resourcePolicyCatalog() {
+    requireResourcePermissionCatalog();
     return cloneSafe({
       sections: RESOURCE_SECTIONS,
       roots: RESOURCE_ROOTS,
       methods: RESOURCE_METHODS,
       permissions: RESOURCE_PERMISSION_NAMES,
-      coreRootMethods: runtimePermissions.rootMethods,
-      corePermissions: runtimePermissions.permissions,
+      coreRootMethods: Object.assign({}, runtimePermissions.rootMethods, { '/local': ['GET'] }),
+      corePermissions: runtimePermissions.permissions.filter(function (permission) { return permission !== 'local.execute'; }),
     });
   }
 
@@ -809,6 +798,8 @@
 
   return {
     PROFILE_VERSION: PROFILE_VERSION,
+    installResourcePermissionCatalog: installResourcePermissionCatalog,
+    hasResourcePermissionCatalog: hasResourcePermissionCatalog,
     create: create,
     cloneSafe: cloneSafe,
     safeMerge: safeMerge,

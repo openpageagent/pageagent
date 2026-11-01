@@ -13,6 +13,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (arp, support, ResourceModuleAdapter, settings) {
   'use strict';
   var PUBLIC_PROPERTIES = Object.freeze({
+    connectionId: { type: 'string', maxLength: 200 },
     enabled: { type: 'boolean' }, host: { type: 'string', maxLength: 253 },
     port: { type: 'integer', minimum: 1, maximum: 65535 }, security: { type: 'string', enum: ['tls', 'starttls'] },
     username: { type: 'string' }, from: { type: 'string', maxLength: 254 }, fromName: { type: 'string', maxLength: 200 },
@@ -27,7 +28,7 @@
     }, PUBLIC_PROPERTIES), minProperties: 1, additionalProperties: false,
   });
   var STATUS_SCHEMA = Object.freeze({
-    type: 'object', properties: { enabled: { type: 'boolean' }, connected: { type: 'boolean' }, supported: { type: 'boolean' } },
+    type: 'object', properties: { enabled: { type: 'boolean' }, connected: { type: 'boolean' }, supported: { type: 'boolean' }, connectionId: { type: 'string' }, reason: { type: ['string', 'null'] } },
     required: ['enabled', 'connected', 'supported'], additionalProperties: false,
   });
   var TEST_SCHEMA = Object.freeze({
@@ -37,6 +38,7 @@
   var DELIVERY_SCHEMA = Object.freeze({
     type: 'object', properties: {
       messageId: { type: 'string' }, acceptedCount: { type: 'integer', minimum: 1 }, rejectedCount: { const: 0 },
+      audit: { type: 'object' }, target: { type: 'object' }, transportSessionId: { type: 'string' }, requestId: { type: 'string' },
     }, required: ['messageId', 'acceptedCount', 'rejectedCount'], additionalProperties: false,
   });
   var ROUTES = Object.freeze([
@@ -112,9 +114,10 @@
           to: request.body.to, subject: '[Page Agent] 邮件配置测试', body: '这是一封来自 Page Agent 的邮件配置测试邮件。',
         });
       } catch (error) { throw arp.arpError('SCHEMA_VALIDATION_FAILED', error.message); }
-      return client.send(message, { signal: context.abortSignal }).then(function (data) {
+      return client.send(message, { signal: context.abortSignal, context: context }).then(function (data) {
         return support.result(request.uri, 'MailTestDelivery', {
           messageId: data.messageId, acceptedCount: data.acceptedCount, rejectedCount: data.rejectedCount,
+          audit: data.audit, target: data.target, transportSessionId: data.transportSessionId, requestId: data.requestId,
         }, null, 200, [{ rel: 'settings', href: '/mail-settings', method: 'GET' }]);
       });
     };

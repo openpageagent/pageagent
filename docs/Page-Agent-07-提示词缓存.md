@@ -12,6 +12,8 @@
 
 运行时尾部是最后一条 user 层数据消息，每轮重新生成，不写入持久消息历史。Knowledge 按需显式读取。
 
+MCP 连接、权限、审计和环境状态在运行时尾部按轮更新，不改变稳定前缀中的工具定义。
+
 缓存周期建立时，profile guidance 位于用户消息序列之前。
 
 同一缓存周期内，guidance 变化通过追加消息更新，撤销时追加空更新；未变化的内容按 hash 复用。
@@ -42,15 +44,14 @@ System Core 保持系统规则的权威，guidance 是 user 层方法，运行�
 | `profileGuidanceHash`、`prefixProfileGuidanceText` | 当前 profile guidance 标识及前缀中的文本 |
 | `requestGuidanceHash` | 当前请求 guidance 标识 |
 
-后续组装按数量和 hash 校验已有前缀。同一周期内前缀被改写时返回 `PROMPT_PREFIX_CHANGED`，不能通过重排或覆盖已保存消息掩盖差异。
+后续请求按消息数量和 hash 校验已有前缀。同一周期内前缀不一致时返回 `PROMPT_PREFIX_CHANGED`。
 
 ## 工具变化与上下文预算
 
 同一 generation 内，Provider 可见的工具集合和 schema 必须稳定。
 工具定义在 generation 建立时确定，不随剩余调用预算逐轮增删；执行预算在调用分发时检查。
 
-权限 ceiling 参与确定可用工具。新 generation 按其权限重新确定工具集合；工具集合或 schema 变化时，重新计算 `toolSchemaHash` 并开启新的 cache epoch。
-权限 ceiling 本身不单独计入缓存 hash；实际工具集合和 schema 未变化时，不因 ceiling 变化而单独开启 cache epoch。
+新 generation 按权限上限（ceiling）确定可用工具。只有实际工具集合或 schema 变化时，才更新 `toolSchemaHash` 并开启新的 cache epoch；权限上限本身不单独计入缓存 hash。
 
 工具 schema 不变时，当前资源或路由合同引起的 guidance 变化，以及 request guidance 的其他变化，只追加 guidance 更新。
 页面、时间、预算等事实按轮更新运行时尾部。

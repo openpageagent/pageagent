@@ -2,8 +2,7 @@
 button { white-space: nowrap; }
 button:disabled { opacity: .5; }
 input:not([type=checkbox], [type=radio], [type=range]), select, textarea { border-color: var(--control-border); }
-button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-input:not([type=checkbox], [type=radio], [type=range]):focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .developer-utils { display: grid; grid-template-columns: 260px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100dvh; overflow: hidden; }
 .sidebar { position: sticky; top: 0; height: 100dvh; display: flex; flex-direction: column; gap: 12px; padding: 20px 12px 0; background: var(--bg-muted); border-right: 1px solid var(--border); min-width: 0; }
@@ -86,7 +85,6 @@ input:not([type=checkbox], [type=radio], [type=range]):focus-visible, select:foc
 .panel-actions button { padding: 4px 7px; min-height: 28px; font-size: 12px; }
 page-code-editor { display: block; --code-height: 240px; min-height: 0; border: 0; border-radius: 0; }
 page-code-editor::part(toolbar) { display: none; }
-page-code-editor:focus-within { outline-offset: -2px; }
 .editor-panel > page-code-editor { flex: 1; height: 0; }
 .editors[data-tool=quicktype] { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 210px; }
 #code-settings .options { grid-template-columns: minmax(0, 1fr); gap: 8px; }
@@ -189,7 +187,7 @@ page-code-editor:focus-within { outline-offset: -2px; }
 .options [data-field=replacement] { grid-column: 1 / -1; }
 .editors[data-tool=regextester] #input, .editors[data-tool=regextester] #result-tabs { display: none; }
 .regex-editor { position: relative; height: 0; min-height: 0; flex: 1; }
-.regex-editor > pre, .regex-editor > textarea { position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box; padding: 12px; margin: 0; border: 1px solid transparent; font: 13px/20px ui-monospace, monospace; letter-spacing: normal; white-space: pre-wrap; overflow-wrap: break-word; tab-size: 4; overflow: auto; }
+.regex-editor > pre, .regex-editor > textarea { position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box; padding: 12px; margin: 0; border: 1px solid transparent; border-radius: var(--control-radius); font: 13px/20px ui-monospace, monospace; letter-spacing: normal; white-space: pre-wrap; overflow-wrap: break-word; tab-size: 4; overflow: auto; }
 .regex-editor > pre { background: var(--bg); pointer-events: none; color: transparent; }
 .regex-editor > textarea { border-color: var(--control-border); background: transparent; color: var(--text); caret-color: var(--text); resize: none; }
 .regex-editor mark { background: var(--accent-soft); color: transparent; outline: 1px solid var(--border-strong); }

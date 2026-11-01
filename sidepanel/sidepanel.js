@@ -16,7 +16,7 @@
   var elStatus = $('status-text');
   var elPageReadiness = $('page-readiness');
   var elClearLog = $('btn-clear-log');
-  var elOpenSettings = $('btn-open-settings');
+  var elAppsPanel = $('apps-panel');
 
   // 输出/调试面板
   var elOutputSection = $('output-section');
@@ -37,6 +37,7 @@
   var runtimeInputController = null;
   var logPanel = null;
   var debugPanel = null;
+  var appController = null;
   var readinessRefreshTimer = 0;
   var syncRefreshTimer = 0;
   var pendingSyncTargets = false;
@@ -80,6 +81,7 @@
   // --- 初始化 ---
 
   function init() {
+    initAppTabs();
     if (!window.SidepanelRuntimeInputController
       || typeof window.SidepanelRuntimeInputController.create !== 'function') {
       throw new Error('SidepanelRuntimeInputController must load before sidepanel.js');
@@ -125,18 +127,6 @@
     debugPanel.init();
     sessionController.init();
 
-    lifecycle.listen(elOpenSettings, 'click', function () {
-      var opened;
-      try {
-        opened = chrome.runtime.openOptionsPage();
-      } catch (err) {
-        opened = Promise.reject(err);
-      }
-      Promise.resolve(opened).catch(function () {
-        window.open(chrome.runtime.getURL('options/options.html'), '_blank', 'noopener');
-      });
-    });
-
     // 初始化时绑定当前激活 tab；之后 tab 切换时刷新当前 tab 的运行入口和会话视图。
     trackActiveTab(function () {
       sessionController.loadSessionRefs(function () {
@@ -156,6 +146,49 @@
         if (changeInfo.status === 'complete' || changeInfo.url) schedulePageReadinessRefresh();
       });
     }
+  }
+
+  function initAppTabs() {
+    function showError(error) {
+      $('apps-message').textContent = error.message || String(error);
+      $('apps-message').hidden = false;
+    }
+    appController = window.OptionsAppController.create({
+      compact: true,
+      resourceClient: resourceClient,
+      isActive: function () { return !elAppsPanel.hidden; },
+      toast: showError,
+      openManagement: function (appId) {
+        var query = new URLSearchParams({ section: 'apps', action: 'manage', appId: appId });
+        return chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html') + '?' + query });
+      },
+    });
+    var tabs = Array.from(document.querySelectorAll('[data-sidepanel-tab]'));
+    function selectTab(tab) {
+      tabs.forEach(function (item) {
+        var selected = item === tab;
+        item.setAttribute('aria-selected', String(selected));
+        item.tabIndex = selected ? 0 : -1;
+        $(item.getAttribute('aria-controls')).hidden = !selected;
+      });
+      if (!elAppsPanel.hidden) {
+        $('apps-message').hidden = true;
+        appController.render().catch(showError);
+      }
+    }
+    tabs.forEach(function (tab, index) {
+      lifecycle.listen(tab, 'click', function () { selectTab(tab); });
+      lifecycle.listen(tab, 'keydown', function (event) {
+        var next;
+        if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+        else if (event.key === 'ArrowLeft') next = (index + tabs.length - 1) % tabs.length;
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = tabs.length - 1;
+        else return;
+        event.preventDefault(); selectTab(tabs[next]); tabs[next].focus();
+      });
+    });
+    appController.render().catch(showError);
   }
 
   function trackActiveTab(callback) {
@@ -1018,6 +1051,7 @@
     if (runtimeInputController) runtimeInputController.destroy();
     if (debugPanel) debugPanel.destroy();
     if (logPanel) logPanel.destroy();
+    if (appController) appController.destroy();
     if (syncEventStream) syncEventStream.destroy();
     lifecycle.destroy();
     if (sidepanelLifecyclePort) {

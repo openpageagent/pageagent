@@ -1,0 +1,25 @@
+# Run from the project root: docker compose --env-file ./docker/.env -f ./docker/compose.yaml up -d --no-build
+name: page-agent
+
+services:
+  page-agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        RUNTIME_IMAGE: "${PAGE_AGENT_RUNTIME_IMAGE:-page-agent-runtime:latest}"
+    image: "${PAGE_AGENT_IMAGE:-page-agent:latest}"
+    init: true
+    working_dir: /app
+    volumes:
+      - ..:/app
+      - ../data:/data
+    ports:
+      - "10000:10000"
+      - "9999:9999"
+      - "9998:9998"
+    env_file:
+      - .env
+    shm_size: 1gb
+    restart: unless-stopped
+    stop_grace_period: 20s

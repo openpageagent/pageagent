@@ -77,6 +77,7 @@
       _runGeneration: { value: 0, enumerable: false, configurable: false, writable: true },
       _activeRunGeneration: { value: 0, enumerable: false, configurable: false, writable: true },
       _runAbortController: { value: null, enumerable: false, configurable: false, writable: true },
+      _restartPending: { value: false, enumerable: false, configurable: false, writable: true },
       _reportGenerations: { value: Object.create(null), enumerable: false, configurable: false, writable: false },
     });
     this.runId = options.runId || generateRunId();
@@ -86,6 +87,8 @@
     this.error = '';
     this.trigger = options.trigger || 'manual';
     this.appAuthorization = options.appAuthorization || null;
+    this.localCallerContext = options.localCallerContext || null;
+    this.localTargetSnapshots = new Map();
     var capturedNodes = options.appNodes || options.appNodeSets && options.appNodeSets[flowId];
     if (this.appAuthorization && (!Array.isArray(capturedNodes) || !options.appConfig)) throw new Error('应用任务缺少执行快照，请重新提交动作');
     this.appNodes = this.appAuthorization ? copyOwnData(capturedNodes) : null;
@@ -436,7 +439,7 @@
         to: notification.to,
         subject: globalThis.Template.interpolate(notification.subject, templateContext),
         body: globalThis.Template.interpolate(notification.body, templateContext),
-      });
+      }, { context: Object.assign({ actorId: 'flow:' + this.runId, runId: this.runId }, this.localCallerContext || {}) });
       return this.addLog('流程' + resultLabel + '通知：SMTP 已接受邮件（' + result.acceptedCount + ' 个收件地址）', { scope: 'run' });
     } catch (error) {
       return this.addLog('流程结束邮件通知发送失败: ' + this._deps.loggingStatus.getErrorMessage(error), { level: 'warn', scope: 'run' });
@@ -580,7 +583,22 @@
     };
   };
 
-  RunSession.prototype.launch = function (options) {
+  RunSession.prototype.captureLocalTargets = async function () {
+    var nodes = this.appNodes || this._deps.flowEngine.getOrderedNodes(this.flowId);
+    for (var node of nodes) {
+      if (!/^local/.test(node.type)) continue;
+      var params = node.params || {}, target = { connectionId: params.connectionId };
+      var needsDirectory = ['localRead', 'localWrite', 'localDelete', 'localGrep', 'localBash', 'localLocate', 'localDisk'].includes(node.type);
+      if (needsDirectory) target.workspaceId = params.workspaceId;
+      if (Object.values(target).some(function (value) { return typeof value === 'string' && value.includes('{{'); })) continue;
+      var key = JSON.stringify(target), previous = this.localTargetSnapshots.get(key);
+      var resolved = await this._deps.resolveLocalTarget(needsDirectory ? 'disk' : 'environment', target,
+        Object.assign({ permissionScope: ['local.execute'] }, this.localCallerContext || {}), previous);
+      if (!previous) this.localTargetSnapshots.set(key, resolved.snapshot);
+    }
+  };
+
+  RunSession.prototype.launch = async function (options) {
     options = options || {};
     if (this.status !== 'idle' && this.status !== 'running') {
       throw new Error('RunSession launch requires an idle or reserved session');
@@ -601,6 +619,8 @@
     if (this.status !== 'running' || reservationChanged || this.controller.getStopRequested()) {
       return this._finishStoppedBeforeLaunch(reportEntry, options.totalRuns);
     }
+    await this.captureLocalTargets();
+    if (this.status !== 'running' || this.controller.getStopRequested()) return this._finishStoppedBeforeLaunch(reportEntry, options.totalRuns);
     var controllerPromise = this.controller.startAutoRunLoop({
       totalRuns: options.totalRuns || 1,
       maxRetries: options.maxRetries != null ? options.maxRetries : 0,
@@ -618,21 +638,48 @@
     };
   };
 
-  RunSession.prototype.restart = function (trigger, controllerOptions) {
+  RunSession.prototype.restart = async function (trigger, controllerOptions) {
     if (this.status === 'running' || this.controller.isRunning()) {
       throw new Error('RunSession is already running');
     }
-    var reportEntry = this._beginRunGeneration();
-    this.trigger = trigger;
+    var previousStatus = this.status;
+    var previousTargets = this.localTargetSnapshots;
+    var reportEntry;
+    this._restartPending = true;
     this.status = 'running';
+    this.localTargetSnapshots = new Map(previousTargets);
     this.controller.clearStopRequest();
-    var controllerPromise = this.controller.startAutoRunLoop(controllerOptions || {});
-    var reportCompletion = reportEntry.completion;
-    this.runPromise = this._deps.waitForRunReport(
-      controllerPromise,
-      function () { return reportCompletion; }
-    );
-    return this.runPromise;
+    try {
+      await this.captureLocalTargets();
+      if (this.status !== 'running' || this.controller.getStopRequested()) {
+        this.status = previousStatus;
+        this.localTargetSnapshots = previousTargets;
+        return { runId: this.runId, started: false, stopped: true };
+      }
+      // Keep the previous run and recovery state until startup validation succeeds.
+      reportEntry = this._beginRunGeneration();
+      this.trigger = trigger;
+      var controllerPromise = this.controller.startAutoRunLoop(controllerOptions || {});
+      var reportCompletion = reportEntry.completion;
+      this.runPromise = this._deps.waitForRunReport(
+        controllerPromise,
+        function () { return reportCompletion; }
+      );
+      // Restart acknowledges startup; completion remains available through runPromise.
+      this.runPromise.catch(function () {});
+      return { runId: this.runId, started: true };
+    } catch (error) {
+      if (reportEntry) this.failStart(error);
+      else {
+        this.status = previousStatus;
+        this.localTargetSnapshots = previousTargets;
+        this.addLog('续跑启动校验失败: ' + this._deps.loggingStatus.getErrorMessage(error), { level: 'error' });
+      }
+      throw error;
+    } finally {
+      this._restartPending = false;
+      this._deps.broadcastSessions();
+    }
   };
 
   RunSession.prototype.failStart = function (error) {
@@ -664,6 +711,8 @@
 
   RunSession.prototype.restore = function (snapshot) {
     snapshot = snapshot || {};
+    this.localCallerContext = snapshot.localCallerContext || null;
+    this.localTargetSnapshots = new Map(snapshot.localTargetSnapshots || []);
     this.status = 'stopped';
     this.startedAt = snapshot.startedAt || 0;
     this.endedAt = snapshot.stoppedAt || 0;

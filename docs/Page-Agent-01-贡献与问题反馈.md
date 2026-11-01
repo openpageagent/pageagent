@@ -19,14 +19,14 @@
 
 从默认分支创建分支，提交 PR 时说明问题、改动范围、验证情况和已知影响。
 
-修改 JavaScript 后可执行基础静态检查：
+JavaScript 差异格式与语法检查：
 
 ```bash
 git diff --check
 node --check path/to/changed-file.js
 ```
 
-仓库还提供 [Pull Request 模板](../.github/pull_request_template.md)。一般贡献流程和代码约定见 [`CONTRIBUTING.md`](../CONTRIBUTING.md)。
+PR 格式见 [Pull Request 模板](../.github/pull_request_template.md)，贡献流程和代码约定见 [`CONTRIBUTING.md`](../CONTRIBUTING.md)。
 
 ## 联系方式
 

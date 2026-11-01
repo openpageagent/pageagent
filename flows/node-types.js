@@ -51,6 +51,16 @@
     ];
   }
 
+  function localInfoParams() {
+    return [
+      { key: 'refresh', label: '刷新采样', kind: 'boolean', default: false, description: '关闭时可复用有效采样；开启时请求刷新，仍受服务端采样间隔限制。' },
+      { key: 'outputFormat', label: '输出模式', kind: 'select', default: 'json', options: [
+        { value: 'json', label: 'JSON 数据（含说明文本）' },
+        { value: 'text', label: '说明文本' },
+      ], description: '说明文本与连接配置页使用同一份环境或磁盘描述；JSON 数据保留原始字段和 description，便于下游提取。' },
+    ];
+  }
+
   function locatorParamDefinitions(options) {
     options = options || {};
     var prefix = String(options.prefix || '');
@@ -1558,6 +1568,22 @@
       outputHint: '{ messageId, acceptedCount, rejectedCount:0 }（表示 SMTP 已接受，不代表已进入收件箱；部分拒收时节点失败，请核对投递记录后仅补发未接受的地址）',
     },
     {
+      type: 'localEnvironment',
+      label: '查询服务端环境',
+      needsPage: false,
+      description: '查询所选 MCP Server 的操作系统、运行环境、CPU、内存和执行限制说明。仅需连接就绪，不要求目录或桌面授权；采样不可用时通过状态和说明返回，不表示数值为零。',
+      params: localInfoParams(),
+      outputHint: 'JSON 模式：{ environment, memory, description, audit }；说明文本模式：description 字符串',
+    },
+    {
+      type: 'localDisk',
+      label: '查询目录磁盘',
+      needsPage: false,
+      description: '查询所选 MCP Server 工作目录所在文件系统的总量、可用和空闲空间。目录须已确认，并至少具有读取、写入或执行中的一项权限；未检测到的配额和只读状态保持未知。',
+      params: localInfoParams(),
+      outputHint: 'JSON 模式：{ disk, description, audit }；说明文本模式：description 字符串。disk 包含 resolvedPath、totalBytes、availableBytes、freeBytes、status、reason 和采样时间',
+    },
+    {
       type: 'localRead',
       label: '本地读取文件',
       needsPage: false,
@@ -1606,20 +1632,20 @@
       type: 'localBash',
       label: '本地执行 Bash',
       needsPage: false,
-      description: '在配置的工作目录内启动 Bash 命令，每次独立运行，输出最多 64KB。需启用并连接本地文件与命令服务；不允许自动重试。退出码和超时状态通过输出返回，可接断言节点判断。',
+      description: '在所选 MCP Server 的工作目录启动 Bash 命令，每次独立运行，输出最多 64KB。需目录执行权限和可用 Bash；不允许自动重试。非零退出码、超时或取消按失败处理，不写入成功输出；服务端已返回的命令结果可从错误详情读取。',
       params: [
         { key: 'command', label: 'Bash 命令（支持模板）', kind: 'textarea', editorLanguage: 'shell', required: true, placeholder: 'pwd' },
         { key: 'timeoutMs', label: '超时(ms，整数，1000–60000)', kind: 'number', default: 30000, minimum: 1000, maximum: 60000 },
       ],
-      outputHint: '{ cwd, stdout, stderr, exitCode, signal, timedOut, truncated }',
+      outputHint: '成功：{ cwd, stdout, stderr, exitCode:0, signal, timedOut:false, truncated }；失败：错误详情可包含 reason、execution、result，不写入成功输出变量',
     },
     {
       type: 'localDesktopCapabilities',
       label: '查询桌面能力',
       needsPage: false, desktopOperation: 'desktop',
-      description: '查询服务端平台、robotjs 是否安装、支持的桌面动作和所需系统权限；此查询不验证原生二进制能否加载或系统权限是否已授予。',
+      description: '读取所选服务端的连接与能力快照；桌面支持范围位于 capabilities.desktop，授权与可用动作位于 desktop，环境快照位于 environment。查询本身不要求桌面授权，也不验证原生模块或系统权限；刷新环境信息请使用「查询服务端环境」。',
       params: [],
-      outputHint: '{ platform, supported, robotjs, permissionsVerified:false, requirements, unsupported }',
+      outputHint: '连接对象：{ id, serverId, platform, ready, capabilities:{ desktop, ... }, desktop:{ supported, allowed, actions, links }, environment, observations, workspaces, ... }',
     },
     {
       type: 'localMousePosition',
@@ -2578,6 +2604,8 @@
     waitDownload: true,
     localRead: true,
     localGrep: true,
+    localEnvironment: true,
+    localDisk: true,
     localDesktopCapabilities: true,
     localMousePosition: true,
     localClipboardRead: true,
@@ -2979,7 +3007,14 @@
   }
 
   TYPES.forEach(function (typeDef) {
-    if (typeDef.desktopOperation) {
+    if (/^local/.test(typeDef.type)) {
+      var directoryOperation = ['localRead', 'localWrite', 'localDelete', 'localGrep', 'localBash', 'localLocate', 'localDisk'].indexOf(typeDef.type) >= 0;
+      typeDef.params.unshift({ key: 'connectionId', label: '服务端连接', kind: 'text', required: true,
+        placeholder: '从 /local 取得连接 ID，支持模板', description: '显式目标；断线不会自动切换其他机器' });
+      if (directoryOperation) typeDef.params.splice(1, 0, { key: 'workspaceId', label: '工作目录', kind: 'text', required: true,
+        placeholder: '从所选连接取得目录 ID，支持模板', description: '必须显式指定，即使只有一个目录也不能省略' });
+    }
+    if (typeDef.desktopOperation && typeDef.desktopOperation !== 'desktop') {
       appendMetadataDescription(typeDef, '作用于 MCP Server 所在机器的 macOS/Windows 桌面；需启用本地文件、命令与桌面并连接服务。可先用「查询桌面能力」确认平台支持范围。应用 SDK 绑定流程还需 local.execute 模块权限。');
     }
     (typeDef.params || []).forEach(function (param) {
@@ -3027,7 +3062,7 @@
     { id: 'model-dialog', label: '🤖 模型对话', types: ['runAssistant', 'requestModelAssert', 'requestModelExtract', 'requestModelAction'] },
     { id: 'control', label: '🔀 流程控制', types: ['ifStart', 'elseBlock', 'ifEnd', 'loopStart', 'loopEnd', 'loopBreak', 'loopContinue', 'statusBreak'] },
     { id: 'session', label: '🔑 会话与存储', types: ['webStorage', 'setCookie', 'getCookie', 'clearCookies', 'setProxy', 'clearProxy'] },
-    { id: 'local', label: '💻 本地文件与命令', types: ['localRead', 'localWrite', 'localDelete', 'localGrep', 'localBash'] },
+    { id: 'local', label: '💻 本地文件与命令', types: ['localEnvironment', 'localDisk', 'localRead', 'localWrite', 'localDelete', 'localGrep', 'localBash'] },
     { id: 'desktop', label: '🖥 桌面自动化', types: [
       'localDesktopCapabilities', 'localMousePosition', 'localMouseMove', 'localMouseClick', 'localMouseDrag', 'localMouseScroll',
       'localKeyPress', 'localHotkey', 'localTypeText', 'localClipboardRead', 'localClipboardWrite', 'localClipboardClear',

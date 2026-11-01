@@ -1,19 +1,43 @@
 (function (root) {
   'use strict';
 
+  var activePanel = null;
+
   function init(options) {
     var form = document.getElementById('mail-settings-form');
     if (!form) return;
     var settings = root.PageAutomationMailSettings;
     var fields = document.getElementById('mail-settings-fields');
     var status = document.getElementById('mail-settings-status');
+    var connectionCard = document.getElementById('mail-connection-card');
+    var savedConfig = null;
     var busy = false;
     var mailEnabled = true;
     var mailReady = false;
     var connectionText = '正在读取状态…';
     var statusLoading = false;
+    var availableConnections = [];
     var testResult = { message: '', error: false };
-    var keys = { host: 'host', port: 'port', security: 'security', username: 'username', password: 'password', from: 'from', fromName: 'from-name' };
+    var keys = { connectionId: 'connection-id', host: 'host', port: 'port', security: 'security', username: 'username', password: 'password', from: 'from', fromName: 'from-name' };
+    async function refreshConnections() {
+      var response = await chrome.runtime.sendMessage({ type: 'ARP_RESOURCE_REQUEST', payload: { method: 'GET', request: { uri: '/connections?limit=100' } } });
+      var envelope = response && (response.payload || response.envelope || response.result);
+      var items = envelope && envelope.primary && envelope.primary.data && envelope.primary.data.items || [];
+      availableConnections = items;
+      var select = input('connection-id'), selected = select.value;
+      select.replaceChildren(new Option('请选择明确的连接', ''));
+      items.forEach(function (connection) { select.add(new Option(connection.alias + ' · ' + connection.state, connection.id)); });
+      if (selected && !items.some(function (item) { return item.id === selected; })) select.add(new Option('已失效的连接 · ' + selected, selected));
+      select.value = selected;
+      updateSelectedStatus();
+    }
+
+    function updateSelectedStatus() {
+      var connection = availableConnections.find(function (item) { return item.id === input('connection-id').value; });
+      mailReady = !!(connection && connection.ready && connection.capabilities && connection.capabilities.mail.supported && connection.capabilities.audit.available);
+      connectionText = connection ? connection.alias + ' · ' + (mailReady ? '已就绪' : connection.reason || connection.state) : '请选择可用的邮件服务端';
+      syncControls();
+    }
 
     function input(id) { return document.getElementById('mail-' + id); }
     function showStatus(message, error, target) {
@@ -21,8 +45,55 @@
       target.textContent = message;
       target.classList.toggle('mail-error', error === true);
     }
+    function renderConnectionSummary() {
+      if (!savedConfig) return;
+      var connection = availableConnections.find(function (item) { return item.id === savedConfig.connectionId; });
+      var ready = !!(connection && connection.ready && connection.capabilities && connection.capabilities.mail.supported && connection.capabilities.audit.available);
+      var configured = !!(savedConfig.host && savedConfig.from && savedConfig.connectionId);
+      var title = savedConfig.host ? savedConfig.host + ':' + savedConfig.port : 'SMTP 服务器';
+      var description = savedConfig.host
+        ? (savedConfig.security === 'starttls' ? 'STARTTLS' : 'TLS') + ' · ' + (connection ? connection.alias : '未连接服务端')
+        : '尚未配置发件账户';
+      var from = savedConfig.from || '未设置发件邮箱';
+      input('summary-title').textContent = input('summary-title').title = title;
+      input('summary-description').textContent = input('summary-description').title = description;
+      input('summary-from').textContent = input('summary-from').title = from;
+      input('summary-status').textContent = !savedConfig.enabled ? '已关闭' : !configured ? '未配置' : ready ? '已配置' : '待连接';
+      input('summary-status').classList.toggle('on', savedConfig.enabled && configured && ready);
+    }
+    function setEditorOpen(open) {
+      form.classList.toggle('hidden', !open);
+      connectionCard.classList.toggle('selected', open);
+      connectionCard.setAttribute('aria-expanded', String(open));
+      if (open) options.scrollOpenedEditor(form);
+      else {
+        connectionCard.focus({ preventScroll: true });
+        connectionCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+    options.lifecycle.listen(connectionCard, 'click', async function () {
+      if (busy) return;
+      if (!form.classList.contains('hidden')) {
+        if (isDirty() && !await options.confirm('有未保存的修改，是否放弃？')) return;
+        render(savedConfig);
+      }
+      setEditorOpen(form.classList.contains('hidden'));
+    });
+
+    function isDirty() {
+      return !!savedConfig && Object.keys(keys).some(function (key) {
+        return String(input(keys[key]).value) !== String(savedConfig[key] == null ? '' : savedConfig[key]);
+      });
+    }
+
+    activePanel = {
+      getState: function () { return { dirty: isDirty(), busy: busy }; },
+      discard: function () { if (savedConfig) render(savedConfig); setEditorOpen(false); },
+    };
     function syncControls() {
       fields.disabled = busy;
+      connectionCard.disabled = busy;
+      input('save-settings').disabled = busy;
       input('enabled').checked = mailEnabled;
       input('enabled').disabled = busy;
       input('test-open').disabled = busy || !mailEnabled || !mailReady;
@@ -33,6 +104,7 @@
       input('connection-status').textContent = mailEnabled ? connectionText : '已关闭';
       var testConnectionStatus = input('test-connection-status');
       if (testConnectionStatus) testConnectionStatus.textContent = input('connection-status').textContent;
+      renderConnectionSummary();
     }
     function setBusy(value) {
       busy = value;
@@ -42,12 +114,9 @@
       if (statusLoading) return;
       statusLoading = true;
       try {
-        var state = await request('MAIL_STATUS');
-        mailReady = state.connected && state.supported;
-        connectionText = mailReady ? '已就绪'
-          : (state.connected ? '等待服务端确认；若持续不可用，请更新服务端并重新连接'
-            : '未连接 MCP Server，暂不可用');
+        await refreshConnections();
       } catch (_) {
+        availableConnections = [];
         mailReady = false;
         connectionText = '状态读取失败，请刷新页面后重试';
       } finally {
@@ -62,8 +131,13 @@
     }
     function render(config, enabledOnly) {
       config = settings.normalize(config);
+      savedConfig = config;
       mailEnabled = config.enabled;
-      if (!enabledOnly) Object.keys(keys).forEach(function (key) { input(keys[key]).value = config[key]; });
+      if (!enabledOnly) {
+        if (config.connectionId && !Array.from(input('connection-id').options).some(function (option) { return option.value === config.connectionId; })) input('connection-id').add(new Option(config.connectionId, config.connectionId));
+        Object.keys(keys).forEach(function (key) { input(keys[key]).value = config[key]; });
+        refreshConnections().catch(function () {});
+      }
       syncControls();
     }
     options.lifecycle.subscribe(chrome.storage.onChanged, function (changes, area) {
@@ -72,7 +146,7 @@
       var previous = settings.normalize(change.oldValue);
       var current = settings.normalize(change.newValue);
       // Toggling the switch must not overwrite unsaved SMTP fields.
-      render(current, Object.keys(keys).every(function (key) { return previous[key] === current[key]; }));
+      render(current, isDirty() || Object.keys(keys).every(function (key) { return previous[key] === current[key]; }));
     });
     async function request(type, payload) {
       var response = await chrome.runtime.sendMessage({ type: type, payload: payload });
@@ -104,19 +178,26 @@
         showStatus(error.message || '邮件通知开关保存失败', true);
       } finally { setBusy(false); }
     });
+    options.lifecycle.listen(input('connection-id'), 'change', updateSelectedStatus);
 
     options.lifecycle.listen(form, 'submit', async function (event) {
       event.preventDefault();
       if (busy) return;
+      var saved = false;
       try {
         var config = readConfig();
         setBusy(true);
         showStatus('正在保存邮件配置…');
         render(await request('MAIL_SETTINGS_SAVE', config));
         showStatus('邮件配置已保存，流程结束通知和邮件节点使用此账户。');
+        saved = true;
       } catch (error) {
         showStatus(error.message || '邮件配置保存失败', true);
       } finally { setBusy(false); }
+      if (saved) {
+        setEditorOpen(false);
+        options.toast('邮件服务器连接已保存');
+      }
     });
 
     async function sendTest(event) {
@@ -182,8 +263,14 @@
       showStatus('');
     }).catch(function (error) {
       showStatus('邮件配置加载失败：' + error.message + '。请刷新页面后重试。', true);
+      input('summary-status').textContent = '加载失败';
+      setEditorOpen(true);
     });
   }
 
-  root.OptionsMailController = Object.freeze({ init: init });
+  root.OptionsMailController = Object.freeze({
+    init: init,
+    getState: function () { return activePanel && activePanel.getState(); },
+    discard: function () { if (activePanel) activePanel.discard(); },
+  });
 })(globalThis);

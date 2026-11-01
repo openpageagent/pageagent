@@ -42,13 +42,15 @@ GET /knowledge/{knowledgeId}
 
 ## MCP 知识
 
-外部 MCP 服务器通过 `/connections` 或 `/mcp-servers` 管理，`tools/list` 结果保存为 P3。调用工具使用：
+外部 HTTP MCP 服务器通过 `/mcp-servers` 管理，`tools/list` 结果保存为 P3。Page Agent 直连服务端使用独立的 `/connections` 配置，见 [MCP 服务](./Page-Agent-11-MCP服务.md)。
+
+调用外部 MCP 工具：
 
 ```text
 POST /mcp-servers/{serverId}/tools/{toolName}/calls
 ```
 
-编辑 P3 内容会生成 P2 副本。
+P3 内容由工具同步维护，在配置页只读。需要补充使用经验时，可另存为 P2 知识。
 
 ## 应用生成知识
 

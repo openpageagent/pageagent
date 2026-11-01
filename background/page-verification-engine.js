@@ -252,7 +252,7 @@
       var signals = [];
       var evidence = [];
       if (actionFacts.dispatched) {
-        signals.push('cdp_dispatched');
+        signals.push(actionFacts.inputProvenance === 'chrome.tabs' ? 'browser_api_dispatched' : 'cdp_dispatched');
         evidence.push({ kind: 'action_facts', commands: (actionFacts.commands || []).map(function (command) { return command.method; }) });
       }
       if (browser.newTabs.length) { signals.push('new_tab'); evidence.push({ kind: 'new_tab', candidates: browser.newTabs, ambiguous: browser.ambiguous }); }

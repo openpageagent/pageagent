@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Page Agent</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="menu-panel">
+    <h1 id="recent-title">最近使用</h1>
+    <div id="recent-content" aria-busy="true">
+      <p id="status" role="status">正在加载…</p>
+      <button id="retry" type="button" hidden>重新加载</button>
+      <ul id="recent-apps" aria-labelledby="recent-title"></ul>
+    </div>
+    <hr>
+    <button id="open-sidepanel" class="menu-item" type="button" title="打开侧边栏" disabled>
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M4 3h16v18H4zM4 12h16M9 7h6M9 16h6" />
+      </svg>
+      <span>侧边栏</span>
+      <kbd id="sidepanel-shortcut" hidden></kbd>
+    </button>
+    <button id="open-options" class="menu-item" type="button" title="打开后台配置页面">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M4 6h4m4 0h8M4 12h8m4 0h4M4 18h2m4 0h10" />
+        <circle cx="10" cy="6" r="2" />
+        <circle cx="14" cy="12" r="2" />
+        <circle cx="8" cy="18" r="2" />
+      </svg>
+      <span>配置项</span>
+      <kbd id="options-shortcut" hidden></kbd>
+    </button>
+  </main>
+  <script src="../ui/runtime-client.js"></script>
+  <script src="../ui/resource-client.js"></script>
+  <script src="../shared/app-contract.js"></script>
+  <script src="../settings/system-settings.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

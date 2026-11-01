@@ -18,10 +18,12 @@
   if (!lifecycleApi || typeof lifecycleApi.create !== 'function') {
     throw new Error('PageAutomationLifecycle must load before OptionsFlowGroupController');
   }
-  var api = factory(lifecycleApi);
+  var sortLayoutApi = root && root.PageAgentSortLayout;
+  if (commonJs && !sortLayoutApi) sortLayoutApi = require('../builtin-apps/shared/sort-layout.js');
+  var api = factory(lifecycleApi, sortLayoutApi);
   if (commonJs) module.exports = api;
   if (root) root.OptionsFlowGroupController = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (LifecycleApi) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (LifecycleApi, SortLayoutApi) {
   'use strict';
 
   function requireFunction(value, name) {
@@ -145,7 +147,6 @@
     var onIdle = typeof options.onIdle === 'function' ? options.onIdle : function () {};
     var listableFlows = requireFunction(options.listableFlows, 'listableFlows');
     var flowUsageSummary = requireFunction(options.flowUsageSummary, 'flowUsageSummary');
-    var renderFlowUsageSummary = requireFunction(options.renderFlowUsageSummary, 'renderFlowUsageSummary');
     var normalizeRunTabMode = requireFunction(options.normalizeRunTabMode, 'normalizeRunTabMode');
     var runTabModeSelectHtml = requireFunction(options.runTabModeSelectHtml, 'runTabModeSelectHtml');
     var openDrawer = requireFunction(options.openDrawer, 'openDrawer');
@@ -157,9 +158,9 @@
     var initialized = false;
     var destroyed = false;
     var draft = null;
+    var draftPersisted = false;
     var draftRevision = 0;
     var draftBaselineRevision = 0;
-    var draftBaselinePersisted = false;
     var externallyDeletedDraftId = '';
     var draftGeneration = 0;
     var renderedDraftGeneration = -1;
@@ -171,9 +172,10 @@
       index: -1,
       destinationIndex: -1,
       draftRevision: -1,
-      metrics: null,
+      layout: null,
     };
     var activeStepEdit = null;
+    var draftOpenSequence = 0;
 
     function notifyWhenIdle() {
       Promise.resolve().then(function () {
@@ -326,11 +328,17 @@
 
     function isDirty() {
       if (!draft || draftIsReadOnly()) return false;
-      return !draftBaselinePersisted || draftRevision !== draftBaselineRevision;
+      try { syncDraftFromEditor(); } catch (_) {}
+      return draftRevision !== draftBaselineRevision;
+    }
+
+    async function confirmDiscard() {
+      if (saveInFlight) return false;
+      return !isDirty() || await confirmAction('有未保存的修改，是否放弃？');
     }
 
     function reconcileDraft() {
-      if (!draft || isDirty() || saveInFlight || Object.keys(targetInFlight).length) return;
+      if (!draft || !draftPersisted || isDirty() || saveInFlight || Object.keys(targetInFlight).length) return;
       var id = String(draft.id || '');
       if (!id) return;
       var fresh = findFlowGroup(id);
@@ -338,7 +346,7 @@
         replaceDraft(null);
         return;
       }
-      if (JSON.stringify(fresh) !== JSON.stringify(draft)) replaceDraft(fresh);
+      if (JSON.stringify(fresh) !== JSON.stringify(draft)) replaceDraft(fresh, true);
     }
 
     function markExternalDelete(flowGroupId) {
@@ -378,11 +386,11 @@
         return { ok: false, error: errorText(error, '流程组配置无效') };
       }
       var flowGroups = sortedValues(groups);
-      list.innerHTML = renderConfigListItems('flowGroups', flowGroups, '<div class="placeholder">还没有流程组，点击「新建流程组」选择已有流程编排</div>', function (group) {
+      list.innerHTML = renderConfigListItems('flowGroups', flowGroups, draft ? '' : '<div class="placeholder">还没有流程组，点击「新建流程组」选择已有流程编排</div>', function (group) {
         var steps = Array.isArray(group.steps) ? group.steps : [];
         var usageSummary = flowUsageSummary(group);
         var builtin = isBuiltinItem(group);
-        return '<div class="item-card' + (draft && draft.id === group.id ? ' selected' : '') + (builtin ? ' builtin' : '') + '" data-action="edit-flowGroup" data-id="' + esc(group.id) + '">'
+        return '<div class="item-card' + (draft && draft.id === group.id ? ' selected' : '') + (builtin ? ' builtin' : '') + '" role="button" tabindex="0" data-action="edit-flowGroup" data-id="' + esc(group.id) + '">'
           + '<span class="item-title">' + esc(group.label || '(未命名)') + '</span>'
           + '<span class="item-sub">' + steps.length + ' 个流程' + (usageSummary ? ' · ' + esc(usageSummary) : '') + (group.description ? ' · ' + esc(group.description) : '') + '</span>'
           + (builtin ? '<span class="badge builtin">内置</span>' : '')
@@ -443,19 +451,18 @@
         });
         flags += '<span class="badge">' + esc(modeLabel) + '</span>';
       }
-      return '<div class="node-card flowGroup-step-card' + (readonly ? ' readonly' : '') + '" draggable="' + (readonly ? 'false' : 'true') + '" data-step-index="' + index + '">'
+      return '<div class="node-card flowGroup-step-card' + (readonly ? ' readonly' : '') + '" role="button" tabindex="0" data-action="' + (readonly ? 'view-flowGroup-step' : 'edit-flowGroup-step') + '" data-index="' + index + '" data-step-index="' + index + '">'
         + '<div class="node-card-header">'
-        + (readonly ? '' : '<span class="drag-handle">⋮⋮</span>')
+        + '<span class="node-card-heading" draggable="' + (readonly ? 'false' : 'true') + '"' + (readonly ? '' : ' title="拖拽调整顺序"') + '>'
+        + (readonly ? '' : '<span class="drag-handle" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M8 5h.01M16 5h.01M8 12h.01M16 12h.01M8 19h.01M16 19h.01"></path></svg></span>')
         + '<span class="node-order">' + (index + 1) + '.</span>'
         + '<span class="node-type-label">[流程]</span>'
         + '<span class="node-title">' + esc(label) + '</span>'
+        + '</span>'
         + flags
         + (readonly
-          ? '<button class="btn-icon btn-edit" data-action="view-flowGroup-step" data-index="' + index + '">查看</button>'
-            + '<button class="btn-icon" disabled title="内置流程组步骤不能修改">编辑</button>'
-            + '<button class="btn-icon" disabled title="内置流程组步骤不能删除">删除</button>'
-          : '<button class="btn-icon btn-edit" data-action="edit-flowGroup-step" data-index="' + index + '">编辑</button>'
-            + '<button class="btn-icon" data-action="delete-flowGroup-step" data-index="' + index + '">删除</button>')
+          ? '<button class="btn-icon" disabled title="内置流程组步骤不能删除">删除</button>'
+          : '<button class="btn-icon" data-action="delete-flowGroup-step" data-index="' + index + '">删除</button>')
         + '</div>'
         + '</div>';
     }
@@ -496,14 +503,13 @@
         + '<div class="form-row"><label>使用说明</label><textarea id="flowGroup-description" rows="3" placeholder="流程组目标、输入约定或业务场景"' + (readonly ? ' disabled' : '') + '>' + esc(group.description || '') + '</textarea></div>'
         + '<div class="form-grid io-editor-grid">'
         + '<div class="form-row"><label>入参说明</label>'
-        + '<textarea id="flowGroup-input-description" rows="4" placeholder="写给使用者看的流程组入参说明，不生成入参表单，不做校验。"' + (readonly ? ' disabled' : '') + '>' + esc(group.inputDescription || '') + '</textarea></div>'
+        + '<textarea id="flowGroup-input-description" rows="4" placeholder="入参字段、含义和可选值"' + (readonly ? ' disabled' : '') + '>' + esc(group.inputDescription || '') + '</textarea></div>'
         + '<div class="form-row"><label>出参说明</label>'
-        + '<textarea id="flowGroup-output-description" rows="4" placeholder="写给使用者看的流程组出参说明，不配置出参路径。"' + (readonly ? ' disabled' : '') + '>' + esc(group.outputDescription || '') + '</textarea></div>'
+        + '<textarea id="flowGroup-output-description" rows="4" placeholder="返回数据的结构和字段含义"' + (readonly ? ' disabled' : '') + '>' + esc(group.outputDescription || '') + '</textarea></div>'
         + '</div>'
         + '<div class="form-row form-row-spaced"><label>运行入参示例（可选 JSON）</label>'
         + '<page-code-editor id="flowGroup-input-example" language="json" rows="4" placeholder=\'{"keyword":"订单"}\'' + (readonly ? ' disabled' : '') + '>' + esc(group.inputExample || '') + '</page-code-editor>'
-        + '<div class="form-help">仅作为运行界面的预填示例。运行入参仍是可选 JSON，不会生成字段表单或强制校验。</div></div>'
-        + renderFlowUsageSummary(group, '填写后，运行界面会展示流程组说明和输入示例。')
+        + '</div>'
         + '<div class="node-list flowGroup-step-list" id="flowGroup-step-list-container">' + stepRows + '</div>'
         + '<div class="editor-actions">'
         + (readonly
@@ -561,28 +567,23 @@
       throw new Error('无法生成流程组步骤 ID');
     }
 
-    function replaceDraft(nextDraft) {
+    function replaceDraft(nextDraft, persisted) {
+      handleDragEnd();
+      draftOpenSequence++;
       draft = nextDraft;
+      draftPersisted = !!nextDraft && persisted === true;
       externallyDeletedDraftId = '';
       draftRevision++;
       draftBaselineRevision = draftRevision;
-      try {
-        draftBaselinePersisted = !!(nextDraft && nextDraft.id && findFlowGroup(String(nextDraft.id)));
-      } catch (_) {
-        draftBaselinePersisted = false;
-      }
       draftGeneration++;
       renderedDraftGeneration = -1;
       draftFormSignature = '';
       activeStepEdit = null;
-      dragState.index = -1;
-      dragState.destinationIndex = -1;
-      dragState.draftRevision = -1;
-      dragState.metrics = null;
     }
 
-    function openNew() {
+    async function openNew() {
       if (destroyed) return { ok: false, destroyed: true };
+      if (!await confirmDiscard()) return { ok: false, cancelled: true };
       var id;
       try {
         id = nextFlowGroupId();
@@ -599,17 +600,21 @@
       return { ok: true, flowGroupId: id };
     }
 
-    function edit(flowGroupId, editOptions) {
+    async function edit(flowGroupId, editOptions) {
       editOptions = editOptions || {};
       if (destroyed) return Promise.resolve({ ok: false, destroyed: true });
       if (editOptions.expectedRevision !== undefined && editOptions.expectedRevision !== draftRevision) {
         return Promise.resolve({ ok: false, stale: true });
       }
+      if (draft && draft.id === flowGroupId && !editOptions.reload) return { ok: true, retained: true };
+      if (!await confirmDiscard()) return { ok: false, cancelled: true };
+      var openingSequence = ++draftOpenSequence;
       return resourceClient.get(groupUri(flowGroupId)).then(function (envelope) {
         if (destroyed) return { ok: false, destroyed: true };
+        if (openingSequence !== draftOpenSequence) return { ok: false, stale: true };
         var nextDraft = applyEnvelope(envelope);
         if (!nextDraft) throw new Error('流程组资源没有返回内容');
-        replaceDraft(nextDraft);
+        replaceDraft(nextDraft, true);
         if (editOptions.render !== false && isActive()) {
           render();
           scrollOpenedEditor('#flowGroup-editor');
@@ -637,7 +642,8 @@
         syncDraftFromEditor();
         var flows = configMap('flows');
         var items = listedFlows(flows);
-        var html = '<div class="form-row"><input type="text" id="flowGroup-flow-search" placeholder="搜索流程" autocomplete="off"></div>';
+        var html = '<details class="reference-panel drawer-guide"><summary>添加流程说明</summary><div class="drawer-guide-content"><p><b>添加步骤：</b>点击流程加入流程组，按顺序传递输出；添加后可调整名称和策略。</p></div></details>'
+          + '<section class="drawer-section"><h4>选择流程</h4><div class="form-row"><input type="search" id="flowGroup-flow-search" aria-label="搜索流程" placeholder="搜索流程" autocomplete="off"></div>';
         if (!items.length) {
           html += '<div class="placeholder">还没有可添加的流程，请先创建流程</div>';
         } else {
@@ -653,7 +659,7 @@
             + '</div></div>';
         }
         $('#drawer-title').textContent = '选择流程';
-        $('#drawer-content').innerHTML = html;
+        $('#drawer-content').innerHTML = html + '</section>';
         $('#drawer-actions').innerHTML = '<button class="btn-secondary" data-action="cancel-drawer">取消</button>';
         activeStepEdit = null;
         openDrawer();
@@ -724,15 +730,17 @@
         var readonly = draftIsReadOnly();
         $('#drawer-title').textContent = readonly ? '查看流程步骤' : '编辑流程步骤';
         $('#drawer-content').innerHTML =
-          '<div class="form-row"><label>流程</label><select id="flowGroup-step-flowId"' + (readonly ? ' disabled' : '') + '>' + flowGroupFlowOptions(step.flowId, flows) + '</select></div>'
+          '<details class="reference-panel drawer-guide"><summary>流程步骤说明</summary><div class="drawer-guide-content">'
+          + '<p><b>标签策略：</b>仅覆盖当前步骤，未选则沿用流程策略。</p>'
+          + '<p><b>输入输出：</b>首步接收流程组入参，后续接收上一步输出。</p>'
+          + '<p><b>保存：</b>保存步骤后，还需保存流程组。</p></div></details>'
+          + '<section class="drawer-section"><h4>步骤信息</h4>'
+          + '<div class="form-row"><label for="flowGroup-step-flowId">流程</label><select id="flowGroup-step-flowId"' + (readonly ? ' disabled' : '') + '>' + flowGroupFlowOptions(step.flowId, flows) + '</select></div>'
           + '<div class="form-row"><label>步骤名称</label><input type="text" id="flowGroup-step-label" value="' + esc(step.label || '') + '" placeholder="' + esc(flow.label || '') + '"' + (readonly ? ' disabled' : '') + '></div>'
+          + '</section><section class="drawer-section"><h4>执行策略</h4>'
           + '<div class="form-row"><label>运行标签策略</label>' + runTabModeSelectHtml('flowGroup-step-runTabMode', step.runTabMode || '', readonly, true)
-          + '<div class="form-help">仅覆盖当前步骤；不选则使用所选流程自己的运行标签策略。</div></div>'
-          + '<div class="io-note drawer-io-note">'
-          + '<b>输入 / 输出</b>'
-          + '<span>该步骤运行时会自动接收上一步输出；第一步接收流程组运行入参。执行完成后，输出会交给下一步。</span>'
           + '</div>'
-          + '<div class="form-row"><label class="switch-label"><input type="checkbox" id="flowGroup-step-continueOnFailure"' + (step.continueOnFailure ? ' checked' : '') + (readonly ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">该流程失败时继续执行下一步</span></label></div>';
+          + '<div class="form-row"><label class="switch-label"><input type="checkbox" id="flowGroup-step-continueOnFailure"' + (step.continueOnFailure ? ' checked' : '') + (readonly ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">该流程失败时继续执行下一步</span></label></div></section>';
         $('#drawer-actions').innerHTML = readonly
           ? '<button class="btn-secondary" data-action="cancel-node-edit">关闭</button>'
           : '<button class="btn-primary" data-action="save-flowGroup-step-edit" data-index="' + index + '">保存</button>'
@@ -1030,7 +1038,7 @@
       return operation;
     }
 
-    function remove(flowGroupId) {
+    async function remove(flowGroupId) {
       if (destroyed) return Promise.resolve({ ok: false, destroyed: true });
       flowGroupId = String(flowGroupId || '');
       if (!isSafeKey(flowGroupId)) return Promise.resolve({ ok: false, error: '流程组不存在' });
@@ -1049,7 +1057,7 @@
       if (isBuiltinItem(group)) {
         return validationFailure('内置流程组不能删除', { builtin: true });
       }
-      if (!confirmAction('确定删除该流程组？（不影响其中的流程）')) {
+      if (!await confirmAction('确定删除该流程组？（不影响其中的流程）')) {
         return Promise.resolve({ ok: false, canceled: true });
       }
 
@@ -1134,7 +1142,7 @@
         return true;
       }
       if (action === 'cancel-flowGroup') {
-        clearDraft();
+        confirmDiscard().then(function (confirmed) { if (confirmed) clearDraft(); });
         return true;
       }
       if (action === 'delete-flowGroup') {
@@ -1176,80 +1184,14 @@
         : [];
     }
 
-    function measureDragLayout(list, cards) {
-      if (!list || !cards.length || typeof list.getBoundingClientRect !== 'function') return null;
-      var listRect = list.getBoundingClientRect();
-      var gap = 6;
-      try {
-        var style = window.getComputedStyle && window.getComputedStyle(list);
-        var measuredGap = style && parseFloat(style.rowGap || style.gap);
-        if (Number.isFinite(measuredGap)) gap = measuredGap;
-      } catch (_) {}
-      return {
-        gap: gap,
-        items: cards.map(function (card) {
-          var rect = card.getBoundingClientRect();
-          return {
-            top: rect.top - listRect.top,
-            height: rect.height,
-            center: rect.top - listRect.top + rect.height / 2,
-          };
-        }),
-      };
-    }
-
-    function destinationFromPointer(event, list) {
-      var metrics = dragState.metrics;
-      if (!metrics || !metrics.items.length || dragState.index < 0) return dragState.index;
-      var listRect = list.getBoundingClientRect();
-      var pointerY = Number(event.clientY) - listRect.top;
-      var slot = metrics.items.length;
-      for (var index = 0; index < metrics.items.length; index++) {
-        if (pointerY < metrics.items[index].center) {
-          slot = index;
-          break;
-        }
-      }
-      var destination = slot > dragState.index ? slot - 1 : slot;
-      return Math.max(0, Math.min(destination, metrics.items.length - 1));
-    }
-
-    function clearDragTransforms(list) {
-      stepCards(list).forEach(function (card) {
-        card.style.removeProperty('--drag-shift-y');
-      });
-    }
-
-    function previewDragDestination(list, destinationIndex) {
-      if (!list || !dragState.metrics || destinationIndex === dragState.destinationIndex) return;
-      var cards = stepCards(list);
-      var metrics = dragState.metrics;
-      var sourceIndex = dragState.index;
-      var sourceCard = cards[sourceIndex];
-      var sourceMetrics = metrics.items[sourceIndex];
-      if (!sourceCard || !sourceMetrics || !metrics.items[destinationIndex]) return;
-
-      clearDragTransforms(list);
-      var shift = sourceMetrics.height + metrics.gap;
-      if (destinationIndex > sourceIndex) {
-        for (var downIndex = sourceIndex + 1; downIndex <= destinationIndex; downIndex++) {
-          cards[downIndex].style.setProperty('--drag-shift-y', (-shift) + 'px');
-        }
-      } else if (destinationIndex < sourceIndex) {
-        for (var upIndex = destinationIndex; upIndex < sourceIndex; upIndex++) {
-          cards[upIndex].style.setProperty('--drag-shift-y', shift + 'px');
-        }
-      }
-      dragState.destinationIndex = destinationIndex;
+    function destinationFromPointer(event) {
+      return dragState.layout.destinationAt(event.clientX, event.clientY);
     }
 
     function clearDragClasses() {
+      if (dragState.layout) dragState.layout.clear();
       var editor = editorRoot();
       if (!editor) return;
-      Array.prototype.slice.call(editor.querySelectorAll('.node-list')).forEach(function (list) {
-        list.classList.remove('drag-active');
-        clearDragTransforms(list);
-      });
       Array.prototype.slice.call(editor.querySelectorAll('.flowGroup-step-card')).forEach(function (card) {
         card.classList.remove('dragging');
       });
@@ -1259,13 +1201,16 @@
       if (destroyed || draftIsReadOnly()) return;
       var card = stepCardFromEvent(event);
       if (!card) return;
+      if (!event.target.closest('.node-card-heading[draggable="true"]')) {
+        event.preventDefault();
+        return;
+      }
       var list = card.closest('#flowGroup-step-list-container');
       var cards = stepCards(list);
       dragState.index = Number(card.dataset.stepIndex);
       dragState.destinationIndex = dragState.index;
       dragState.draftRevision = draftRevision;
-      dragState.metrics = measureDragLayout(list, cards);
-      list.classList.add('drag-active');
+      dragState.layout = SortLayoutApi.create(list, cards, dragState.index);
       if (event.dataTransfer) {
         event.dataTransfer.effectAllowed = 'move';
         try { event.dataTransfer.setData('text/plain', String(dragState.index)); } catch (_) {}
@@ -1285,7 +1230,7 @@
       dragState.index = -1;
       dragState.destinationIndex = -1;
       dragState.draftRevision = -1;
-      dragState.metrics = null;
+      dragState.layout = null;
     }
 
     function handleDragOver(event) {
@@ -1294,7 +1239,8 @@
       if (!list) return;
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-      previewDragDestination(list, destinationFromPointer(event, list));
+      dragState.destinationIndex = destinationFromPointer(event);
+      dragState.layout.preview(dragState.destinationIndex);
     }
 
     function handleDragLeave() {}
@@ -1305,7 +1251,7 @@
       if (!list) return;
       event.preventDefault();
       var fromIndex = dragState.index;
-      var targetIndex = destinationFromPointer(event, list);
+      var targetIndex = destinationFromPointer(event);
       if (draftRevision !== dragState.draftRevision) {
         toast('流程组草稿已变化，请重新拖拽流程', true);
         handleDragEnd();
@@ -1345,6 +1291,7 @@
       render: render,
       handleAction: handleAction,
       clearDraft: clearDraft,
+      confirmDiscard: confirmDiscard,
       edit: edit,
       openById: edit,
       save: save,

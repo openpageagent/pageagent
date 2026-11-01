@@ -66,7 +66,8 @@
 :where(a) { color: var(--accent); text-underline-offset: 3px; }
 :where(a:hover) { color: var(--accent-hover); }
 :where(button, input, select, textarea) { font: inherit; }
-:where(button, input, select, textarea, a):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+:where(button, a):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+:where(input, select, textarea):focus { outline: 1px solid var(--accent); outline-offset: -1px; box-shadow: none; }
 
 :where(.app-page) { max-width: 1120px; margin: 0 auto; padding: 48px var(--space-lg); overflow-wrap: anywhere; }
 :where(.app-header) { margin-bottom: var(--space-lg); }
@@ -158,33 +159,21 @@
 :where(.status-pending) { color: var(--text-secondary); }
 :where(details) { margin-bottom: var(--space-md); border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); padding: var(--space-md); }
 :where(details > summary) {
-  position: relative;
   display: flex;
   align-items: center;
+  gap: 8px;
   min-height: 30px;
-  padding-inline-start: 38px;
+  padding: 0 4px;
   list-style: none;
   cursor: pointer;
   color: var(--accent);
 }
 :where(details > summary)::-webkit-details-marker { display: none; }
-/* Match the skill-tree-folder's 30px btn-small and 8px chevron. */
+/* Match conversation summaries' compact chevron. */
 :where(details > summary)::before {
   content: '';
-  position: absolute;
-  inset-inline-start: 0;
-  top: calc(50% - 15px);
-  width: 30px;
-  height: 30px;
-  border: 1px solid transparent;
-  border-radius: var(--control-radius);
-  pointer-events: none;
-}
-:where(details > summary)::after {
-  content: '';
-  position: absolute;
-  inset-inline-start: 11px;
-  top: calc(50% - 4px);
+  box-sizing: border-box;
+  flex: 0 0 8px;
   width: 8px;
   height: 8px;
   border: solid currentColor;
@@ -193,9 +182,9 @@
   transform: translateX(-2px) rotate(-45deg);
   pointer-events: none;
 }
-:where(details[open] > summary)::after { transform: translateY(-2px) rotate(45deg); }
-:where(details > summary:hover)::before { background: var(--accent-soft); }
-:where(details > summary:hover)::after { color: var(--accent); }
+:where(details[open] > summary)::before { transform: translateY(-2px) rotate(45deg); }
+:where(details > summary:hover) { background: var(--accent-soft); }
+:where(details > summary:hover)::before { color: var(--accent); }
 :where(details[open] > summary) { margin-bottom: var(--space-sm); }
 :where(summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 :where(progress) { width: 100%; height: 12px; accent-color: var(--accent); }

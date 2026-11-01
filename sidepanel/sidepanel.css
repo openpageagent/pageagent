@@ -98,6 +98,25 @@ body {
   overflow: hidden;
 }
 
+.sidepanel-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.sidepanel-tabs { flex: 1; }
+.sidepanel-panel { flex: 1; min-height: 0; min-width: 0; }
+#flows-panel { display: flex; flex-direction: column; overflow: hidden; }
+#apps-panel { padding: 12px; overflow-y: auto; background: var(--bg); }
+#apps-message { margin-bottom: 12px; color: var(--danger); overflow-wrap: anywhere; }
+#section-apps .app-grid { grid-template-columns: minmax(0, 1fr); }
+#section-apps .app-catalog-section { padding: 0; border: 0; }
+#section-apps .app-toolbar { margin-bottom: 12px; }
+#section-apps .app-toolbar > input { flex: 1 1 160px; width: 100%; }
+
 /* Sections */
 section {
   padding: 10px 12px;
@@ -150,12 +169,18 @@ section h3 {
 .field-row select:hover {
   border-color: var(--accent);
 }
-.field-row select:focus,
 button:focus-visible {
   outline: none;
   border-color: var(--accent);
   background-color: var(--bg);
   box-shadow: 0 1px 1px rgba(0, 0, 0, 0.4);
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  box-shadow: none;
 }
 .runtime-inputs {
   display: flex;
@@ -213,6 +238,7 @@ button:focus-visible {
   background: transparent;
   color: var(--accent);
   font: inherit;
+  font-size: 13px;
   cursor: pointer;
 }
 .runtime-help-link:hover:not(:disabled),
@@ -233,13 +259,15 @@ button:focus-visible {
   padding-top: 6px;
   color: var(--text-secondary);
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.65;
 }
 .runtime-help-block b {
   display: block;
   margin-bottom: 2px;
   color: var(--accent);
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
 }
 .runtime-help-block p {
   margin: 0;
@@ -253,6 +281,7 @@ button:focus-visible {
   user-select: text;
   padding: 10px 12px;
   border: 1px solid var(--border-strong);
+  border-radius: var(--control-radius);
   background: var(--bg);
   box-shadow: var(--shadow);
 }
@@ -431,13 +460,6 @@ button:focus-visible {
 .output-tabs {
   padding: 5px 8px;
   background: var(--bg-secondary);
-}
-.output-settings-button {
-  flex-shrink: 0;
-  margin-left: auto;
-  align-self: center;
-  height: 30px;
-  padding: 0 10px;
 }
 .output-panels {
   flex: 1;
@@ -621,12 +643,22 @@ button:focus-visible {
   margin-left: -1px;
 }
 
-:is(.output-tab, .log-channel, .debug-tab):nth-child(1 of :is(.output-tab, .log-channel, .debug-tab):not([hidden])) {
+:is(.output-tab, .debug-tab):nth-child(1 of :is(.output-tab, .debug-tab):not([hidden])) {
   border-top-left-radius: var(--control-radius);
   border-bottom-left-radius: var(--control-radius);
 }
 
-:is(.output-tab, .log-channel, .debug-tab):nth-last-child(1 of :is(.output-tab, .log-channel, .debug-tab):not([hidden])) {
+:is(.output-tab, .debug-tab):nth-last-child(1 of :is(.output-tab, .debug-tab):not([hidden])) {
+  border-top-right-radius: var(--control-radius);
+  border-bottom-right-radius: var(--control-radius);
+}
+
+.log-channel:first-child {
+  border-top-left-radius: var(--control-radius);
+  border-bottom-left-radius: var(--control-radius);
+}
+
+.log-channel:last-child {
   border-top-right-radius: var(--control-radius);
   border-bottom-right-radius: var(--control-radius);
 }

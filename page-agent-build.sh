@@ -13,13 +13,11 @@ cd "$ROOT_DIR"
 usage() {
   cat <<'EOF'
 用法：
-  ./page-agent-build.sh
-  ./page-agent-build.sh --no-minify
-  ./page-agent-build.sh --zip dist/custom-name.zip
+  ./page-agent-build.sh [--no-minify] [--zip PATH]
 
 选项：
-  --zip, -o PATH    将打包 ZIP 写入指定路径。
-  --no-minify       原样复制 JS/CSS；跳过 terser 和 clean-css。
+  --zip, -o PATH    指定 ZIP 输出路径。
+  --no-minify       跳过 JS/CSS 压缩。
 
 输出：
   dist/page-agent-extension-<version>/
@@ -27,12 +25,8 @@ usage() {
   dist/page-agent-extension-<version>-no-minify.zip  （--no-minify）
 
 说明：
-  - ZIP 文件名包含版本号，但 ZIP 内的顶层目录不包含版本号。
-  - 本脚本实际创建的是 ZIP 包，而不是 .crx 文件。
-  - 生成的 ZIP 用于内部发布，作为未打包的扩展程序包使用。
-  - 默认会压缩 JS/CSS，但不会混淆代码；builtin-apps/ 和应用默认主题保留可读源码。
-  - 需要可读且未压缩的程序包时，使用 --no-minify。
-  - JS 属性名、全局导出名、文件名和目录结构都会保留。
+  默认压缩 JS/CSS；内置应用及默认主题保留源码。
+  ZIP 解压后，通过浏览器开发者模式加载扩展。
 EOF
 }
 
@@ -83,20 +77,11 @@ for (const file of files) {
 const next = JSON.stringify({ version: 1, flows, flowGroups }, null, 2) + '\n';
 const current = fs.existsSync(indexFile) ? fs.readFileSync(indexFile, 'utf8') : '';
 if (current !== next) fs.writeFileSync(indexFile, next);
-console.log(`Wrote ${path.relative(process.cwd(), indexFile)} (${flows.length} flow${flows.length === 1 ? '' : 's'}, ${flowGroups.length} flow group${flowGroups.length === 1 ? '' : 's'})`);
 NODE
 }
 
 stage_start() {
-  STAGE_NAME="$1"
-  STAGE_STARTED_AT="$(date +%s)"
-  echo "==> $STAGE_NAME"
-}
-
-stage_done() {
-  local finished_at
-  finished_at="$(date +%s)"
-  echo "    已完成，用时 $((finished_at - STAGE_STARTED_AT)) 秒"
+  echo "==> $1"
 }
 
 detect_parallelism() {
@@ -170,25 +155,21 @@ fi
 
 stage_start "同步内置流程索引"
 sync_builtin_flow_index
-stage_done
 
 stage_start "同步内置应用索引"
 node "$ROOT_DIR/scripts/sync-builtin-app-index.js"
-stage_done
 
 stage_start "准备 Turndown 运行时"
 npm run build:turndown-runtime
 [[ -f "$ROOT_DIR/dependencies/turndown/turndown.browser.umd.js" ]] || fail "未生成 Turndown 运行时"
 [[ -f "$ROOT_DIR/dependencies/turndown/turndown-plugin-gfm.js" ]] || fail "未生成 Turndown GFM 运行时"
-stage_done
 
 stage_start "构建 MCP 服务器单文件包"
-[[ -x "$ROOT_DIR/mcp-server/node_modules/.bin/esbuild" ]] || fail "缺少 MCP 服务器构建依赖：mcp-server/node_modules/.bin/esbuild。请先在打包机器上执行一次 'cd mcp-server && npm install'。发布的 ZIP 仍只包含 MCP 服务器单文件。"
+[[ -x "$ROOT_DIR/mcp-server/node_modules/.bin/esbuild" ]] || fail "缺少 MCP 构建依赖；请运行 (cd mcp-server && npm install)"
 (cd "$ROOT_DIR/mcp-server" && npm run build:single)
 [[ -f "$MCP_BUNDLE_SRC" ]] || fail "未生成 MCP 服务器包：$MCP_BUNDLE_SRC"
-stage_done
 
-stage_start "准备 dist 中的扩展发布目录"
+stage_start "准备扩展发布目录"
 rm -rf "$STAGING_DIR" "$BUILD_DIR"
 rm -f "$ZIP_OUT"
 mkdir -p "$STAGING_DIR"
@@ -204,10 +185,10 @@ rsync -a "$ROOT_DIR/" "$STAGING_DIR/" \
   --exclude "assets/readme-demo/" \
   --exclude "CONTRIBUTING.md" \
   --exclude "SECURITY.md" \
-  --exclude "README.md" \
+  --exclude "/README.md" \
   --exclude "tests/" \
   --exclude "mcp-server/" \
-  --exclude "dist/" \
+  --exclude "/dist/" \
   --exclude "node_modules/" \
   --exclude "package.json" \
   --exclude "package-lock.json" \
@@ -218,17 +199,15 @@ rsync -a "$ROOT_DIR/" "$STAGING_DIR/" \
   --exclude "*.crx" \
   --exclude "*.zip" \
   --exclude "$(basename "$0")"
-stage_done
 
-stage_start "将 MCP 服务器包从 mcp-server/dist 复制到扩展发布目录"
+stage_start "复制 MCP 服务器包"
 mkdir -p "$STAGING_DIR/$(dirname "$MCP_BUNDLE_DEST_REL")"
 cp "$MCP_BUNDLE_SRC" "$STAGING_DIR/$MCP_BUNDLE_DEST_REL"
 cp "$ROOT_DIR/mcp-server/NODEMAILER_LICENSE" "$STAGING_DIR/mcp-server/NODEMAILER_LICENSE"
 chmod 755 "$STAGING_DIR/$MCP_BUNDLE_DEST_REL"
-stage_done
 
 if [[ "$MINIFY" -eq 1 ]]; then
-  stage_start "压缩 JavaScript（不混淆，$MINIFY_JOBS 个并行任务）"
+  stage_start "压缩 JavaScript"
   export TERSER_BIN
   find "$STAGING_DIR" -type f -name "*.js" \
     ! -path "$STAGING_DIR/dependencies/turndown/*.js" \
@@ -244,9 +223,8 @@ if [[ "$MINIFY" -eq 1 ]]; then
       "$TERSER_BIN" "$file" --ecma 2020 --compress passes=2 --comments false --output "$tmp"
       mv "$tmp" "$file"
     ' _
-  stage_done
 
-  stage_start "压缩 CSS（$MINIFY_JOBS 个并行任务）"
+  stage_start "压缩 CSS"
   export CLEANCSS_BIN
   # Built-in application sources and their editable default theme retain readable originals.
   find "$STAGING_DIR" -type f -name "*.css" ! -path "$STAGING_DIR/builtin-skills/*" ! -path "$STAGING_DIR/builtin-apps/*" ! -path "$STAGING_DIR/apps/default-theme.css" ! -path "$STAGING_DIR/dependencies/monaco/*" -print0 | xargs -0 -P "$MINIFY_JOBS" -n 1 bash -c '
@@ -255,7 +233,6 @@ if [[ "$MINIFY" -eq 1 ]]; then
     "$CLEANCSS_BIN" -o "$tmp" "$file" >/dev/null
     mv "$tmp" "$file"
   ' _
-  stage_done
 else
   echo "==> 跳过 JS/CSS 压缩"
 fi
@@ -271,16 +248,9 @@ mv "$STAGING_DIR" "$BUILD_DIR"
 
 [[ -f "$ZIP_OUT" ]] || fail "未在预期路径生成 ZIP：$ZIP_OUT"
 zip -T "$ZIP_OUT" >/dev/null
-stage_done
 
 echo
-echo "完成。"
+echo "打包完成，用时 $(($(date +%s) - BUILD_STARTED_AT)) 秒。"
 echo "发布目录：$BUILD_DIR"
-echo "ZIP：       $ZIP_OUT"
-echo "总用时：    $(($(date +%s) - BUILD_STARTED_AT)) 秒"
-echo
-echo "安装："
-echo "  1. 将 ZIP 发送到目标机器并解压。"
-echo "  2. 打开 chrome://extensions/ 或 edge://extensions/。"
-echo "  3. 启用开发者模式。"
-echo "  4. 点击“加载已解压的扩展程序”，选择包含 manifest.json 的解压目录。"
+echo "ZIP：$ZIP_OUT"
+echo "安装：解压 ZIP，在浏览器扩展管理页启用开发者模式，加载包含 manifest.json 的目录。"

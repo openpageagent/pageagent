@@ -454,7 +454,7 @@
   }
 
   function actionOwner(context) {
-    return String(context && (context.generationId || context.turnId || context.topicId || context.conversationId || context.actorId) || 'browser-resource');
+    return String(context && (context.pageActionOwner || context.generationId || context.turnId || context.topicId || context.conversationId || context.actorId) || 'browser-resource');
   }
 
   function createBrowserResourceAdapter(options) {
@@ -607,13 +607,26 @@
       throw core.arpError('RESOURCE_NOT_FOUND', '未知 Browser 资源路由');
     }
 
-    function attachDebugger(tabId, version, owner) {
+    function attachDebugger(tabId, version, owner, signal) {
       void version;
-      return cdpSessionManager.acquire(tabId, { owner: 'AgentGeneration:' + String(owner || 'browser-resource'), type: 'raw-cdp' });
+      return cdpSessionManager.acquire(tabId, { owner: owner, type: 'raw-cdp', signal: signal || null });
     }
 
-    function detachDebugger(session) {
-      return session && session.lease ? session.lease.release() : Promise.resolve(false);
+    function forgetCdpSession(session, reason) {
+      clearTimeout(session.expiryTimer);
+      session.expiryTimer = null;
+      session.state = 'detached';
+      session.detachedAt = new Date().toISOString();
+      session.detachReason = String(reason || 'browser');
+      cdpSessions.delete(session.id);
+    }
+
+    function detachDebugger(session, reason) {
+      if (!session || !session.lease) return Promise.resolve(false);
+      return session.lease.release().then(function (released) {
+        forgetCdpSession(session, reason);
+        return released;
+      });
     }
 
     function sendCdp(session, methodName, params, timeoutMs) {
@@ -633,11 +646,7 @@
       session.invalidated = true;
       session.invalidatedAt = new Date().toISOString();
       session.invalidationReason = String(reason || 'target_invalidated');
-      return detachDebugger(session).then(function () {
-        session.state = 'detached';
-        session.detachedAt = new Date().toISOString();
-        session.detachReason = session.invalidationReason;
-        cdpSessions.delete(session.id);
+      return detachDebugger(session, session.invalidationReason).then(function () {
         throw finalError;
       }, function (detachError) {
         // onDetach may have removed the record before the detach callback reports.
@@ -687,7 +696,7 @@
       var body = request.body || {};
       if (template === '/browser/tabs') {
         var createOwner = actionOwner(context);
-        return pageAutomation.action.act({ source: 'agent', owner: createOwner, tabId: 0, kind: 'createTab', input: body }).then(function (result) {
+        return pageAutomation.action.act({ source: 'agent', owner: createOwner, signal: context.abortSignal, tabId: 0, kind: 'createTab', input: body }).then(function (result) {
           var tab = result.derivedFacts.createdTab;
           if (!tab || !(Number(tab.id) > 0)) throw new Error('PageActionEngine did not return the created tab');
           var representation = tabRepresentation(tab);
@@ -707,9 +716,9 @@
         var navigationId = randomId('navigation', cryptoObject);
         var navigationTabId = Number(request.params.tabId);
         var owner = actionOwner(context);
-        return pageAutomation.action.act({ source: 'agent', owner: owner, tabId: navigationTabId, kind: 'navigate', input: { url: body.url } }).then(function (result) {
+        return pageAutomation.action.act({ source: 'agent', owner: owner, signal: context.abortSignal, tabId: navigationTabId, kind: 'navigate', input: { url: body.url } }).then(function (result) {
           var activation = body.active === true
-            ? pageAutomation.action.act({ source: 'agent', owner: owner, tabId: navigationTabId, kind: 'activateTab', input: {} })
+            ? pageAutomation.action.act({ source: 'agent', owner: owner, signal: context.abortSignal, tabId: navigationTabId, kind: 'activateTab', input: {} })
             : Promise.resolve(null);
           return activation.then(function (activationResult) {
           return chromeCall(chromeApi.tabs, 'get', [navigationTabId]).then(function (tab) {
@@ -751,9 +760,12 @@
         var sessionId = randomId('cdp_session', cryptoObject);
         var owner = securityBinding(context);
         var requestedTabId = Number(body.tabId);
+        // Explicit remote sessions outlive their creating ARP request.
+        var leaseOwner = context.transport === 'mcp-websocket'
+          ? 'CdpSession:' + sessionId : 'AgentGeneration:' + actionOwner(context);
         return chromeCall(chromeApi.tabs, 'get', [requestedTabId]).then(function (tab) {
           assertTargetScope(owner, tab);
-          return attachDebugger(requestedTabId, body.protocolVersion || '1.3', actionOwner(context)).then(function (lease) {
+          return attachDebugger(requestedTabId, body.protocolVersion || '1.3', leaseOwner, context.abortSignal).then(function (lease) {
             var attachedAtMs = Date.now();
             var session = {
               id: sessionId,
@@ -772,6 +784,11 @@
               },
             };
             cdpSessions.set(sessionId, session);
+            session.expiryTimer = setTimeout(function () {
+              detachDebugger(session, 'expired').catch(function (error) {
+                console.warn('释放过期 CDP 会话失败:', error);
+              });
+            }, cdpSessionTtlMs);
             var representation = cdpSessionRepresentation(session);
             return { statusCode: 201, primary: representation, receipt: { performed: 'yes', state: 'succeeded', operationUri: representation.uri }, schemaValue: representation.data };
           });
@@ -808,7 +825,7 @@
         var patchTabId = Number(request.params.tabId);
         var patchOwner = actionOwner(context);
         var activation = patchValue.active === true
-          ? pageAutomation.action.act({ source: 'agent', owner: patchOwner, tabId: patchTabId, kind: 'activateTab', input: {} })
+          ? pageAutomation.action.act({ source: 'agent', owner: patchOwner, signal: context.abortSignal, tabId: patchTabId, kind: 'activateTab', input: {} })
           : Promise.resolve(null);
         var remainingPatch = Object.assign({}, patchValue);
         if (remainingPatch.active === true) delete remainingPatch.active;
@@ -839,7 +856,7 @@
       if (template === '/browser/tabs/{tabId}') {
         var closeTabId = Number(request.params.tabId);
         var closeOwner = actionOwner(context);
-        return pageAutomation.action.act({ source: 'agent', owner: closeOwner, tabId: closeTabId, kind: 'closeTab', input: {} }).then(function (result) {
+        return pageAutomation.action.act({ source: 'agent', owner: closeOwner, signal: context.abortSignal, tabId: closeTabId, kind: 'closeTab', input: {} }).then(function (result) {
           var actionReceipt = result.receipt;
           return {
             statusCode: 204,
@@ -862,10 +879,8 @@
           return Promise.resolve({ statusCode: 204, data: null, receipt: { performed: 'no', state: 'succeeded' }, schemaValue: null });
         }
         return verifyOwnedSession(context, request.params.sessionId).then(function (session) {
-          return detachDebugger(session).then(function () {
-          session.state = 'detached'; session.detachedAt = new Date().toISOString(); session.detachReason = 'requested';
-          cdpSessions.delete(session.id);
-          return { statusCode: 204, data: null, receipt: { performed: 'yes', state: 'succeeded' }, schemaValue: null };
+          return detachDebugger(session, 'requested').then(function () {
+            return { statusCode: 204, data: null, receipt: { performed: 'yes', state: 'succeeded' }, schemaValue: null };
           });
         }).catch(function (error) { throw translateError(error, 'unknown'); });
       }
@@ -923,8 +938,7 @@
         if (!event || event.managed !== true) return;
         cdpSessions.forEach(function (session) {
           if (Number(session.tabId) !== Number(event && event.tabId)) return;
-          session.state = 'detached'; session.detachedAt = new Date().toISOString(); session.detachReason = String(event.reason || 'browser');
-          cdpSessions.delete(session.id);
+          forgetCdpSession(session, event.reason);
         });
       });
     }

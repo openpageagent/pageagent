@@ -1,207 +1,87 @@
 'use strict';
 
-const DEFAULT_TIMEOUT_MS = 30000;
-const MAX_TIMEOUT_MS = 610000;
+const { randomUUID } = require('crypto');
+const contract = require('../shared/mcp-contract');
 const ARP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
-const CORRELATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
-
-function isRecord(value) {
-  return !!(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-function errorFrom(value, fallbackMessage) {
-  if (value instanceof Error) return value;
-  if (value && typeof value === 'object') {
-    const error = new Error(String(value.message || fallbackMessage || 'Extension request failed'));
-    if (value.code !== undefined) error.code = value.code;
-    return error;
-  }
-  return new Error(String(value || fallbackMessage || 'Extension request failed'));
-}
-
-function abortError(reason) {
-  const error = errorFrom(reason, 'Request aborted');
-  if (error.name === 'Error') error.name = 'AbortError';
-  return error;
-}
-
-function normalizeCorrelationId(value, name, fallback) {
-  const text = String(value || fallback || '').trim();
-  if (!CORRELATION_ID.test(text)) {
-    throw new TypeError(`${name} must be 1-200 safe correlation characters`);
-  }
-  return text;
-}
-
+function errorFrom(value, fallback) { return value instanceof Error ? value : new Error(String(value && value.message || value || fallback)); }
+function abortError(value) { return Object.assign(errorFrom(value, 'Request aborted'), { code: 'UPSTREAM_FAILED', reason: 'RESULT_UNKNOWN', performed: 'unknown', retryable: false }); }
 function normalizeTransportContext(value) {
-  value = isRecord(value) ? value : {};
-  const sessionId = normalizeCorrelationId(value.sessionId, 'context.sessionId');
-  return {
-    sessionId,
-    conversationId: normalizeCorrelationId(
-      value.conversationId,
-      'context.conversationId',
-      sessionId
-    ),
-  };
+  if (!contract.record(value)) contract.fail('INVALID_CONTEXT');
+  contract.id(value.sessionId); contract.id(value.conversationId || value.sessionId);
+  return { sessionId: value.sessionId, conversationId: value.conversationId || value.sessionId, parentRequest: value.parentRequest || null };
 }
-
-function isArpEnvelope(value) {
-  return !!(isRecord(value)
-    && value.protocol === 'arp/1'
-    && typeof value.requestId === 'string'
-    && isRecord(value.status)
-    && Number.isInteger(Number(value.status.code)));
-}
-
+function isArpEnvelope(value) { return contract.record(value) && value.protocol === 'arp/1' && typeof value.requestId === 'string' && contract.record(value.status) && Number.isInteger(value.status.code); }
 class ExtensionRequestBroker {
-  constructor(options = {}) {
-    this.defaultTimeoutMs = this.normalizeTimeout(options.defaultTimeoutMs, DEFAULT_TIMEOUT_MS);
-    this.maxTimeoutMs = this.normalizeTimeout(options.maxTimeoutMs, MAX_TIMEOUT_MS);
-    this.pendingRequests = new Map();
-    this.requestIdCounter = 0;
-    this.closed = false;
-  }
-
-  normalizeTimeout(value, fallback) {
-    const timeout = Number(value);
-    if (!Number.isFinite(timeout) || timeout <= 0) return fallback;
-    return Math.max(1, Math.floor(timeout));
-  }
-
-  nextRequestId() {
-    do {
-      this.requestIdCounter = this.requestIdCounter >= Number.MAX_SAFE_INTEGER
-        ? 1
-        : this.requestIdCounter + 1;
-    } while (this.pendingRequests.has(String(this.requestIdCounter)));
-    return this.requestIdCounter;
-  }
-
-  countForClient(clientId) {
-    let count = 0;
-    for (const pending of this.pendingRequests.values()) {
-      if (pending.clientId === clientId) count++;
-    }
-    return count;
-  }
-
-  call({ ws, clientId, method, request, context, timeoutMs, signal }) {
-    if (this.closed) return Promise.reject(new Error('Extension request broker is closed'));
-    if (!ws || typeof ws.send !== 'function') return Promise.reject(new Error('Extension socket is not available'));
-    if (signal && signal.aborted) return Promise.reject(abortError(signal.reason));
-
-    method = String(method || '').toUpperCase();
-    if (!ARP_METHODS.has(method)) return Promise.reject(new TypeError(`Unsupported ARP method: ${method || '(empty)'}`));
-    if (!isRecord(request)) return Promise.reject(new TypeError('ARP request must be an object'));
-
-    let safeContext;
-    try {
-      safeContext = normalizeTransportContext(context);
-    } catch (error) {
-      return Promise.reject(error);
-    }
-
-    const requestId = this.nextRequestId();
-    const key = String(requestId);
-    const boundedTimeoutMs = Math.min(
-      this.normalizeTimeout(timeoutMs, this.defaultTimeoutMs),
-      this.maxTimeoutMs
-    );
-
+  constructor(send) { this.send = send; this.pendingRequests = new Map(); this.closed = false; }
+  countForClient(clientId) { return [...this.pendingRequests.values()].filter(item => item.clientId === clientId).length; }
+  call({ ws, clientId, method, request, context, principal, timeoutMs = 30000, signal, lifecycle, onSettled }) {
+    if (this.closed || !ws || ws.readyState !== 1) return Promise.reject(new Error('Extension socket unavailable'));
+    if (signal && signal.aborted) return Promise.reject(Object.assign(abortError(signal.reason), { reason: 'REQUEST_CANCELLED', performed: 'no' }));
+    if (!ARP_METHODS.has(method) || !contract.record(request)) return Promise.reject(new Error('INVALID_ARP_REQUEST'));
+    if (this.pendingRequests.size >= 32 || this.countForClient(clientId) >= 8) return Promise.reject(Object.assign(new Error('ARP forwarding capacity reached'), { code: 'RESOURCE_BUSY' }));
+    const requestId = randomUUID(); const safeContext = normalizeTransportContext(context);
+    const identity = ws.pageAgentIdentity;
+    let done;
+    const completion = new Promise(resolve => { done = resolve; });
+    if (lifecycle) lifecycle.pending.add(completion);
     return new Promise((resolve, reject) => {
-      const onAbort = signal
-        ? () => this.settle(key, 'reject', abortError(signal.reason))
-        : null;
-      const timeout = setTimeout(() => {
-        this.settle(key, 'reject', new Error(`Request timeout after ${boundedTimeoutMs}ms`));
-      }, boundedTimeoutMs);
-
-      this.pendingRequests.set(key, {
-        requestId,
-        resolve,
-        reject,
-        timeout,
-        signal,
-        onAbort,
-        ws,
-        clientId,
-        method,
-        uri: String(request.uri || ''),
-      });
-      if (signal && onAbort) signal.addEventListener('abort', onAbort, { once: true });
-
+      const item = { requestId, ws, clientId, identity, resolve, reject, signal, done, onSettled,
+        parentRequest: safeContext.parentRequest, waiting: true, sent: false };
+      const cancel = reason => {
+        if (!item.waiting) return;
+        item.waiting = false; clearTimeout(item.timer);
+        if (signal) signal.removeEventListener('abort', item.abort);
+        if (item.sent && ws.readyState === 1) {
+          try { this.send(ws, { type: 'arp.cancel', requestId, reason: 'Request cancelled' }); } catch (_) {}
+        }
+        Promise.resolve().then(() => item.onSettled && item.onSettled(null, abortError(reason))).catch(() => {});
+        reject(abortError(reason));
+      };
+      item.cancel = cancel;
+      item.abort = () => cancel(signal.reason);
+      item.timer = setTimeout(() => cancel('Extension response timeout'), timeoutMs);
+      this.pendingRequests.set(requestId, item);
+      if (signal) signal.addEventListener('abort', item.abort, { once: true });
       try {
-        ws.send(JSON.stringify({
-          requestId,
-          method,
-          request,
-          context: safeContext,
-        }), (error) => {
-          if (error) this.settle(key, 'reject', errorFrom(error, 'Failed to send extension request'));
+        item.sent = true;
+        this.send(ws, { type: 'arp.request', requestId, method, request, context: safeContext, principal }, error => {
+          if (error) item.cancel(error);
         });
-      } catch (error) {
-        this.settle(key, 'reject', errorFrom(error, 'Failed to send extension request'));
-      }
+      } catch (error) { this.finish(item, null, error); }
     });
   }
-
-  settle(key, outcome, value) {
-    key = String(key);
-    const pending = this.pendingRequests.get(key);
-    if (!pending) return false;
-    this.pendingRequests.delete(key);
-    clearTimeout(pending.timeout);
-    if (pending.signal && pending.onAbort) {
-      pending.signal.removeEventListener('abort', pending.onAbort);
-    }
-    if (outcome === 'resolve') pending.resolve(value);
-    else pending.reject(errorFrom(value, 'Extension request failed'));
-    return true;
+  finish(item, envelope, error) {
+    if (!this.pendingRequests.has(item.requestId)) return;
+    const waiting = item.waiting; item.waiting = false;
+    this.pendingRequests.delete(item.requestId); clearTimeout(item.timer);
+    if (item.signal) item.signal.removeEventListener('abort', item.abort);
+    Promise.resolve().then(() => item.onSettled && item.onSettled(envelope, error)).catch(() => {}).then(() => {
+      if (waiting) { if (error) item.reject(abortError(error)); else item.resolve(envelope); }
+      item.done();
+    });
   }
-
   handleResponse(message, ws) {
-    if (!message || message.requestId === undefined || message.requestId === null) return 'unknown';
-    const key = String(message.requestId);
-    const pending = this.pendingRequests.get(key);
-    if (!pending) return 'unknown';
-    if (pending.ws !== ws) return 'wrong-socket';
-
-    if (message.error !== undefined && message.error !== null && message.error !== '') {
-      this.settle(key, 'reject', errorFrom(message.error, 'Extension transport failed'));
-    } else if (!isArpEnvelope(message.envelope)) {
-      this.settle(key, 'reject', new Error('Extension returned an invalid ARP/1 Envelope'));
-    } else {
-      this.settle(key, 'resolve', message.envelope);
-    }
+    const item = this.pendingRequests.get(message.requestId);
+    if (!item) return 'unknown';
+    if (item.ws !== ws || message.transportSessionId !== item.identity.transportSessionId) return 'wrong-socket';
+    if (!isArpEnvelope(message.envelope)) { item.cancel(new Error('Invalid ARP Envelope')); return 'invalid'; }
+    this.finish(item, message.envelope);
     return 'settled';
   }
-
+  validateParent(parent, identity) {
+    if (!parent) return false;
+    for (const item of this.pendingRequests.values()) {
+      if (!item.parentRequest || item.parentRequest.requestId !== parent.requestId || item.parentRequest.transportSessionId !== parent.transportSessionId) continue;
+      if (item.clientId !== identity.clientId) contract.fail('PARENT_TARGET_MISMATCH', '入口目标不匹配', 'FORBIDDEN');
+      return true;
+    }
+    return false;
+  }
   rejectForSocket(ws, reason) {
-    let rejected = 0;
-    for (const [key, pending] of Array.from(this.pendingRequests.entries())) {
-      if (pending.ws !== ws) continue;
-      if (this.settle(key, 'reject', errorFrom(reason, 'Extension client disconnected'))) rejected++;
-    }
-    return rejected;
+    // Closing this transport releases forwarding capacity, not the remote
+    // execution. Persist the unknown outcome and settle the HTTP lifecycle too.
+    for (const item of this.pendingRequests.values()) if (item.ws === ws) this.finish(item, null, abortError(reason));
   }
-
-  close(reason) {
-    if (this.closed) return 0;
-    this.closed = true;
-    let rejected = 0;
-    for (const key of Array.from(this.pendingRequests.keys())) {
-      if (this.settle(key, 'reject', errorFrom(reason, 'Extension request broker closed'))) rejected++;
-    }
-    return rejected;
-  }
+  close(reason) { this.closed = true; for (const item of [...this.pendingRequests.values()]) this.finish(item, null, reason); }
 }
-
-module.exports = {
-  ARP_METHODS,
-  ExtensionRequestBroker,
-  abortError,
-  errorFrom,
-  isArpEnvelope,
-  normalizeTransportContext,
-};
+module.exports = { ExtensionRequestBroker, ARP_METHODS, normalizeTransportContext, isArpEnvelope, abortError, errorFrom };

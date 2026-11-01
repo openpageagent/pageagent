@@ -214,9 +214,23 @@
 
     function local(operation, action, inputForParams) {
       return function (_node, params, _state, execution) {
-        var input = inputForParams ? inputForParams(params) : params;
+        var business = Object.assign({}, params); delete business.connectionId; delete business.workspaceId;
+        var input = inputForParams ? inputForParams(business) : business;
         if (action) input = Object.assign({}, input, { action: action });
-        return execLocalOperation(operation, input, execution);
+        return execLocalOperation(operation, input, Object.assign({}, execution, { localTarget: {
+          connectionId: params.connectionId, ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}) } }));
+      };
+    }
+
+    function localInfo(operation) {
+      var execute = local(operation, null, function (params) {
+        var input = Object.assign({}, params); delete input.outputFormat;
+        return input;
+      });
+      return function (node, params, state, execution) {
+        return execute(node, params, state, execution).then(function (result) {
+          return params.outputFormat === 'text' ? result.description : result;
+        });
       };
     }
 
@@ -344,6 +358,8 @@
     addRoute(routes, 'turndownToMarkdown', callParamsExecution(execTurndownToMarkdown));
     addRoute(routes, 'webhook', callParamsExecution(execWebhook));
     addRoute(routes, 'sendEmail', callParamsExecution(execSendEmail));
+    addRoute(routes, 'localEnvironment', localInfo('environment'));
+    addRoute(routes, 'localDisk', localInfo('disk'));
     addRoute(routes, 'localRead', local('read'));
     addRoute(routes, 'localWrite', local('write'));
     addRoute(routes, 'localDelete', local('delete'));

@@ -168,7 +168,6 @@
     var isBuiltinItem = requireFunction(options.isBuiltinItem, 'isBuiltinItem');
     var itemIdHtml = requireFunction(options.itemIdHtml, 'itemIdHtml');
     var flowUsageSummary = requireFunction(options.flowUsageSummary, 'flowUsageSummary');
-    var renderFlowUsageSummary = requireFunction(options.renderFlowUsageSummary, 'renderFlowUsageSummary');
     var normalizeRunTabMode = requireFunction(options.normalizeRunTabMode, 'normalizeRunTabMode');
     var runTabModeSelectHtml = requireFunction(options.runTabModeSelectHtml, 'runTabModeSelectHtml');
     var nodeCardHtml = requireFunction(options.nodeCardHtml, 'nodeCardHtml');
@@ -385,13 +384,13 @@
         toast(listMessage, true);
         return { ok: false, error: listMessage };
       }
-      list.innerHTML = renderConfigListItems('flows', flows, '<div class="placeholder">还没有流程，点击「新建流程」开始编排</div>', function (flow) {
+      list.innerHTML = renderConfigListItems('flows', flows, draft ? '' : '<div class="placeholder">还没有流程，点击「新建流程」开始编排</div>', function (flow) {
         var nodes = ownDataValue(flow, 'nodes');
         var nodeCount = Array.isArray(nodes) ? nodes.length : 0;
         var builtin = isBuiltinItem(flow);
         var id = String(ownDataValue(flow, 'id') || '');
         var usageSummary = flowUsageSummary(flow);
-        return '<div class="item-card' + (draft && draftId() === id ? ' selected' : '') + (builtin ? ' builtin' : '') + '" data-action="edit-flow" data-id="' + esc(id) + '">'
+        return '<div class="item-card' + (draft && draftId() === id ? ' selected' : '') + (builtin ? ' builtin' : '') + '" role="button" tabindex="0" data-action="edit-flow" data-id="' + esc(id) + '">'
           + '<span class="item-title">' + esc(ownDataValue(flow, 'label') || '(未命名)') + '</span>'
           + '<span class="item-sub">' + nodeCount + ' 个节点' + (ownDataValue(flow, 'dataset') ? ' · 数据驱动' : '') + (usageSummary ? ' · ' + esc(usageSummary) : '') + (ownDataValue(flow, 'description') ? ' · ' + esc(ownDataValue(flow, 'description')) : '') + '</span>'
           + (builtin ? '<span class="badge builtin">内置</span>' : '')
@@ -445,12 +444,11 @@
         + '</div>'
         + '<div class="form-row form-row-spaced"><label>运行入参示例（可选 JSON）</label>'
         + '<page-code-editor id="flow-input-example" language="json" rows="4" placeholder=\'{"question":"你是谁，当前是什么时间","mode":"quick","deepThink":"false","webSearch":"true"}\'' + (readonly ? ' disabled' : '') + '>' + esc(ownDataValue(flow, 'inputExample') || '') + '</page-code-editor>'
-        + '<div class="form-help">仅作为运行界面的预填示例。运行入参仍是可选 JSON，不会生成字段表单或强制校验。</div></div>'
-        + renderFlowUsageSummary(flow, '填写后，运行界面会展示说明和输入示例。')
+        + '</div>'
         + '<div class="form-row form-row-spaced"><label>运行标签策略</label>'
         + runTabModeSelectHtml('flow-run-tab-mode', ownDataValue(flow, 'runTabMode') || 'reuseOpenTab', readonly, false)
-        + '<div class="form-help">控制本流程打开页面时使用哪个标签。流程组步骤可单独覆盖该设置。</div></div>'
-        + '<div class="form-row form-row-spaced"><label>数据集（可选，JSON 数组；每组数据跑一遍流程，节点参数用 {{data.字段}} 引用）</label>'
+        + '</div>'
+        + '<div class="form-row form-row-spaced"><label for="flow-dataset">数据集（可选 JSON 数组）</label>'
         + '<page-code-editor id="flow-dataset" language="json" rows="3" placeholder=\'[{"user":"alice","pwd":"123"},{"user":"bob","pwd":"456"}]\'' + (readonly ? ' disabled' : '') + '>' + esc(ownDataValue(flow, 'dataset') || '') + '</page-code-editor></div>'
         + '<div class="node-list" id="node-list-container">'
         + (nodes.length ? nodes.map(function (node, index) {
@@ -493,7 +491,14 @@
       var revision = draftRevision;
       $('#drawer-title').textContent = '流程通知';
       $('#drawer-content').innerHTML = '<form id="flow-mail-form">'
-        + '<div class="form-row"><div class="form-help">所有轮次结束后，按最终结果发送一封邮件；主动停止和单节点调试不发送。使用「连接配置 → 邮件通知」中的发件账户，发送时需连接 MCP Server。发送失败会记录日志，不影响流程结果。</div></div>'
+        + '<details class="reference-panel drawer-guide"><summary>流程通知说明</summary><div class="drawer-guide-content">'
+        + '<p><b>发送时机：</b>全部轮次结束后发一封；主动停止、单节点调试不发送，发送失败不影响流程结果。</p>'
+        + '<p><b>发件与收件：</b>使用「连接配置」中的账户，需连接 MCP Server。收件邮箱最多 100 个，用逗号、分号或空格分隔。</p>'
+        + '<p><b>模板变量：</b><code>{{input.字段}}</code> 引用入参，<code>{{变量名}}</code> 引用节点输出，<code>{{json 变量名}}</code> 插入 JSON；取最终一轮的结束值，未生成则为空。</p>'
+        + '<p><b>通知专用变量：</b><code>{{notification.flowLabel}}</code> 为流程名，<code>{{notification.statusLabel}}</code> 为成功／失败，<code>{{notification.error}}</code> 为失败原因。</p>'
+        + '<p><b>保存设置：</b>确定后还需保存流程。</p>'
+        + (readonly ? '<p><b>内置流程：</b>复制为用户流程后修改。</p>' : '')
+        + '</div></details><section class="drawer-section"><h4>发送条件与收件人</h4>'
         + '<div class="form-row form-grid">'
         + '<label class="switch-label"><input type="checkbox" id="flow-mail-success"' + (mailNotification.onSuccess === true ? ' checked' : '') + (readonly ? ' disabled' : '') + '>'
         + '<span class="switch-slider"></span><span class="switch-text">成功时通知</span></label>'
@@ -501,15 +506,13 @@
         + '<span class="switch-slider"></span><span class="switch-text">失败时通知</span></label></div>'
         + '<div class="form-row form-row-spaced"><label for="flow-mail-to">通知收件人</label>'
         + '<input type="text" id="flow-mail-to" maxlength="26000" value="' + esc(mailNotification.to || '') + '" placeholder="ops@example.com, owner@example.com"' + (readonly ? ' disabled' : '') + '>'
-        + '<div class="form-help">启用通知时填写固定邮箱，多个地址用逗号、分号或空格分隔，最多 100 个。</div></div>'
+        + '</div></section><section class="drawer-section"><h4>邮件内容</h4>'
         + '<div class="form-row form-row-spaced"><label for="flow-mail-subject">邮件主题</label>'
         + '<input type="text" id="flow-mail-subject" maxlength="998" value="' + esc(mailNotification.subject === undefined ? MailSettings.FLOW_NOTIFICATION_DEFAULTS.subject : mailNotification.subject) + '"' + (readonly ? ' disabled' : '') + '>'
-        + '<div class="form-help">可修改默认主题，支持流程变量，如 {{input.名称}}、{{notification.flowLabel}}（流程名称）、{{notification.statusLabel}}（成功／失败）。</div></div>'
+        + '</div>'
         + '<div class="form-row form-row-spaced"><label for="flow-mail-body">邮件正文（纯文本）</label>'
         + '<page-code-editor id="flow-mail-body" language="html" template rows="10"' + (readonly ? ' disabled' : '') + '>' + esc(mailNotification.body === undefined ? MailSettings.FLOW_NOTIFICATION_DEFAULTS.body : mailNotification.body) + '</page-code-editor>'
-        + '<div class="form-help">可直接修改默认正文。用 {{input.字段}} 引用入参、{{变量名}} 引用节点输出、{{json 变量名}} 插入 JSON；{{notification.error}} 为失败原因。变量取流程结束时的值，多轮运行取最后一轮，未生成的变量为空。notification 为通知专用变量。</div></div>'
-        + (readonly ? '<p class="form-help">内置流程需复制为用户流程后修改。</p>' : '')
-        + '</form>';
+        + '</div></section></form>';
       $('#drawer-actions').innerHTML = '<button type="button" class="btn-secondary" data-action="cancel-drawer">' + (readonly ? '关闭' : '取消') + '</button>'
         + (readonly ? '' : '<button type="submit" form="flow-mail-form" class="btn-primary">确定</button>');
       var form = $('#flow-mail-form');
@@ -549,17 +552,16 @@
       openDrawer();
     }
 
-    function confirmDiscard() {
+    async function confirmDiscard() {
+      if (saveInFlight || splitInFlight) return false;
+      try { syncDraftFromEditor(); } catch (_) {}
       if (!draft || !dirty) return true;
-      if (!confirmAction('当前流程有未保存的修改，确定丢弃吗？\n（点「取消」可回去点击「保存流程」）')) return false;
-      dirty = false;
-      notifyWhenIdle();
-      return true;
+      return await confirmAction('有未保存的修改，是否放弃？');
     }
 
-    function openNew() {
+    async function openNew() {
       if (destroyed) return { ok: false, destroyed: true };
-      if (!confirmDiscard()) return { ok: false, cancelled: true };
+      if (!await confirmDiscard()) return { ok: false, cancelled: true };
       draft = {
         label: '',
         nodes: [],
@@ -576,7 +578,7 @@
       return { ok: true };
     }
 
-    function openById(flowId, openOptions) {
+    async function openById(flowId, openOptions) {
       openOptions = openOptions || {};
       if (destroyed) return Promise.resolve({ ok: false, destroyed: true });
       flowId = String(flowId || '');
@@ -587,9 +589,11 @@
         }
         return Promise.resolve({ ok: true, retained: true });
       }
-      if (openOptions.force !== true && !confirmDiscard()) return Promise.resolve({ ok: false, cancelled: true });
+      if (openOptions.force !== true && !await confirmDiscard()) return { ok: false, cancelled: true };
+      var openingRevision = ++draftRevision;
       return resourceClient.get(flowUri(flowId)).then(function (envelope) {
         if (destroyed) return { ok: false, destroyed: true };
+        if (openingRevision !== draftRevision) return { ok: false, stale: true };
         var nextDraft = applyEnvelope(envelope);
         if (!nextDraft) throw new Error('流程资源没有返回可编辑内容');
         draft = nextDraft;
@@ -1078,7 +1082,7 @@
       }
     }
 
-    function remove(flowId) {
+    async function remove(flowId) {
       if (destroyed) return Promise.resolve({ ok: false, destroyed: true });
       flowId = String(flowId || '');
       if (!isSafeKey(flowId)) return Promise.resolve({ ok: false, error: '流程不存在' });
@@ -1095,7 +1099,7 @@
         toast(inspectMessage, true);
         return Promise.resolve({ ok: false, error: inspectMessage });
       }
-      if (!confirmAction('确定删除该流程？')) return Promise.resolve({ ok: false, cancelled: true });
+      if (!await confirmAction('确定删除该流程？')) return { ok: false, cancelled: true };
 
       var committed = false;
       var operation = Promise.resolve().then(function () {
@@ -1273,7 +1277,7 @@
         return true;
       }
       if (action === 'cancel-flow') {
-        if (confirmDiscard()) clearDraft();
+        confirmDiscard().then(function (confirmed) { if (confirmed) clearDraft(); });
         return true;
       }
       if (action === 'copy-flow') {

@@ -364,7 +364,7 @@
   function normalizeTrustedSurface(value) {
     if (!isRecord(value)) throw protocolError('INVALID_COMMAND', 'A trusted surface descriptor is required');
     strictObject(value, 'trustedSurface', [
-      'type', 'instanceId', 'tabId', 'windowId', 'assistantInvocationKind', 'incognito',
+      'type', 'instanceId', 'tabId', 'windowId', 'assistantInvocationKind', 'incognito', 'localCallerContext',
     ], ['type', 'instanceId']);
     if (SURFACE_TYPES.indexOf(value.type) === -1) throw protocolError('INVALID_COMMAND', 'trustedSurface.type is invalid');
     var surface = {
@@ -384,6 +384,10 @@
       surface.assistantInvocationKind = 'runAssistant';
     }
     if (surface.type === 'page' && surface.tabId <= 0) throw protocolError('INVALID_COMMAND', 'page trustedSurface requires a tabId');
+    if (value.localCallerContext !== undefined) {
+      if (!isRecord(value.localCallerContext)) throw protocolError('INVALID_COMMAND', 'Invalid trusted local caller');
+      surface.localCallerContext = JSON.parse(JSON.stringify(value.localCallerContext));
+    }
     return surface;
   }
 
