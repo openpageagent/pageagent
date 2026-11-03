@@ -42,7 +42,7 @@
         var scope = await service.authorizeResources(resourceAuth);
         if (session.closed) throw C.error('SESSION_CLOSED', '应用会话已关闭');
         var utilitySignal = /^\/utilities(?:\/|$)/.test(input.request.uri) ? session.utilityAbort.signal : undefined;
-        return options.dispatchResource(input.method, input.request, resourceAuth, scope, utilitySignal);
+        return options.dispatchResource(input.method, input.request, resourceAuth, scope, utilitySignal, session.id);
       }
       if (operation === 'runs.status' || operation === 'runs.cancel') return service.ownedRun(session.appId, input.runId, operation === 'runs.cancel');
       if (operation === 'data.changed') {

@@ -443,6 +443,13 @@
         try {
           var response = await requestWithTimeout(request, lease.signal);
           await lease.assertActive();
+          var providerError = response && response.rawMeta && response.rawMeta.error;
+          if (response && response.finishReason === 'transport_error' && providerError && providerError.retryable === false) {
+            var nonRetryableError = summaryError(providerError.errorCode || 'SUMMARY_PROVIDER_FAILED',
+              providerError.message || 'Summary provider request failed');
+            nonRetryableError.retryable = false;
+            throw nonRetryableError;
+          }
           if (!response || response.finishReason !== 'stop') {
             throw summaryError('SUMMARY_PROVIDER_FAILED', 'Summary provider did not return a complete structured response', {
               finishReason: response && response.finishReason,
@@ -522,6 +529,7 @@
             if (appendError && (appendError.code === 'GENERATION_STALE'
                 || appendError.code === 'SERVICE_WORKER_TERMINATED')) throw appendError;
           }
+          if (error && error.retryable === false) throw error;
         }
       }
       if (failures >= maxAttempts) await lease.update({ summaryCircuitOpen: true });

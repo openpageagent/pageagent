@@ -1,19 +1,20 @@
 (function (root) {
   'use strict';
   var C = root.AppContract, S = root.ResourceModuleSupport;
-  var reads = new Map();
-  function contextKey(context) { return String(context && context.conversationId || '') + ':' + String(context && context.generationId || ''); }
   function trusted(context) { return String(context && (context.actorId || context.actor) || '').startsWith('ui:'); }
-  root.AppGenerationGate = {
-    resource: function (context) { if (trusted(context)) return; var key = contextKey(context); if (!reads.has(key)) reads.set(key, { resource: true, guide: false }); if (reads.size > 128) reads.delete(reads.keys().next().value); },
-    knowledge: function (context) { var item = reads.get(contextKey(context)); if (item) item.guide = true; },
-    assert: function (context, code) {
-      if (trusted(context)) return;
-      var item = reads.get(contextKey(context));
-      if (!item || !item.guide) throw C.error('PRECONDITION_REQUIRED', C.guidance);
-      if (code && !code.customBehavior.length && [code.javascript].concat(Object.keys(code.files || {}).filter(function (name) { return name.endsWith('.js'); }).map(function (name) { return code.files[name]; })).some(function (source) { return /\b(?:fetch\s*\(|XMLHttpRequest|WebSocket|chrome\s*\.)/.test(source); })) throw C.error('SCHEMA_VALIDATION_FAILED', '默认生成代码包含非 SDK 调用。请改为 SDK；只有用户明确要求的例外才可记录为 customBehavior。此检查不是任意代码的安全审计。');
-    }
-  };
+  function validationError(code, message) {
+    return root.AgentResourceProtocol.arpError(code, message, { performed: 'no', stage: 'app-validation' });
+  }
+  function validateSourceFileName(name) {
+    try { return C.sourceFileName(name); }
+    catch (error) { throw validationError(error.code || 'INTERNAL_ERROR', error.message); }
+  }
+  // Reading process knowledge is not a write precondition. Validate the
+  // actual source on every save, independently of turns or worker restarts.
+  function assertGeneratedCode(context, code) {
+    if (trusted(context)) return;
+    if (code && !code.customBehavior.length && [code.javascript].concat(Object.keys(code.files || {}).filter(function (name) { return name.endsWith('.js'); }).map(function (name) { return code.files[name]; })).some(function (source) { return /\b(?:fetch\s*\(|XMLHttpRequest|WebSocket|chrome\s*\.)/.test(source); })) throw validationError('SCHEMA_VALIDATION_FAILED', '默认生成代码包含非 SDK 调用。请改为 SDK；只有用户明确要求的例外才可记录为 customBehavior。此检查不是任意代码的安全审计。');
+  }
   var body = C.object({ name: { type: 'string', minLength: 1, maxLength: C.limits.nameLength }, icon: { type: 'string', enum: Object.keys(C.ICONS) }, description: { type: 'string' }, code: C.codeSchema, generationScope: { type: 'array', uniqueItems: true, items: { type: 'string', enum: C.CAPABILITIES } }, sourceConversationId: { type: 'string' } }, ['name', 'code']);
   body.properties.icon.description = '应用图标 ID，只能使用 GET /apps/capabilities/ui/icons 返回的 icons；与管理界面的图标目录一致。单独修改图标时 PATCH /apps/{appId}，只提交 icon，无需源码或发布。';
   body.properties.slug = { type: ['string', 'null'], description: '应用别名：1–64 位英文字母、数字，以单个横线连接；自动转小写，同一普通／隐身范围内唯一。空值清除；保存时省略则保留。不能使用 source、capabilities、dependency。保存后立即生效，旧 ID 链接仍可用。' };
@@ -22,6 +23,22 @@
   metadataPatch.minProperties = 1;
   var codePatch = C.object(C.codeSchema.properties);
   codePatch.minProperties = 1;
+  var AUTO_DIFF_MAX_CHARS = 4000;
+  var sourceEdit = C.object({
+    field: { type: 'string', enum: ['html', 'css', 'javascript', 'themeCss', 'description', 'files'] },
+    fileName: { type: 'string', description: '仅 field=files 时必填，指定已存在的 JS/CSS 文件名' },
+    oldText: { type: 'string', minLength: 1, description: '从当前草稿读取的原文片段，须恰好匹配一次；可跨行，保留缩进，重复时补充上下文' },
+    newText: { type: 'string', description: '替换后的片段；空字符串表示删除，插入时保留 oldText 锚点并加入新内容。沿用周围缩进和换行，不压缩源码' }
+  }, ['field', 'oldText', 'newText']);
+  var sourceEdits = C.object({
+    edits: { type: 'array', minItems: 1, maxItems: 50, items: sourceEdit, description: '按顺序在前一项结果上匹配并替换，全部成功后原子保存；可只提交一项' },
+    includeDiff: { type: 'boolean', description: '通常省略，由系统在所有 oldText 与 newText 的字符数合计不超过 ' + AUTO_DIFF_MAX_CHARS + ' 时自动返回 diff；仅本次确需大改动的 diff 时传 true，不要固定为 true；false 关闭。跳过时不为 diff 回读草稿；显式请求仍受输出长度与计算时间限制。须随本次编辑提交，不要重放成功的编辑来补取 diff。' }
+  }, ['edits']);
+  var sourceEditResult = C.object({
+    appId: { type: 'string' }, revision: { type: 'string' }, saved: { type: 'boolean', const: true },
+    unpublished: { type: 'boolean' }, appliedEdits: { type: 'integer', minimum: 1 },
+    links: C.object({ preview: { type: 'string' } }, ['preview']), diff: { type: 'object' }
+  }, ['appId', 'revision', 'saved', 'unpublished', 'appliedEdits', 'links', 'diff']);
   var grepProperties = root.KnowledgeSearch.GREP_QUERY_PROPERTIES;
   var fieldQuery = C.object({
     q: Object.assign({}, grepProperties.q, { minLength: 1, description: '提供 q 即按标准 grep 搜索此文本字段；省略则按行读取。正则最多 256 字符，fixedStrings=true 时按字面匹配、最多 4096 字符。' }),
@@ -34,11 +51,11 @@
     limit: { type: 'integer', minimum: 1, maximum: 50, description: '读取行数或搜索命中数上限；读取默认 50 行、搜索默认 5 个命中行，不计附带的前后行' },
     revision: { type: 'string', minLength: 1, maxLength: 100, description: '续读时传入上一页 revision；版本变化则拒绝读取' }
   });
-  var FIELD_REPLACEMENT_GUIDANCE = '搜索和分段结果只是片段；PATCH 会整体替换指定字段。替换前必须读齐该字段并保留未修改内容，不能用搜索结果或截断片段覆盖全文。';
+  var FIELD_REPLACEMENT_GUIDANCE = '局部源码修改优先 POST /apps/{appId}/draft/edits，只提交 edits:[{field,oldText,newText}]；修改源码文件时 field=files 并提供 fileName。复用上下文中仍有效的原文，仅在缺失时搜索定位并读取足以唯一匹配的片段，无需读齐或重传整个字段、文件。PATCH /draft 的 code 字段和单文件 PUT 仍为整体替换，仅此时必须读齐目标并保留未修改内容，不能用片段覆盖全文。';
   var routes = [];
   function route(template, type, methods, options) {
     options = options || {};
-    routes.push(S.route({ template: template, resourceType: type, relation: 'apps', summary: C.guidance, tags: ['apps', '应用'], entryWeights: { global: 30 }, guidance: [C.guidance].concat(options.guidance || []), affordances: options.affordances, methods: methods }));
+    routes.push(S.route({ template: template, resourceType: type, relation: 'apps', summary: C.guidance, tags: ['apps', '应用'], entryWeights: { global: 30 }, guidance: [C.guidance, C.parameterGuidance].concat(options.guidance || []), affordances: options.affordances, methods: methods }));
   }
   route('/apps', 'AppCollection', {
     GET: S.read(C.object({ prefix: { type: 'string' }, sort: { type: 'string', enum: ['used', 'updated'] }, cursor: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 100 } }), 'apps.read', 'apps', '按名称前缀、最近使用或更新分页查询应用，返回应用生成知识入口'),
@@ -46,7 +63,7 @@
   }, {
     affordances: [{
       method: 'GET', href: '/apps', rel: 'app-development',
-      title: '用户可在任意对话阶段要求创建、编辑或修复应用；意图明确后读取 /apps 或目标应用，再按资源契约完整读取生成知识。无需重新开始对话或先创建其他产物。'
+      title: '用户可在任意对话阶段要求创建、编辑或修复应用；意图明确后读取 /apps 或目标应用，当前上下文缺少完整生成指引时再读取。同一对话复用已读指引，无需每轮重读或重新开始对话。'
     }, {
       method: 'GET', href: '/apps/capabilities/ui/icons', rel: 'app-icons',
       title: '读取当前可用图标 ID 目录；应用图标和页面图标只能从返回的 icons 中选择。'
@@ -62,6 +79,7 @@
   }, {
     guidance: [
       '仅修改名称、应用别名、图标或描述时使用本资源 PATCH，无需读取源码。修改源码、主题、功能声明或依赖时，先读取本应用最新摘要与权限，再通过 /apps/{appId}/draft/{field} 独立读取待修改字段；已发布版本用 /apps/{appId}/published/{field}。',
+      '源码修改保存到草稿，不改变已发布版本；发布按用户意图单独执行。草稿预览使用实例内的临时数据，发布页使用正式业务数据。',
       '单独修改图标：先 GET /apps/capabilities/ui/icons，从返回的 icons 中选择 ID，再以本应用最新 ETag 和 idempotencyKey 提交 PATCH，patch 仅包含 {"icon":"所选图标 ID"}。立即生效，无需保存草稿或发布；目录外的图标会被拒绝。',
       '功能声明不等于实际授权，权限由用户在配置中心独立调整；SDK 执行器在每次调用时按最新权限校验。'
     ]
@@ -69,11 +87,24 @@
   route('/apps/{appId}/draft', 'AppDraft', {
     GET: S.read(S.EMPTY_QUERY, 'apps.read', 'app-draft', '读取完整草稿；独立读取或搜索请使用 /apps/{appId}/draft/{field}'),
     PUT: S.replace(saveBody, 'apps.write', 'app-draft', '带 If-Match 原子保存完整草稿；不能修改权限或生成范围'),
-    PATCH: S.patch('apps.write', 'app-draft', '带 If-Match 局部修改 code 中的 HTML、CSS、JavaScript、源码文件、主题、说明、能力声明、动作、依赖或外部资源；省略字段保留，指定字段整体替换（包括 files 映射），单文件修改优先使用 /draft/files/{fileName}，合并后校验并保存草稿，不修改实际授权', C.object({ code: codePatch }, ['code']))
+    PATCH: S.patch('apps.write', 'app-draft', '带 If-Match 替换指定 code 字段；省略字段保留，指定字段整体替换（包括 files 映射）。源码片段修改优先 POST /draft/edits；完整替换单文件使用 /draft/files/{fileName}。合并后校验并保存草稿，不修改实际授权', C.object({ code: codePatch }, ['code']))
   }, {
     guidance: [
       FIELD_REPLACEMENT_GUIDANCE,
       '修改前读取 /apps/{appId} 的最新摘要与权限；PATCH 只提交变更的 code 字段，携带摘要 ETag 和幂等键。保存后返回资源提供的预览入口。'
+    ]
+  });
+  route('/apps/{appId}/draft/edits', 'AppSourceEdits', {
+    POST: S.create(sourceEdits, 'apps.write', 'app-source-edits', '带 If-Match 和幂等键精确替换草稿源码片段；只提交原文与新文，无需完整字段或文件。所有片段依次匹配成功并校验后原子保存，返回精简保存回执和最新 ETag。小改动默认返回源码 diff，大改动须显式 includeDiff=true；收到差异后核对是否符合需求', { preconditions: ['if-match'], outputSchema: sourceEditResult, modelProjection: { type: 'data', includeEtag: true } })
+  }, {
+    guidance: [
+      'oldText 非空且须唯一匹配，区分大小写与缩进，不使用正则或行号；支持跨行。LF/CRLF 按目标源码首次换行的风格转换，仅转换传入片段，未命中部分保持原文。无换行的源码默认使用 LF。',
+      '插入时将原文锚点与新增内容一起放入 newText；删除时 newText 为空。fileName 仅 field=files 时必填，文件必须已存在；新建文件使用单文件 PUT。',
+      '每项在前项编辑结果上匹配；任一项未命中、多处命中、版本冲突或校验失败都不保存。重新读取受影响的草稿片段并调整，勿盲目重试或改为全文覆盖。保存后使用返回的最新 ETag。',
+      '通常省略 includeDiff；所有 oldText 与 newText 合计不超过 ' + AUTO_DIFF_MAX_CHARS + ' 字符才自动生成 diff，仅本次确需大改动的 diff 时传 true，false 关闭。跳过时返回 diff.status=skipped 和 reason，不做保存后的草稿回读或 diff 计算；不代表没有改动或保存失败。不要为补取 diff 重放已经成功的编辑。',
+      '回执仅含 appId、revision、saved、unpublished、appliedEdits、links.preview 和 diff；权限与应用详情按需 GET /apps/{appId}，无需为了查看保存结果重复查询。',
+      '需要 diff 时，保存成功后读取实际草稿，与修改前源码比较，diff.changes 按字段或文件返回净差异，含行号和前后最多各 2 行上下文；源码含超过 500 字符的长行时不附带未修改的上下文行。差异文本合计最多 12000 字符。收到后须核对位置、增删内容和范围，符合需求后再报告完成；diff 只供源码核对，不表示功能验证通过。',
+      'diff.status=unavailable 或 diff.truncated=true 时不能声称已核对完整差异；结合完整 edits 输入、成功回执与可用差异核对已知改动，仅对仍缺少证据的位置按 changes 中的 uri 或原字段路径搜索、按行补读。相关调用关系不明时只补读相关代码，不例行重新遍历整个文件。差异不可用不撤销已经成功的保存，也不能据此重试编辑。仅当 status=available 且 changes 为空时，表示本次源码没有净变化。'
     ]
   });
   route('/apps/{appId}/published', 'AppPublished', { GET: S.read(S.EMPTY_QUERY, 'apps.read', 'app-published', '读取完整发布源码；独立读取或搜索请使用 /apps/{appId}/published/{field}') });
@@ -90,14 +121,14 @@
       guidance: [
         '长文本先加 q 定位命中行，再省略 q 按行读取。hasMore=true 时以 nextLine/nextColumn 作为 startLine/startColumn 续读，携带首次结果的 revision；版本变化须重新读取。',
         FIELD_REPLACEMENT_GUIDANCE,
-        'field=files 返回文件清单；使用 /apps/{appId}/{slot}/files/{fileName} 读取和搜索单个文件，草稿文件支持 PUT {source:完整源码} 和 DELETE。'
+        'field=files 返回文件清单；使用 /apps/{appId}/{slot}/files/{fileName} 读取和搜索单个文件。草稿文件的局部修改用 POST /apps/{appId}/draft/edits；新增、完整替换或删除使用单文件 PUT {source:完整源码} 和 DELETE。'
       ]
     });
   });
   route('/apps/{appId}/publish', 'AppPublication', { POST: S.create(S.EMPTY_QUERY, 'apps.write', 'app-publish', '在本地发布当前完整草稿', { preconditions: ['if-match'] }) });
   route('/apps/{appId}/copy', 'AppCopy', { POST: S.create(S.EMPTY_QUERY, 'apps.write', 'app-copy', '创建可编辑的应用副本，保留源码和主题，不复制业务数据、别名和授权', { preconditions: ['if-match'] }) });
   route('/apps/{appId}/assets/{assetName}', 'AppAsset', { PUT: S.replace(C.object({ base64: { type: 'string' }, mime: { type: 'string' } }, ['base64', 'mime']), 'apps.write', 'app-asset', '保存草稿主题图片或字体，引用 app-asset:assets/{assetName}') });
-  route('/apps/{appId}/open', 'AppOpen', { POST: S.create(C.object({ input: {} }), 'apps.execute', 'app-open', '打开已发布应用；提供 input 时新建标签页，目标通过 PageAgent.apps.input 读取 JSON 启动参数。目标参数约定见 GET /apps/{appId} 的 slots.published.customBehavior；打开与传参无需修改应用源码，返回 tabId/url') });
+  route('/apps/{appId}/open', 'AppOpen', { POST: S.create(C.object({ input: {} }), 'apps.execute', 'app-open', '打开已发布应用；先读取 slots.published.parameters，提供 input 时按声明校验并新建标签页。缺少声明时默认 mode=none，允许省略 input 或传 {}，不执行参数处理，拒绝非空参数。宿主等待页面初始化后处理已配置的参数；返回 tabId/url 仅确认打开，不确认处理结果') });
   route('/apps/{appId}/actions/{actionName}/runs', 'AppRun', { POST: S.create(C.object({ input: {} }, ['input']), 'apps.execute', 'app-run', '按最新 SDK 授权执行已发布动作', { execution: 'async' }) });
   route('/apps/{appId}/runs/{runId}', 'AppRunStatus', { GET: S.read(S.EMPTY_QUERY, 'apps.read', 'app-run-status', '查询属于目标应用的 Run 状态、输出和输出校验结果') });
   route('/apps/{appId}/runs/{runId}/stop', 'AppRunControl', { POST: S.create(S.EMPTY_QUERY, 'apps.execute', 'app-run-stop', '请求取消属于目标应用的 Run') });
@@ -111,6 +142,58 @@
     var etagService = { etag: function (value) { return '"' + (value.revision || value.version) + '"'; } };
     function expected(request) { return String(request.preconditions && request.preconditions.ifMatch || '').replace(/^"|"$/g, ''); }
     function result(request, type, data, status) { return S.result(request.uri, type, data, data.revision || data.version ? etagService : null, status); }
+    async function draftForEdit(request) {
+      try {
+        var current = await service.getCode(request.params.appId, 'draft');
+        service.store.assertEditable(current);
+        if (current.revision !== expected(request)) throw validationError('REVISION_CONFLICT', '源码已变化，请重新读取最新草稿片段后调整');
+        return current;
+      } catch (error) {
+        if (error instanceof root.AgentResourceProtocol.ArpError) throw error;
+        // This phase only reads and validates; saving starts in the caller.
+        throw validationError(error.code || 'INTERNAL_ERROR', error.message);
+      }
+    }
+    async function sourceDiff(before, app, code, edits, includeDiff) {
+      var diff = { beforeRevision: before.revision, afterRevision: app.revision, status: 'unavailable', truncated: false, changes: [] };
+      var inputChars = edits.reduce(function (total, edit) { return total + edit.oldText.length + edit.newText.length; }, 0);
+      if (includeDiff === false || includeDiff !== true && inputChars > AUTO_DIFF_MAX_CHARS) {
+        diff.status = 'skipped';
+        diff.reason = includeDiff === false ? 'disabled' : 'size_threshold';
+        diff.inputChars = inputChars; diff.autoThreshold = AUTO_DIFF_MAX_CHARS;
+        return diff;
+      }
+      try {
+        var saved = await service.store.get('app_code', [app.appId, 'draft']);
+        if (!saved || saved.revision !== app.revision) { diff.reason = 'revision_changed'; return diff; }
+        if (JSON.stringify(saved.code) !== JSON.stringify(code)) { diff.reason = 'saved_content_mismatch'; return diff; }
+        var targets = new Map(), budget = 12000, deadline = Date.now() + 200;
+        edits.forEach(function (edit) { targets.set(edit.field === 'files' ? 'files/' + edit.fileName : edit.field, edit); });
+        targets.forEach(function (edit, path) {
+          var oldSource = edit.field === 'files' ? before.code.files[edit.fileName] : before.code[edit.field];
+          var newSource = edit.field === 'files' ? saved.code.files[edit.fileName] : saved.code[edit.field];
+          if (oldSource === newSource) return;
+          var change = { field: edit.field, uri: '/apps/' + app.appId + '/draft/' + path };
+          if (edit.field === 'files') change.fileName = edit.fileName;
+          diff.changes.push(change);
+          if (budget <= 0 || Date.now() >= deadline) {
+            change.omitted = true; change.reason = budget <= 0 ? 'size_limit' : 'time_limit'; diff.truncated = true; return;
+          }
+          var contextLines = /[^\n]{501}/.test(oldSource) || /[^\n]{501}/.test(newSource) ? 0 : 2;
+          var patch = root.Diff.structuredPatch('before/' + path, 'after/' + path, oldSource, newSource, undefined, undefined, { context: contextLines, timeout: Math.max(1, deadline - Date.now()) });
+          if (!patch) { change.omitted = true; change.reason = 'time_limit'; diff.truncated = true; return; }
+          var text = root.Diff.formatPatch(patch);
+          change.text = text.slice(0, budget);
+          change.truncated = text.length > budget;
+          budget -= change.text.length;
+          if (change.truncated) diff.truncated = true;
+        });
+        diff.status = 'available';
+      } catch (error) {
+        diff.changes = []; diff.reason = error.code || 'diff_unavailable';
+      }
+      return diff;
+    }
     handlers.GET['/apps'] = async function (r) { return result(r, 'AppCollection', Object.assign(await service.store.list(r.query), { guidance: C.guidance, knowledge: '/knowledge/builtin_app_generation_guide' })); };
     handlers.GET['/apps/capabilities'] = async function (r) {
       var theme = await fetch(chrome.runtime.getURL('apps/default-theme.css'));
@@ -120,6 +203,7 @@
         ui: root.AppUiContract.list(),
         defaults: {
           sdkEnabled: true, declaredCapabilitiesEnabled: true, resourcePermissions: service.defaultResourcePermissions(),
+          parameters: C.noParameters(),
           ui: {
             themeCss: await theme.text(),
             nativeControls: {
@@ -151,9 +235,16 @@
           data: ['get(key)', 'list({cursor,limit})', 'set(key,value,version)', 'delete(key,version)'],
           actions: ['run(name,input,{idempotencyKey})', 'status(runId)', 'cancel(runId)'],
           apps: {
-            input: 'await PageAgent.ready 后读取 PageAgent.apps.input，未带启动参数时为 null；仅作为输入，不代表调用方身份或授权',
+            input: 'await PageAgent.ready 后可读取原始 PageAgent.apps.input，未传参为 null；宿主按 code.parameters 自动处理，不在入口重复消费。参数不代表调用方身份或授权',
+            parameters: {
+              guidance: C.parameterGuidance,
+              form: 'mode=form：每个 schema.properties 标量字段在 bindings 中对应一个控件 ID，支持 input（普通输入或 checkbox）、textarea、select、page-code-editor。只赋值，不触发 input/change 或提交；需要联动用 module。省略字段保留原值。',
+              module: 'mode=module：module 为 code.files 内的 JS 文件名，导出 async function applyParameters(input)。javascript 入口须 await 完成页面初始化后返回；宿主随后调用适配器一次，等待其完成。校验或处理失败必须抛错，不吞错或提前返回成功；不得因参数自动执行外部写入。',
+              moduleExample: 'export async function applyParameters(input) {\n  const field = document.getElementById("query");\n  if (!field) throw new Error("查询输入框未就绪");\n  if (input.query !== undefined) field.value = input.query;\n}\n',
+              none: C.noParameters()
+            },
             describe: 'await PageAgent.apps.describe(appId) 返回已发布动作声明数组，包含 name、inputSchema、outputSchema；需 apps.read',
-            open: 'await PageAgent.apps.open(appId,input?,{idempotencyKey}?) 返回 {tabId,url}；仅打开发布版，提供 input 时新建标签页；JSON 参数写入 URL hash，编码后最多 16 KiB；需 apps.execute。目标参数约定见 GET /apps/{appId} 的 slots.published.customBehavior；对话通过 POST /apps/{appId}/open 的 body.input 传参。多个离线工具的计算可先通过 /utilities 串联，再将文本结果作为启动参数填入目标工具页面',
+            open: 'await PageAgent.apps.open(appId,input?,{idempotencyKey}?) 返回 {tabId,url}；仅打开发布版，提供 input 时新建标签页；JSON 参数写入 URL hash，编码后最多 16 KiB；需 apps.execute。目标参数约定见 GET /apps/{appId} 的 slots.published.parameters；对话通过 POST /apps/{appId}/open 的 body.input 传参，按 schema 校验。缺少声明时默认 mode=none，允许省略 input 或传 {}，不执行参数处理，拒绝非空参数。打开成功不代表页面处理成功。多个离线工具的计算可先通过 /utilities 串联，再将文本结果填入目标工具页面',
             run: 'await PageAgent.apps.run(appId,name,input?,{idempotencyKey}?) 返回 Run 引用，不等待完成；无需打开目标页面；需 apps.execute 和目标应用的动作授权',
             status: 'await PageAgent.apps.status(appId,runId) 返回 status、output、error、outputValidation 或 outputRef；仅接受属于目标应用的 Run；需 apps.read',
             cancel: 'await PageAgent.apps.cancel(appId,runId,{idempotencyKey}?) 请求取消目标应用的 Run；需 apps.execute',
@@ -177,60 +268,81 @@
     });
     ['PUT', 'DELETE'].forEach(function (method) {
       handlers[method]['/apps/{appId}/draft/files/{fileName}'] = async function (r, context) {
-        root.AppGenerationGate.assert(context);
-        C.sourceFileName(r.params.fileName);
-        var current = await service.getCode(r.params.appId, 'draft');
-        service.store.assertEditable(current);
-        if (current.revision !== expected(r)) throw C.error('REVISION_CONFLICT', '源码已变化，请重新读取最新草稿后调整');
+        validateSourceFileName(r.params.fileName);
+        var current = await draftForEdit(r);
         var files = Object.assign({}, current.code.files);
         if (method === 'PUT') files[r.params.fileName] = r.body.source;
         else {
-          if (!Object.prototype.hasOwnProperty.call(files, r.params.fileName)) throw C.error('RESOURCE_NOT_FOUND', '应用源码文件不存在: ' + r.params.fileName);
+          if (!Object.prototype.hasOwnProperty.call(files, r.params.fileName)) throw validationError('RESOURCE_NOT_FOUND', '应用源码文件不存在: ' + r.params.fileName);
           delete files[r.params.fileName];
         }
         var code = Object.assign({}, current.code, { files: files });
-        root.AppGenerationGate.assert(context, code);
+        assertGeneratedCode(context, code);
         var app = await service.save(r.params.appId, expected(r), { code: code });
         if (!trusted(context) && context.conversationId) await service.bindConversation(context.conversationId, app.appId);
         return result(r, 'App', app);
       };
     });
     handlers.POST['/apps'] = async function (r, context) {
-      root.AppGenerationGate.assert(context, r.body.code);
+      assertGeneratedCode(context, r.body.code);
       var input = Object.assign({}, r.body, { sourceConversationId: !trusted(context) && context.conversationId || r.body.sourceConversationId || '' });
       var app = await service.create(input);
       if (!trusted(context) && context.conversationId) await service.bindConversation(context.conversationId, app.appId);
       return S.result('/apps/' + app.appId, 'App', app, etagService, 201);
     };
     handlers.PUT['/apps/{appId}/draft'] = async function (r, context) {
-      root.AppGenerationGate.assert(context, r.body.code);
+      assertGeneratedCode(context, r.body.code);
       var app = await service.save(r.params.appId, expected(r), r.body);
       if (!trusted(context) && context.conversationId) await service.bindConversation(context.conversationId, app.appId);
       return result(r, 'App', app);
     };
     handlers.PATCH['/apps/{appId}'] = async function (r, context) {
-      root.AppGenerationGate.assert(context);
       var app = await service.patchMetadata(r.params.appId, expected(r), r.patch);
       if (!trusted(context) && context.conversationId) await service.bindConversation(context.conversationId, app.appId);
       return result(r, 'App', app);
     };
     handlers.PATCH['/apps/{appId}/draft'] = async function (r, context) {
-      root.AppGenerationGate.assert(context);
-      var current = await service.getCode(r.params.appId, 'draft');
-      if (current.revision !== expected(r)) throw C.error('REVISION_CONFLICT', '内容已被其他编辑修改，请重新读取最新草稿后调整');
+      var current = await draftForEdit(r);
       var code = Object.assign({}, current.code, r.patch.code);
-      root.AppGenerationGate.assert(context, code);
+      assertGeneratedCode(context, code);
       var app = await service.save(r.params.appId, expected(r), { code: code });
       if (!trusted(context) && context.conversationId) await service.bindConversation(context.conversationId, app.appId);
       return result(r, 'App', app);
     };
+    handlers.POST['/apps/{appId}/draft/edits'] = async function (r, context) {
+      var current = await draftForEdit(r);
+      var code = Object.assign({}, current.code);
+      r.body.edits.forEach(function (edit, index) {
+        var target = code, key = edit.field;
+        if (edit.field === 'files') {
+          validateSourceFileName(edit.fileName);
+          if (!Object.prototype.hasOwnProperty.call(code.files || {}, edit.fileName)) throw validationError('RESOURCE_NOT_FOUND', '应用源码文件不存在: ' + edit.fileName);
+          code.files = Object.assign({}, code.files);
+          target = code.files; key = edit.fileName;
+        } else if (edit.fileName !== undefined) throw validationError('SCHEMA_VALIDATION_FAILED', 'fileName 仅用于 field=files');
+        var source = target[key], lineEnding = (source.match(/\r?\n/) || ['\n'])[0];
+        var oldText = edit.oldText.replace(/\r?\n/g, lineEnding), newText = edit.newText.replace(/\r?\n/g, lineEnding);
+        var offset = source.indexOf(oldText), label = 'edits[' + index + '] ' + key;
+        if (offset === -1) throw validationError('RESOURCE_CONFLICT', label + ' 未找到 oldText，请重新读取草稿片段后调整');
+        if (source.indexOf(oldText, offset + 1) !== -1) throw validationError('RESOURCE_CONFLICT', label + ' 的 oldText 匹配多处，请补充唯一上下文');
+        target[key] = source.slice(0, offset) + newText + source.slice(offset + oldText.length);
+      });
+      assertGeneratedCode(context, code);
+      var app = await service.save(r.params.appId, expected(r), { code: code });
+      var diff = await sourceDiff(current, app, code, r.body.edits, r.body.includeDiff);
+      if (!trusted(context) && context.conversationId) await service.bindConversation(context.conversationId, app.appId);
+      return result(r, 'AppSourceEdits', {
+        appId: app.appId, revision: app.revision, saved: true, unpublished: app.unpublished,
+        appliedEdits: r.body.edits.length, links: { preview: app.links.preview }, diff: diff
+      });
+    };
     handlers.POST['/apps/{appId}/publish'] = async function (r) { return result(r, 'App', await service.publish(r.params.appId, expected(r))); };
-    handlers.POST['/apps/{appId}/copy'] = async function (r) {
+    handlers.POST['/apps/{appId}/copy'] = async function (r, context) {
       var copied = await service.store.copy(r.params.appId, expected(r));
+      if (!trusted(context) && context.conversationId) await service.bindConversation(context.conversationId, copied.appId);
       return S.result('/apps/' + copied.appId, 'App', await service.summary(copied.appId), etagService, 201);
     };
     handlers.PUT['/apps/{appId}/assets/{assetName}'] = async function (r, context) {
-      root.AppGenerationGate.assert(context);
       var raw = atob(r.body.base64), bytes = new Uint8Array(raw.length);
       for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
       await service.store.putAsset(r.params.appId, expected(r), r.params.assetName, new Blob([bytes], { type: r.body.mime }));
@@ -258,10 +370,6 @@
     handlers.GET['/apps/{appId}/data/{key}'] = function (r) { return data(r, 'get'); };
     handlers.PUT['/apps/{appId}/data/{key}'] = function (r) { return data(r, 'set'); };
     handlers.DELETE['/apps/{appId}/data/{key}'] = function (r) { return data(r, 'delete'); };
-    Object.keys(handlers.GET).forEach(function (path) {
-      var handler = handlers.GET[path];
-      handlers.GET[path] = async function (request, context) { var value = await handler(request, context); root.AppGenerationGate.resource(context); return value; };
-    });
     return root.ResourceModuleAdapter.create({ root: 'apps', resource: {
       service: service, routeContracts: routes, handlers: handlers,
       preconditionState: async function (_context, _request, route, params) {

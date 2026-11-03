@@ -381,7 +381,7 @@
     }
     return target;
   }
-  var CONFIGURATION = Object.freeze({ protocol: 5, formatVersion: 7 });
+  var CONFIGURATION = Object.freeze({ protocol: 7, formatVersion: 7 });
   function configurationCompatibility(local, remote) {
     if (!remote || remote.protocol !== local.protocol) return 'SYNC_PROTOCOL_MISMATCH';
     if (remote.formatVersion !== local.formatVersion) return 'BACKUP_FORMAT_MISMATCH';

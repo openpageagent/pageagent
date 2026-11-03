@@ -2,7 +2,7 @@
   'use strict';
   var commonJs = typeof module === 'object' && module.exports;
   var arp = commonJs ? require('../protocol/index.js') : root.AgentResourceProtocol;
-  var contract = commonJs ? require('../../shared/recording-contract') : root.PageAutomationRecordingContract;
+  var contract = commonJs ? require('../../shared/recording-contract') : root.PageAgentRecordingContract;
   var api = factory(arp, contract);
   if (commonJs) module.exports = api;
   else root.RecordingResourceService = api;

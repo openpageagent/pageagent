@@ -1,4 +1,4 @@
-// Runtime fingerprint for the single background-owned page automation engine.
+// Runtime fingerprint for the single background-owned page engine.
 (function attachPageEngineVersion(root, factory) {
   'use strict';
   var api = factory();
@@ -22,7 +22,7 @@
     'background/page-standard-actions.js',
     'background/page-action-engine.js',
     'background/page-verification-engine.js',
-    'background/page-automation-runtime.js',
+    'background/page-agent-runtime.js',
   ]);
   var PROVIDER_FILES = Object.freeze([
     'background/cdp-tools.js',

@@ -140,7 +140,7 @@
         return Promise.resolve().then(function () {
           return typeof opts.authorizeRequest === 'function' ? opts.authorizeRequest({ serviceId: service.id, url: modelRequest.url, model: model, useVision: !!opts.useVision }) : null;
         }).then(function () {
-          return globalThis.PageAutomationUserAgent.fetchModel(modelRequest.url, {
+          return globalThis.PageAgentUserAgent.fetchModel(modelRequest.url, {
             method: 'POST',
             headers: modelRequest.headers,
             body: JSON.stringify(body),

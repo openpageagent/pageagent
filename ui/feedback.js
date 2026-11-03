@@ -4,7 +4,7 @@
   function create(options) {
     options = options || {};
     var durationDefault = options.duration === undefined ? 3000 : options.duration;
-    var lifetime = root.PageAutomationLifecycle.create(), host, content, previous, count = 0;
+    var lifetime = root.PageAgentLifecycle.create(), host, content, previous, count = 0;
     function toast(message, input) {
       if (lifetime.isDestroyed()) throw new Error('提示组件已销毁');
       input = input || {};
@@ -19,7 +19,7 @@
         style.textContent = [
           ':host{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483646;display:block;width:max-content;max-width:min(480px,calc(100vw - 32px));pointer-events:none;font:400 13px/1.5 var(--font-body,Roboto,system-ui,sans-serif)}',
           '*{box-sizing:border-box}.stack{display:flex;flex-direction:column;align-items:center;gap:8px}',
-          '.toast{display:flex;align-items:center;gap:8px;max-width:100%;padding:8px 12px;border:1px solid var(--border,#d0dbe0);border-radius:var(--control-radius,4px);background:var(--bg,#fff);color:var(--text,#262626);box-shadow:0 2px 8px #00000014;pointer-events:auto}',
+          '.toast{display:flex;align-items:center;gap:8px;max-width:100%;padding:8px;border:1px solid var(--border,#d0dbe0);border-radius:var(--control-radius,4px);background:var(--bg,#fff);color:var(--text,#262626);box-shadow:0 2px 8px #00000014;pointer-events:auto}',
           '.toast::before{content:"";flex:0 0 6px;height:6px;border-radius:50%;background:var(--accent,#004849)}',
           '.toast span{min-width:0;overflow-wrap:anywhere}.success::before{background:var(--success,#3da67a)}.error::before{background:var(--danger,#ba554a)}',
           'button{display:inline-flex;align-items:center;justify-content:center;flex:0 0 24px;width:24px;height:24px;padding:0;border:0;border-radius:var(--control-radius,4px);background:transparent;color:var(--text-secondary,#728e9b);font:inherit;line-height:1;cursor:pointer}',

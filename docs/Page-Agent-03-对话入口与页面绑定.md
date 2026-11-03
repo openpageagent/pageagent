@@ -8,6 +8,7 @@ Conversation 是持久话题，generation 是话题中的一次运行。连续�
 | --- | --- | --- | --- |
 | 配置中心 | 使用当前话题；新建话题时创建 | `/conversations/{id}`，也可关联 Run/Flow | 无 |
 | 网页内对话面板 | 按 `tabId + assistantId` 复用；点击“新对话”后创建 | `/page/current` | 打开面板的网页 Tab |
+| 应用页对话面板（草稿／发布） | 按 Tab、助手、应用路径复用；点击“新对话”后创建 | `/apps/{appId}` | 打开面板的应用 Tab |
 | Sidepanel | 每次运行助手时创建独立话题 | `/page/current` | 启动时的活动网页 Tab |
 | 定时任务 | 每次触发创建独立话题 | `/schedules/{id}` | 无 |
 | Flow `runAssistant` | 未指定 ID 时创建；指定 ID 时复用 | `/flows/{flowId}` 或 `/assistants/{assistantId}` | 节点传入的 `tabId`（可选） |

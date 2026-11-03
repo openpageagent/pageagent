@@ -34,6 +34,22 @@
               "description": "专注于输入与结果的离线开发工作台：编码、格式化、转换、生成与预览。",
               "capabilities": [],
               "actions": [],
+              "parameters": {
+                "mode": "module",
+                "description": "页面初始化后调用 app.js 的 applyParameters：校验入口和操作，选择工具，填入文本并刷新视图。单行工具拒绝多行文本；randomstringgenerator、loremipsum 不接收文本。计算沿用页面模式，不通过 open 返回结果。",
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "toolId": { "type": "string", "minLength": 1, "description": "Developer Utils 入口 ID：base64encode/urlencode/htmlencode/backslash=encode或decode；jsonformatter=format/minify/sort/repair/schema/jsonpath/jmespath；unixtime/cronparser/colortools/regextester=inspect；textdiff=lines/words/characters；numberbase/hashing=all；htmlpreview=preview；quicktype=toCode；hex2ascii=decode；ascii2hex=encode；linesortdedupe=processLines。其他入口以 files/tools.js 的 profile.id 和 operations 为准。" },
+                    "input": { "type": "string", "description": "填入工具的文本，可为空；结构化值先转成 JSON 字符串。" },
+                    "operation": { "type": "string", "minLength": 1, "description": "可选操作，省略时使用该入口的首个接收操作。" }
+                  },
+                  "required": ["toolId", "input"],
+                  "additionalProperties": false
+                },
+                "example": { "toolId": "base64encode", "input": "SGVsbG8=", "operation": "decode" },
+                "module": "app.js"
+              },
               "dependencies": [],
               "customBehavior": [
                 "界面与主题源码通过 sourceFiles 安装到 code.files，复制和导出携带这些文件；通过既有 /utilities SDK 服务执行工具，需 utilities.read、utilities.execute。转换和检查随输入自动更新，生成工具提供直接动作。输入不持久化，不自动读取剪贴板。目标插件仍需提供公共 UI、字体及工具服务。",

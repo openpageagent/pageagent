@@ -123,6 +123,7 @@
       || (service.maxContextTokens && service.maxContextTokens !== DEFAULT_MAX_CONTEXT_TOKENS)
       || service.autoCompactTokenLimit
       || (service.reasoningEffort && service.reasoningEffort !== 'auto')
+      || service.serviceTier === 'priority'
       || Object.keys(service.headers || {}).length
       || (service.requestTimeoutMs && service.requestTimeoutMs !== 120000)
       || (service.maxRetries !== undefined && service.maxRetries !== DEFAULT_MAX_RETRIES)
@@ -143,6 +144,7 @@
       && normalizeMaxContextTokens(service.maxContextTokens) === DEFAULT_MAX_CONTEXT_TOKENS
       && !normalizePositiveInt(service.autoCompactTokenLimit || service.auto_compact_token_limit, 0, 2000000)
       && normalizeReasoningEffort(service.reasoningEffort || service.reasoning_effort) === 'auto'
+      && service.serviceTier !== 'priority'
       && !Object.keys(normalizeProviderHeaders(service.headers)).length
       && normalizeRequestTimeoutMs(service.requestTimeoutMs || service.timeoutMs) === 120000
       && normalizePositiveInt(service.maxRetries, DEFAULT_MAX_RETRIES, MAX_RETRIES_LIMIT) === DEFAULT_MAX_RETRIES
@@ -177,6 +179,7 @@
       maxContextTokens: normalizeMaxContextTokens(service.maxContextTokens),
       autoCompactTokenLimit: normalizePositiveInt(service.autoCompactTokenLimit || service.auto_compact_token_limit, 0, 2000000),
       reasoningEffort: normalizeReasoningEffort(service.reasoningEffort || service.reasoning_effort),
+      serviceTier: service.serviceTier === 'priority' ? 'priority' : 'auto',
       headers: normalizeProviderHeaders(service.headers),
       requestTimeoutMs: normalizeRequestTimeoutMs(service.requestTimeoutMs || service.timeoutMs),
       maxRetries: normalizePositiveInt(service.maxRetries, DEFAULT_MAX_RETRIES, MAX_RETRIES_LIMIT),
@@ -277,6 +280,7 @@
       maxContextTokens: defaultService.maxContextTokens || DEFAULT_MAX_CONTEXT_TOKENS,
       autoCompactTokenLimit: defaultService.autoCompactTokenLimit || 0,
       reasoningEffort: defaultService.reasoningEffort || 'auto',
+      serviceTier: defaultService.serviceTier || 'auto',
       contextCompression: defaultService.contextCompression || 'auto',
       updatedAt: Number(raw.updatedAt || 0) || Date.now(),
     };
@@ -493,6 +497,9 @@
     service = service || {};
     options = options || {};
     var reasoningMeta = applyReasoningEffortToBody(body, service, options);
+    if (reasoningMeta.apiStyle !== 'anthropic' && service.serviceTier === 'priority') {
+      setIfMissing(body, 'service_tier', 'priority');
+    }
     var maxContextTokens = normalizePositiveInt(
       options.maxContextTokens !== undefined ? options.maxContextTokens : service.maxContextTokens,
       0,
@@ -724,6 +731,7 @@
       if (responseMessages.instructions) responseBody.instructions = responseMessages.instructions;
       if (body.temperature !== undefined) responseBody.temperature = body.temperature;
       if (body.top_p !== undefined) responseBody.top_p = body.top_p;
+      if (body.service_tier !== undefined) responseBody.service_tier = body.service_tier;
       if (body.max_tokens !== undefined) responseBody.max_output_tokens = body.max_tokens;
       if (Array.isArray(body.tools) && body.tools.length) {
         responseBody.tools = body.tools.map(function (tool) {

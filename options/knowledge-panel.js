@@ -282,7 +282,7 @@
 
   function ensureClient() {
     if (resourceClient) return resourceClient;
-    var api = root.PageAutomationResourceClient;
+    var api = root.PageAgentResourceClient;
     if (!api || typeof api.create !== 'function') {
       throw new Error('资源客户端未加载');
     }

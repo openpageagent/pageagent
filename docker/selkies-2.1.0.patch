@@ -1,0 +1,14 @@
+# Selkies 2.1.0: 6ee68a7a815956e6745e916741f13335e0b3ff53
+# Resume capture when a second controller joins after the owner's tab hid.
+diff --git a/selkies/websockets_mode.py b/selkies/websockets_mode.py
+--- a/selkies/websockets_mode.py
++++ b/selkies/websockets_mode.py
+@@ -5233,6 +5233,8 @@
+                                     joiners[websocket] = tab_id
+                                     data_logger.info(
+                                         f"Controller {remote_address} joins 'primary' beside its owner.")
++                                    # The owner may have paused capture by hiding its tab.
++                                    await self._ensure_viewer_capture()
+                                     await self.broadcast_stream_resolution()
+                                     try:
+                                         await websocket.send_str("PIPELINE_RESETTING primary")

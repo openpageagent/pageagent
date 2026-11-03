@@ -3,7 +3,7 @@
   'use strict';
   var api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  if (root) root.PageAutomationConfigMigration = api;
+  if (root) root.PageAgentConfigMigration = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 

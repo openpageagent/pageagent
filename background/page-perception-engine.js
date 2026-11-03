@@ -196,7 +196,7 @@
       var params = { backendNodeId: backendNodeId, objectGroup: String(objectGroup || '') };
       var isolated = await targetSend('Page.createIsolatedWorld', {
         frameId: String(frameId || ''),
-        worldName: 'page-automation-target',
+        worldName: 'page-agent-target',
         grantUniveralAccess: false,
       }, 5000);
       if (isolated && Number(isolated.executionContextId) > 0) {
@@ -418,7 +418,7 @@
         return root && root.host || null;
       }
       function ownUi(el) {
-        return !!(el && el.getAttribute && (el.hasAttribute('data-page-automation-ui') || /^page-automation-/.test(String(el.id || ''))));
+        return !!(el && el.getAttribute && (el.hasAttribute('data-page-agent-ui') || /^page-agent-/.test(String(el.id || ''))));
       }
       function excluded(el) {
         var current = el;
@@ -773,8 +773,8 @@
       // visible text of html/body or used as a target label.
       if (/^(?:head|style|script|noscript|template|meta|link|base|title)$/.test(tagName)) return true;
       attrs = attrs || {};
-      return attrs['data-page-automation-ui'] !== undefined
-        || /^page-automation-/.test(String(attrs.id || ''));
+      return attrs['data-page-agent-ui'] !== undefined
+        || /^page-agent-/.test(String(attrs.id || ''));
     }
     function parseSnapshot(tabId, raw, frameTree, metadata) {
       var segments = Array.isArray(raw && raw._pageSegments) && raw._pageSegments.length
@@ -1370,7 +1370,7 @@
         ensureNotAborted(signal);
         var frame = records[index];
         var routeSend = senderForFrame(send, frame.id);
-        var created = await routeSend('Page.createIsolatedWorld', { frameId: frame.id, worldName: 'page-automation-perception', grantUniveralAccess: false }, 5000);
+        var created = await routeSend('Page.createIsolatedWorld', { frameId: frame.id, worldName: 'page-agent-perception', grantUniveralAccess: false }, 5000);
         if (created && created.executionContextId) {
           var geometry = await frameGeometry(send, frame.id, viewport, geometryCache, signal);
           if (!frameRoute(send, frame.id) && frame.parentId) {
@@ -1530,7 +1530,7 @@
     }
     function remoteQueryExpression(locator) {
       return '(function(p){' +
-        'function ownUi(el){return !!(el&&el.getAttribute&&(el.hasAttribute("data-page-automation-ui")||/^page-automation-/.test(String(el.id||""))))}' +
+        'function ownUi(el){return !!(el&&el.getAttribute&&(el.hasAttribute("data-page-agent-ui")||/^page-agent-/.test(String(el.id||""))))}' +
         'function excluded(el){var cur=el;while(cur){if(ownUi(cur))return true;var root=cur.getRootNode&&cur.getRootNode();cur=cur.parentElement||(root&&root.host)||null}return false}' +
         'function roots(root,out){out.push(root);var all=[];try{all=root.querySelectorAll("*")}catch(_){all=[]}for(var i=0;i<all.length;i++){if(!excluded(all[i])&&all[i].shadowRoot)roots(all[i].shadowRoot,out)}}' +
         'function text(el){return String(el&&(el.innerText||el.textContent||el.getAttribute&&el.getAttribute("aria-label"))||"").replace(/\\s+/g," ").trim()}' +
@@ -1564,7 +1564,7 @@
           var contextSend = context.send || senderForFrame(send, context.frameId);
           var evaluateParams = {
             expression: remoteQueryExpression(locator),
-            returnByValue: false, objectGroup: 'page-automation-query', silent: true,
+            returnByValue: false, objectGroup: 'page-agent-query', silent: true,
           };
           if (Number(context.executionContextId) > 0) evaluateParams.contextId = context.executionContextId;
           var evaluated = await contextSend('Runtime.evaluate', evaluateParams, 10000);
@@ -1608,7 +1608,7 @@
           // commands; use its raw routed sender so the remote object group is
           // still released when the transport remains available.
           var releaseSend = rawSender(contextSend);
-          return releaseSend('Runtime.releaseObjectGroup', { objectGroup: 'page-automation-query' }, 5000).catch(function () {});
+          return releaseSend('Runtime.releaseObjectGroup', { objectGroup: 'page-agent-query' }, 5000).catch(function () {});
         }));
       }
     }
@@ -1644,7 +1644,7 @@
       var targetId = String(identity && identity.targetId || targetIdFor(tabId, context && context.documentId, frameId, backendNodeId));
       var targetSend = senderForFrame(send, frameId);
       var described = await targetSend('DOM.describeNode', { backendNodeId: backendNodeId, depth: 0, pierce: true }, 5000);
-      var resolved = await resolveBackendNodeWithSend(send, frameId, backendNodeId, 'page-automation-target');
+      var resolved = await resolveBackendNodeWithSend(send, frameId, backendNodeId, 'page-agent-target');
       var objectId = resolved && resolved.object && resolved.object.objectId;
       if (!objectId) fail('TARGET_STALE', '目标节点无法解析', { targetId: targetId });
       try {
@@ -1706,7 +1706,7 @@
         actionBounds: hasGeometry ? factContract.normalizeBounds(actionBounds) : null,
       };
       } finally {
-        await rawSender(targetSend)('Runtime.releaseObjectGroup', { objectGroup: 'page-automation-target' }, 5000).catch(function () {});
+        await rawSender(targetSend)('Runtime.releaseObjectGroup', { objectGroup: 'page-agent-target' }, 5000).catch(function () {});
       }
     }
     async function resolveTargetWithSend(send, tabId, locator, resolveOptions) {
@@ -1749,7 +1749,7 @@
       if (locator.relative && /^(?:parent|prevSibling|nextSibling)$/.test(String(locator.relative))) {
         ensureNotAborted(resolveOptions.signal);
         var relativeSend = senderForFrame(send, identity.frameId);
-        var sourceNode = await relativeSend('DOM.resolveNode', { backendNodeId: Number(identity.backendNodeId), objectGroup: 'page-automation-relative' }, 5000);
+        var sourceNode = await relativeSend('DOM.resolveNode', { backendNodeId: Number(identity.backendNodeId), objectGroup: 'page-agent-relative' }, 5000);
         ensureNotAborted(resolveOptions.signal);
         var sourceObjectId = sourceNode && sourceNode.object && sourceNode.object.objectId;
         if (!sourceObjectId) fail('TARGET_STALE', '目标节点无法用于相对定位', { targetId: identity.targetId, relative: locator.relative });
@@ -1760,13 +1760,13 @@
           objectId: sourceObjectId,
           functionDeclaration: relativeFunction,
           returnByValue: false,
-          objectGroup: 'page-automation-relative',
+          objectGroup: 'page-agent-relative',
         }, 5000);
         ensureNotAborted(resolveOptions.signal);
         if (relativeResult && relativeResult.exceptionDetails) throw relativeResult.exceptionDetails;
         var relativeObjectId = relativeResult.result && relativeResult.result.objectId;
         if (!relativeObjectId || relativeResult.result.subtype === 'null') {
-          await rawSender(relativeSend)('Runtime.releaseObjectGroup', { objectGroup: 'page-automation-relative' }, 5000).catch(function () {});
+          await rawSender(relativeSend)('Runtime.releaseObjectGroup', { objectGroup: 'page-agent-relative' }, 5000).catch(function () {});
           fail('TARGET_NOT_FOUND', '相对目标不存在', { targetId: identity.targetId, relative: locator.relative });
         }
         var relativeBackendNodeId = 0;
@@ -1774,7 +1774,7 @@
           var describedRelative = await relativeSend('DOM.describeNode', { objectId: relativeObjectId, depth: 0, pierce: true }, 5000);
           relativeBackendNodeId = Number(describedRelative.node && describedRelative.node.backendNodeId) || 0;
         } finally {
-          await rawSender(relativeSend)('Runtime.releaseObjectGroup', { objectGroup: 'page-automation-relative' }, 5000).catch(function () {});
+          await rawSender(relativeSend)('Runtime.releaseObjectGroup', { objectGroup: 'page-agent-relative' }, 5000).catch(function () {});
         }
         ensureNotAborted(resolveOptions.signal);
         if (!relativeBackendNodeId) fail('TARGET_NOT_FOUND', '相对目标无法映射为页面节点', { targetId: identity.targetId, relative: locator.relative });
@@ -1839,7 +1839,7 @@
         ensureNotAborted(signal);
         var queryContext = contexts[contextIndex];
         var contextSend = queryContext.send || senderForFrame(send, queryContext.frameId);
-        var objectGroup = 'page-automation-focused-target';
+        var objectGroup = 'page-agent-focused-target';
         try {
           var focused = await contextSend('Runtime.evaluate', {
             expression: '(function(){var active=document.activeElement;while(active&&active.shadowRoot&&active.shadowRoot.activeElement)active=active.shadowRoot.activeElement;if(!active||active===document.body||active===document.documentElement)return null;return active})()',
@@ -1989,7 +1989,7 @@
 
     function pageFunctionSource(kind, params) {
       return '(function(p){' +
-        'function ownUi(el){return !!(el&&el.getAttribute&&(el.hasAttribute("data-page-automation-ui")||/^page-automation-/.test(String(el.id||""))))}' +
+        'function ownUi(el){return !!(el&&el.getAttribute&&(el.hasAttribute("data-page-agent-ui")||/^page-agent-/.test(String(el.id||""))))}' +
         'function nonContent(el){var tag=String(el&&el.tagName||"").toLowerCase();return /^(?:head|style|script|noscript|template|meta|link|base|title)$/.test(tag)}' +
         'function excluded(el){var cur=el;while(cur){if(ownUi(cur)||nonContent(cur))return true;var root=cur.getRootNode&&cur.getRootNode();cur=cur.parentElement||(root&&root.host)||null}return false}' +
         'function stylesheetExcluded(sheet){if(!sheet)return true;var href=String(sheet.href||"");if(/^(?:chrome|moz|safari|edge)-extension:|^extension:/i.test(href))return true;var owner=sheet.ownerNode;while(owner){if(ownUi(owner))return true;var ownerRoot=owner.getRootNode&&owner.getRootNode();owner=owner.parentElement||(ownerRoot&&ownerRoot.host)||null}return false}' +
@@ -2013,10 +2013,10 @@
         'if(kind==="extractList"){var selector=p.itemSelector;if(!selector&&p.autoDetect!==false){var candidates=["article","li","tr","[role=listitem]","[data-id]"];for(var ci=0;ci<candidates.length;ci++){if(queryAll(candidates[ci]).length>1){selector=candidates[ci];break}}}if(!selector){if(p.autoDetect===false)throw new Error("未启用列表自动检测时必须提供 itemSelector");return {itemSelector:"",items:[],count:0}}var items=queryAll(selector),fields=parseFields(p.fields);if(Number(p.maxItems)>0)items=items.slice(0,Number(p.maxItems));return {itemSelector:selector,items:items.map(function(item){if(!fields.length)return {text:txt(item)};var o={};fields.forEach(function(f){var el=f.selector==="."?item:item.querySelector(f.selector);o[f.key]=value(el,f.attr)});return o}),count:items.length}}' +
         'if(kind==="inspectText"){var el=target(p,"body");return txt(el)}' +
         'if(kind==="inspectHtml"){var el=target(p,"html");return el?(p.outer===true?el.outerHTML:el.innerHTML):""}' +
-        'if(kind==="inspectCss"){if(!p.selector&&!p.ref&&!p.properties){var chunks=[];Array.from(document.styleSheets||[]).forEach(function(sheet){if(stylesheetExcluded(sheet))return;try{Array.from(sheet.cssRules||[]).forEach(function(rule){var css=String(rule.cssText||"");if(/WXT\\s+Shadow\\s+Root\\s+Reset|page-automation-/i.test(css))return;chunks.push(css)})}catch(_){if(!stylesheetExcluded(sheet))chunks.push("/* unreadable stylesheet: "+String(sheet.href||"inline")+" */")}});return {mode:"stylesheets",content:chunks.join("\\n")}}var el=target(p,"html");if(!el)return {mode:"computed",computed:{}};var cs=getComputedStyle(el),props=String(p.properties||"").split(/[,\\s]+/).filter(Boolean);if(!props.length)props=["display","visibility","position","z-index","width","height","color","background-color","font-size","overflow","pointer-events"];var out={};props.forEach(function(name){out[name]=cs.getPropertyValue(name)});return {mode:"computed",computed:out,ref:refOf(el)}}' +
+        'if(kind==="inspectCss"){if(!p.selector&&!p.ref&&!p.properties){var chunks=[];Array.from(document.styleSheets||[]).forEach(function(sheet){if(stylesheetExcluded(sheet))return;try{Array.from(sheet.cssRules||[]).forEach(function(rule){var css=String(rule.cssText||"");if(/WXT\\s+Shadow\\s+Root\\s+Reset|page-agent-/i.test(css))return;chunks.push(css)})}catch(_){if(!stylesheetExcluded(sheet))chunks.push("/* unreadable stylesheet: "+String(sheet.href||"inline")+" */")}});return {mode:"stylesheets",content:chunks.join("\\n")}}var el=target(p,"html");if(!el)return {mode:"computed",computed:{}};var cs=getComputedStyle(el),props=String(p.properties||"").split(/[,\\s]+/).filter(Boolean);if(!props.length)props=["display","visibility","position","z-index","width","height","color","background-color","font-size","overflow","pointer-events"];var out={};props.forEach(function(name){out[name]=cs.getPropertyValue(name)});return {mode:"computed",computed:out,ref:refOf(el)}}' +
         'if(kind==="inspectJavascript"){var keys=String(p.globalKeys||"").split(/[,\\s]+/).filter(Boolean),items=[];keys.forEach(function(k){try{var v=window[k];items.push({kind:"global",name:k,valueType:typeof v,summary:typeof v==="string"?v.slice(0,500):Array.isArray(v)?("Array("+v.length+")"):v&&typeof v==="object"?Object.keys(v).slice(0,50):v})}catch(e){items.push({kind:"global",name:k,error:e.message})}});Object.keys(localStorage).forEach(function(k){items.push({kind:"localStorage-key",name:k})});Object.keys(sessionStorage).forEach(function(k){items.push({kind:"sessionStorage-key",name:k})});Array.from(document.scripts).slice(0,500).forEach(function(s,i){items.push({kind:"script",index:i,src:s.src||"",inlineChars:s.src?0:(s.textContent||"").length})});return {frameworks:[],location:{url:location.href,title:document.title,readyState:document.readyState},items:items}}' +
         'if(kind==="inspectStructure"){var root=target(p,"body");if(!root||excluded(root))return [];var maxDepth=Math.max(0,Math.min(Number(p.maxDepth)||4,12)),items=[];function walk(el,d,parentRef){if(items.length>=5000||excluded(el))return;var isVisible=visible(el);if(p.mode!=="all"&&!isVisible)return;var currentRef=refOf(el),o={depth:d,parentRef:parentRef||"",ref:currentRef,tag:(el.tagName||"").toLowerCase(),id:el.id||"",className:typeof el.className==="string"?el.className:"",role:el.getAttribute("role")||"",name:el.getAttribute("aria-label")||"",text:txt(el).slice(0,300),visible:isVisible,bounds:rect(el)};if(p.mode!=="interactive"||/^(?:a|button|input|textarea|select|option|summary)$/.test(o.tag)||o.role||el.tabIndex>=0)items.push(o);if(d<maxDepth){var kids=Array.from(el.children||[]);if(el.shadowRoot)kids=kids.concat(Array.from(el.shadowRoot.children||[]));kids.filter(function(k){return !excluded(k)}).slice(0,500).forEach(function(k){walk(k,d+1,currentRef)})}}walk(root,0,"");return items}' +
-        'if(kind==="searchPage"){var q=String(p.query||""),flags=p.caseSensitive?"":"i",re=p.regex?new RegExp(q,flags):null,needle=p.caseSensitive?q:q.toLowerCase(),hits=[],types=String(p.types||"text,element,html,css,script").split(/[,\\s]+/);function wanted(t){return !types[0]||types.indexOf(t)!==-1}function matches(value){var s=String(value||""),hay=p.caseSensitive?s:s.toLowerCase();return re?re.test(s):hay.indexOf(needle)!==-1}candidates(p,"*").forEach(function(el){if(!p.includeHidden&&!visible(el))return;var t=txt(el),html=el.outerHTML||"",ref=refOf(el),base={tag:(el.tagName||"").toLowerCase(),ref:ref,bounds:rect(el)};if(wanted("text")&&matches(t))hits.push({where:{type:"text",ref:ref},match:q,snippet:t.slice(0,Math.max(40,Number(p.contextChars)||120)),element:base,ref:ref});if(wanted("html")&&matches(html))hits.push({where:{type:"html",ref:ref},match:q,snippet:html.slice(0,Math.max(40,Number(p.contextChars)||120)),element:base,ref:ref});else if(wanted("element")&&matches((el.tagName||"")+" "+Array.from(el.attributes||[]).map(function(a){return a.name+"="+a.value}).join(" ")))hits.push({where:{type:"element",ref:ref},match:q,snippet:(el.outerHTML||"").slice(0,Math.max(40,Number(p.contextChars)||120)),element:base,ref:ref})});if(wanted("css"))Array.from(document.styleSheets||[]).forEach(function(sheet){if(stylesheetExcluded(sheet))return;try{Array.from(sheet.cssRules||[]).forEach(function(rule,i){var css=String(rule.cssText||"");if(/WXT\\s+Shadow\\s+Root\\s+Reset|page-automation-/i.test(css))return;if(matches(css))hits.push({where:{type:"css",href:sheet.href||"",index:i},match:q,snippet:css.slice(0,Math.max(40,Number(p.contextChars)||120))})})}catch(_){}});if(wanted("script"))Array.from(document.scripts||[]).forEach(function(script,i){var source=script.src||script.textContent||"";if(matches(source))hits.push({where:{type:"script",index:i,src:script.src||""},match:q,snippet:String(source).slice(0,Math.max(40,Number(p.contextChars)||120))})});return {query:q,hits:hits.slice(0,5000),count:hits.length}}' +
+        'if(kind==="searchPage"){var q=String(p.query||""),flags=p.caseSensitive?"":"i",re=p.regex?new RegExp(q,flags):null,needle=p.caseSensitive?q:q.toLowerCase(),hits=[],types=String(p.types||"text,element,html,css,script").split(/[,\\s]+/);function wanted(t){return !types[0]||types.indexOf(t)!==-1}function matches(value){var s=String(value||""),hay=p.caseSensitive?s:s.toLowerCase();return re?re.test(s):hay.indexOf(needle)!==-1}candidates(p,"*").forEach(function(el){if(!p.includeHidden&&!visible(el))return;var t=txt(el),html=el.outerHTML||"",ref=refOf(el),base={tag:(el.tagName||"").toLowerCase(),ref:ref,bounds:rect(el)};if(wanted("text")&&matches(t))hits.push({where:{type:"text",ref:ref},match:q,snippet:t.slice(0,Math.max(40,Number(p.contextChars)||120)),element:base,ref:ref});if(wanted("html")&&matches(html))hits.push({where:{type:"html",ref:ref},match:q,snippet:html.slice(0,Math.max(40,Number(p.contextChars)||120)),element:base,ref:ref});else if(wanted("element")&&matches((el.tagName||"")+" "+Array.from(el.attributes||[]).map(function(a){return a.name+"="+a.value}).join(" ")))hits.push({where:{type:"element",ref:ref},match:q,snippet:(el.outerHTML||"").slice(0,Math.max(40,Number(p.contextChars)||120)),element:base,ref:ref})});if(wanted("css"))Array.from(document.styleSheets||[]).forEach(function(sheet){if(stylesheetExcluded(sheet))return;try{Array.from(sheet.cssRules||[]).forEach(function(rule,i){var css=String(rule.cssText||"");if(/WXT\\s+Shadow\\s+Root\\s+Reset|page-agent-/i.test(css))return;if(matches(css))hits.push({where:{type:"css",href:sheet.href||"",index:i},match:q,snippet:css.slice(0,Math.max(40,Number(p.contextChars)||120))})})}catch(_){}});if(wanted("script"))Array.from(document.scripts||[]).forEach(function(script,i){var source=script.src||script.textContent||"";if(matches(source))hits.push({where:{type:"script",index:i,src:script.src||""},match:q,snippet:String(source).slice(0,Math.max(40,Number(p.contextChars)||120))})});return {query:q,hits:hits.slice(0,5000),count:hits.length}}' +
         'if(kind==="scrollInfo"){var source=p.containerSelector?one(p.containerSelector,0):null;if(!source)return null;var el=source===document.documentElement&&document.scrollingElement?document.scrollingElement:source,threshold=Math.max(1,Number(p.thresholdPx)||1),remaining=Math.max(0,el.scrollHeight-el.clientHeight-el.scrollTop);return {scrollTop:el.scrollTop,scrollLeft:el.scrollLeft,scrollHeight:el.scrollHeight,scrollWidth:el.scrollWidth,clientHeight:el.clientHeight,clientWidth:el.clientWidth,viewportHeight:el.clientHeight,viewportWidth:el.clientWidth,maxTop:Math.max(0,el.scrollHeight-el.clientHeight),remainingPx:remaining,scrollable:el.scrollHeight>el.clientHeight||el.scrollWidth>el.clientWidth,atTop:el.scrollTop<=threshold,atBottom:remaining<=threshold,bounds:rect(source)}}' +
         'if(kind==="webStorage"){var s=p.storageType==="session"?sessionStorage:localStorage;if(p.key)return {key:p.key,value:s.getItem(p.key)};var out={};for(var si=0;si<s.length;si++){var sk=s.key(si);out[sk]=s.getItem(sk)}return {entries:out}}' +
         'if(kind==="media"){function selector(el){if(el.id)return "#"+(window.CSS&&window.CSS.escape?window.CSS.escape(el.id):el.id);var parts=[];while(el&&el.nodeType===1&&parts.length<8){var tag=(el.tagName||"").toLowerCase(),n=1,s=el;while((s=s.previousElementSibling))if(s.tagName===el.tagName)n++;parts.unshift(tag+":nth-of-type("+n+")");el=el.parentElement}return parts.join(" > ")}function urls(value){var out=[],re=/url\\(\\s*([\"\\x27]?)(.*?)\\1\\s*\\)/gi,m;while((m=re.exec(String(value||""))))if(m[2])out.push(m[2]);return out}var out=[];queryAll("*").forEach(function(el){if(!visible(el))return;var tag=(el.tagName||"").toLowerCase();if(/^(?:img|video|canvas|svg|iframe)$/.test(tag))out.push({kind:tag,selector:selector(el),name:el.getAttribute("alt")||el.getAttribute("aria-label")||el.getAttribute("title")||tag,currentSrc:el.currentSrc||el.src||"",mimeHint:"",naturalWidth:el.naturalWidth||el.videoWidth||el.width||0,naturalHeight:el.naturalHeight||el.videoHeight||el.height||0,bounds:rect(el),visible:true,sourceReadable:tag==="img"&&!!(el.currentSrc||el.src),renderedReadable:true});urls(getComputedStyle(el).backgroundImage).forEach(function(url){var absolute="";try{absolute=new URL(url,document.baseURI).href}catch(_){absolute=url}out.push({kind:"css-background",selector:selector(el),name:el.getAttribute("aria-label")||el.getAttribute("title")||"CSS background image",currentSrc:absolute,mimeHint:"",naturalWidth:0,naturalHeight:0,bounds:rect(el),visible:true,sourceReadable:!!absolute,renderedReadable:true})})});return out}' +
@@ -2312,7 +2312,7 @@
             if (!mainFrameId) fail('PAGE_STATE_UNAVAILABLE', '无法创建只读 ISOLATED world：主 frame 不可用');
             var isolated = await send('Page.createIsolatedWorld', {
               frameId: mainFrameId,
-              worldName: 'page-automation-perception-script',
+              worldName: 'page-agent-perception-script',
               grantUniveralAccess: false,
             }, 5000);
             evaluateParams.contextId = isolated.executionContextId;
@@ -2343,7 +2343,7 @@
             var details = { outerHTML: '', innerText: '', hasParent: String(resolved.target.tag || '').toLowerCase() !== 'html' };
             if (input.includeOuterHTML === true || input.includeInnerText === true) {
               var detailSend = senderForFrame(send, resolved.target.frameId);
-              var remote = await detailSend('DOM.resolveNode', { backendNodeId: resolved.target.backendNodeId, objectGroup: 'page-automation-details' }, 5000);
+              var remote = await detailSend('DOM.resolveNode', { backendNodeId: resolved.target.backendNodeId, objectGroup: 'page-agent-details' }, 5000);
               ensureNotAborted(input.signal);
               var detailObjectId = remote && remote.object && remote.object.objectId;
               try {
@@ -2361,7 +2361,7 @@
                   details = detailResponse.result && detailResponse.result.value || details;
                 }
               } finally {
-                await detailSend('Runtime.releaseObjectGroup', { objectGroup: 'page-automation-details' }, 5000).catch(function () {});
+                await detailSend('Runtime.releaseObjectGroup', { objectGroup: 'page-agent-details' }, 5000).catch(function () {});
               }
             }
             return Object.assign({
@@ -2480,7 +2480,7 @@
         var provider = diagnosticProvider(kind);
         if (!provider) return Promise.reject(new factContract.PageFactError('PAGE_STATE_UNAVAILABLE', '页面证据 provider 未加载', { kind: kind }));
         if (kind === 'cdp.analyze_performance' && (input.reload || String(input.action || '').toLowerCase() === 'click')) {
-          return Promise.reject(new factContract.PageFactError('PAGE_ACTION_REQUIRED', '带页面动作的性能分析必须由 PageAutomationRuntime 编排', { kind: kind }));
+          return Promise.reject(new factContract.PageFactError('PAGE_ACTION_REQUIRED', '带页面动作的性能分析必须由 PageAgentRuntime 编排', { kind: kind }));
         }
         return Promise.resolve(provider.perceive(tabId, kind, input)).then(function (result) {
           ensureNotAborted(input.signal);
@@ -2718,13 +2718,14 @@
       });
     }
 
-    async function setConversationScreenshotVisibility(send, hidden, previous, signal) {
+    async function setScreenshotUiVisibility(send, hidden, previous, signal) {
       ensureNotAborted(signal);
       var expression;
       if (hidden) {
-        expression = '(function(){var el=document.getElementById("page-automation-page-conversation");if(!el)return null;var state={value:el.style.getPropertyValue("visibility"),priority:el.style.getPropertyPriority("visibility")};el.style.setProperty("visibility","hidden","important");return state;})()';
+        // Hide whole UI subtrees without changing the page layout.
+        expression = '(function(){var states=[];document.querySelectorAll("[data-page-agent-ui]").forEach(function(el){states.push({id:el.id,ui:el.getAttribute("data-page-agent-ui"),value:el.style.getPropertyValue("opacity"),priority:el.style.getPropertyPriority("opacity")});el.style.setProperty("opacity","0","important");});return states;})()';
       } else {
-        expression = '(function(state){var el=document.getElementById("page-automation-page-conversation");if(!el)return true;if(state&&state.value)el.style.setProperty("visibility",state.value,state.priority||"");else el.style.removeProperty("visibility");return true;})(' + JSON.stringify(previous || null) + ')';
+        expression = '(function(states){(states||[]).forEach(function(state){var el=state.id?document.getElementById(state.id):document.querySelector("[data-page-agent-ui="+JSON.stringify(state.ui)+"]");if(!el)return;if(state.value)el.style.setProperty("opacity",state.value,state.priority||"");else el.style.removeProperty("opacity");});return true;})(' + JSON.stringify(previous || []) + ')';
       }
       var response = await abortablePromise(send('Runtime.evaluate', { expression: expression, returnByValue: true, silent: true }, 5000), signal);
       ensureNotAborted(signal);
@@ -2758,9 +2759,9 @@
         ensureNotAborted(screenshotOptions.signal);
         // Use the raw lease sender for the tiny hide/restore transaction. If
         // the generation signal wins between the hide command and its reply,
-        // aborting the wrapped sender could leave the panel hidden forever.
+        // aborting the wrapped sender could leave the UI hidden forever.
         var screenshotUiSend = send && send._rawSend || send;
-        var previousConversationVisibility = await setConversationScreenshotVisibility(screenshotUiSend, true, null, null);
+        var previousUiVisibility = await setScreenshotUiVisibility(screenshotUiSend, true, null, null);
         try {
           var response = await abortablePromise(send('Page.captureScreenshot', params, Math.max(5000, Number(screenshotOptions.timeoutMs) || 30000)), screenshotOptions.signal);
           ensureNotAborted(screenshotOptions.signal);
@@ -2768,8 +2769,8 @@
         } finally {
           // Restoration is best-effort after cancellation, but must still be
           // attempted so a failed capture cannot leave the page UI hidden.
-          if (previousConversationVisibility !== null) {
-            await setConversationScreenshotVisibility(screenshotUiSend, false, previousConversationVisibility, null).catch(function () {});
+          if (previousUiVisibility && previousUiVisibility.length) {
+            await setScreenshotUiVisibility(screenshotUiSend, false, previousUiVisibility, null).catch(function () {});
           }
         }
       });

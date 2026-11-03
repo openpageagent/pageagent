@@ -17,6 +17,12 @@ RUN if [ -f mcp-server/index.js ]; then \
 
 FROM ${RUNTIME_IMAGE}
 
+# Selkies 2.1.0 must resume a paused capture when another controller joins.
+COPY docker/selkies-2.1.0.patch /tmp/selkies-2.1.0.patch
+RUN cd /opt/selkies/lib/python*/site-packages \
+    && git apply /tmp/selkies-2.1.0.patch \
+    && rm /tmp/selkies-2.1.0.patch
+
 COPY --from=mcp /build/mcp-server/page-agent-mcp-server.cjs /opt/page-agent/page-agent-mcp-server.cjs
 COPY LICENSE mcp-server/NODEMAILER_LICENSE /opt/page-agent/
 COPY . /opt/page-agent/extension/

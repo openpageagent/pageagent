@@ -223,7 +223,7 @@
       ]), fields);
       document.getElementById('drawer-title').textContent = '新建应用';
       document.getElementById('drawer-content').replaceChildren(form);
-      document.getElementById('drawer-actions').replaceChildren(cancel, submit);
+      document.getElementById('drawer-actions').replaceChildren(submit, cancel);
       creation = { form: form, busy: false };
       draw();
       options.openDrawer(); name.focus();
@@ -244,7 +244,7 @@
             name: name.value, slug: slug.value, description: description.value.trim(), icon: 'fa-cube',
             code: {
               html: content.outerHTML, css: '', javascript: '', themeCss: capabilities.defaults.ui.themeCss,
-              description: description.value.trim(), capabilities: [], actions: [], dependencies: [], customBehavior: [], externalResources: []
+              description: description.value.trim(), parameters: capabilities.defaults.parameters, capabilities: [], actions: [], dependencies: [], customBehavior: [], externalResources: []
             }
           }));
           options.toast('应用已创建');
@@ -267,7 +267,7 @@
       loading = true; loadError = false; catalog.setAttribute('aria-busy', 'true'); draw();
       try {
         if (options.compact) {
-          var settings = await root.PageAutomationSystemSettings.load(chrome.storage.local, chrome.runtime);
+          var settings = await root.PageAgentSystemSettings.load(chrome.storage.local, chrome.runtime);
           if (ticket !== sequence) return;
           sidebarFavoritesOnly = settings.sidebarAppsFavoritesOnly;
         }
@@ -504,7 +504,7 @@
         await render(); options.toast('已创建副本，请在权限设置中启用所需能力');
         await edit(result.appId);
       });
-      if (app.__builtin) managementActions.append(group('编辑', [copyApp]));
+      if (app.__builtin) managementActions.append(group('编辑', [button('查看源码与参数', function () { return edit(app.appId); }), copyApp]));
       else managementActions.append(group('编辑', [
         button('对话调整', async function () { if (await options.closeDrawer() !== false) return options.converse(app.appId); }),
         button('编辑代码', function () { return edit(app.appId); }),
@@ -564,7 +564,7 @@
       var save = button('保存权限', commit); save.className = 'btn-primary'; save.disabled = true;
       document.getElementById('drawer-title').textContent = '应用权限';
       document.getElementById('drawer-content').replaceChildren(container);
-      document.getElementById('drawer-actions').replaceChildren(done, save);
+      document.getElementById('drawer-actions').replaceChildren(save, done);
       options.openDrawer(); done.focus();
       function active() { return permissionView === state && container.isConnected && document.getElementById('drawer').classList.contains('active'); }
       function report(message, error) { notice.textContent = message; notice.hidden = !message; notice.classList.toggle('error', !!error); }
@@ -709,7 +709,7 @@
         loading.textContent = error.message || String(error); throw error;
       }
       if (!loading.isConnected || !document.getElementById('drawer').classList.contains('active')) return;
-      if (app.__builtin) { showManagement(app); return; }
+      var readOnly = app.__builtin === true;
       var container = el('div', undefined, 'app-editor'), notice = el('p', '已保存', 'app-editor-notice');
       notice.setAttribute('role', 'status');
       editor = { appId: appId, revision: app.revision, container: container, notice: notice, dirty: false, busy: false, inputGeneration: 0 };
@@ -726,7 +726,7 @@
       var tabs = el('div', undefined, 'app-editor-tabs'), panes = el('div'), inputs = {}, tabButtons = [];
       tabs.setAttribute('role', 'group'); tabs.setAttribute('aria-label', '源码类型');
       var fields = [['html', 'HTML'], ['css', 'CSS'], ['javascript', 'JavaScript'], ['themeCss', '主题'], ['declarations', '功能与依赖']];
-      var declarations = Object.assign({}, app.code); ['html', 'css', 'javascript', 'themeCss', 'description', 'files'].forEach(function (key) { delete declarations[key]; });
+      var declarations = Object.assign({}, app.code); ['html', 'css', 'javascript', 'themeCss', 'description', 'files', 'parameters'].forEach(function (key) { delete declarations[key]; });
       fields.forEach(function (field, index) {
         var input = el('page-code-editor'); input.setAttribute('aria-label', field[1]); input.className = 'app-source'; input.hidden = index !== 0;
         input.setAttribute('language', { html: 'html', css: 'css', javascript: 'javascript', themeCss: 'css', declarations: 'json' }[field[0]]);
@@ -735,7 +735,7 @@
         input.value = field[0] === 'declarations' ? JSON.stringify(declarations, null, 2) : app.code[field[0]];
         if (field[0] === 'declarations') {
           var properties = Object.assign({}, C.codeSchema.properties);
-          ['html', 'css', 'javascript', 'themeCss', 'description', 'files'].forEach(function (key) { delete properties[key]; });
+          ['html', 'css', 'javascript', 'themeCss', 'description', 'files', 'parameters'].forEach(function (key) { delete properties[key]; });
           input.schema = { type: 'object', properties: properties, required: C.codeSchema.required.filter(function (key) { return Object.hasOwn(properties, key); }), additionalProperties: false };
         }
         inputs[field[0]] = input; panes.append(input);
@@ -752,7 +752,7 @@
       fileSelect.setAttribute('aria-label', '选择源码文件'); fileEditor.setAttribute('aria-label', '源码文件内容'); fileEditor.rows = 20; fileEditor.className = 'app-source';
       function selectFile() {
         var name = fileSelect.value;
-        fileEditor.value = name ? fileSources[name] : ''; fileEditor.readOnly = !name;
+        fileEditor.value = name ? fileSources[name] : ''; fileEditor.readOnly = readOnly || !name;
         fileEditor.setAttribute('language', name.endsWith('.css') ? 'css' : 'javascript');
       }
       function loadFiles(files) {
@@ -783,8 +783,81 @@
         tabButtons.forEach(function (item) { item.setAttribute('aria-pressed', String(item === fileTab)); }); filePane.focus();
       });
       fileTab.className = 'app-editor-tab'; fileTab.setAttribute('aria-pressed', 'false'); fileTab.setAttribute('aria-controls', filePane.id); tabButtons.push(fileTab); tabs.append(fileTab);
+      var parameterPane = el('div', undefined, 'app-parameters'), parameterStatus = el('p', undefined, 'app-parameter-status');
+      var parameterOverview = drawerGuide('参数说明', []), parameterOverviewTitle = parameterOverview.querySelector('summary');
+      var parameterDetails = parameterOverview.querySelector('.drawer-guide-content'); parameterDetails.classList.add('app-parameter-content');
+      var parameterEditor = el('page-code-editor');
+      parameterPane.id = 'app-source-parameters'; parameterPane.hidden = true; parameterPane.tabIndex = -1;
+      parameterStatus.setAttribute('role', 'status');
+      parameterEditor.setAttribute('language', 'json'); parameterEditor.setAttribute('aria-label', '启动参数声明'); parameterEditor.className = 'app-source';
+      parameterEditor.schema = C.parameterSchema; parameterEditor.readOnly = readOnly;
+      var parameterNone = button('重置为空参数', function () { loadParameters(C.noParameters()); markDirty(); });
+      parameterNone.className = 'btn-small'; parameterNone.hidden = readOnly; parameterNone.disabled = readOnly;
+      function renderParameters() {
+        parameterDetails.replaceChildren(); parameterOverview.hidden = true; parameterStatus.hidden = true;
+        parameterNone.hidden = readOnly; parameterStatus.classList.remove('error');
+        try {
+          var parameters = C.validateParameters({ parameters: JSON.parse(parameterEditor.value), files: fileSources });
+          parameterNone.hidden = readOnly || parameters.mode === 'none';
+          var names = Object.keys(parameters.schema.properties);
+          parameterOverviewTitle.textContent = '参数说明（' + names.length + ' 项）'; parameterOverview.hidden = false;
+          parameterDetails.append(el('p', parameters.description));
+          if (parameters.mode === 'none') return;
+          var fieldTable = el('table'), fieldHead = el('thead'), fieldHeader = el('tr'), fieldBody = el('tbody');
+          fieldTable.setAttribute('aria-label', '接收的启动参数');
+          ['参数', '类型', '必填', '用途'].forEach(function (label) { var cell = el('th', label); cell.scope = 'col'; fieldHeader.append(cell); });
+          fieldHead.append(fieldHeader);
+          function appendParameterField(path, schema, required, binding) {
+            var property = schema && typeof schema === 'object' && !Array.isArray(schema) ? schema : {};
+            var row = el('tr'), fieldName = el('td');
+            var type = Array.isArray(property.type) ? property.type.join(' | ') : property.type || '见声明';
+            fieldName.append(el('code', path));
+            row.append(fieldName, el('td', type), el('td', required),
+              el('td', (property.description || '—') + (binding ? ' → 控件 #' + binding : '')));
+            fieldBody.append(row);
+            var properties = property.properties;
+            if (properties && typeof properties === 'object' && !Array.isArray(properties)) {
+              Object.keys(properties).forEach(function (name) {
+                var required = Array.isArray(property.required) && property.required.includes(name);
+                appendParameterField(path + '.' + name, properties[name], required ? '父级内必填' : '否');
+              });
+            }
+            if (property.items && typeof property.items === 'object' && !Array.isArray(property.items)) {
+              appendParameterField(path + '[]', property.items, '—');
+            }
+            if (property.additionalProperties && typeof property.additionalProperties === 'object' && !Array.isArray(property.additionalProperties)) {
+              appendParameterField(path + '[key]', property.additionalProperties, '—');
+            }
+          }
+          names.forEach(function (name) {
+            appendParameterField(name, parameters.schema.properties[name], (parameters.schema.required || []).includes(name) ? '是' : '否',
+              parameters.mode === 'form' ? parameters.bindings[name] : undefined);
+          });
+          parameterOverviewTitle.textContent = '参数说明（' + fieldBody.childElementCount + ' 项）';
+          fieldTable.append(fieldHead, fieldBody);
+          var fieldContainer = el('div', undefined, 'app-parameter-fields'); fieldContainer.append(fieldTable);
+          parameterDetails.append(fieldContainer, el('h4', '处理方式'));
+          if (parameters.mode === 'module') {
+            parameterDetails.append(el('p', '参数由 ' + parameters.module + ' 的 applyParameters(input) 处理，文件见“源码文件”页签。', 'form-help'));
+          } else if (parameters.mode === 'form') parameterDetails.append(el('p', '处理顺序：校验参数 → 等待页面初始化 → 按 bindings 填入控件。', 'form-help'));
+          var example = el('pre'); example.textContent = 'POST /apps/' + appId + '/open\n' + JSON.stringify({ input: parameters.example }, null, 2);
+          parameterDetails.append(el('h4', '调用示例'), example);
+        } catch (error) { parameterStatus.textContent = '参数声明有误：' + error.message; parameterStatus.hidden = false; parameterStatus.classList.add('error'); }
+      }
+      function loadParameters(parameters) { parameterEditor.value = JSON.stringify(parameters ?? C.noParameters(), null, 2); renderParameters(); }
+      parameterPane.append(parameterStatus, parameterOverview, parameterEditor, parameterNone);
+      inputs.parameters = parameterPane; panes.append(parameterPane);
+      parameterEditor.addEventListener('input', renderParameters); fileEditor.addEventListener('input', renderParameters);
+      var parameterTab = button('启动参数', function () {
+        renderParameters();
+        Object.values(inputs).forEach(function (item) { item.hidden = item !== parameterPane; });
+        tabButtons.forEach(function (item) { item.setAttribute('aria-pressed', String(item === parameterTab)); }); parameterPane.focus();
+      });
+      parameterTab.className = 'app-editor-tab'; parameterTab.setAttribute('aria-pressed', 'false'); parameterTab.setAttribute('aria-controls', parameterPane.id); tabButtons.push(parameterTab); tabs.append(parameterTab);
+      loadParameters(app.code.parameters);
       function report(message, error) { notice.textContent = message; notice.classList.toggle('error', !!error); }
       function markDirty() {
+        if (readOnly) return;
         activeEditor.dirty = true; activeEditor.inputGeneration++;
         if (!activeEditor.busy) report('有变更未保存');
       }
@@ -820,6 +893,7 @@
           var fields = { description: description.value }, inputGeneration = activeEditor.inputGeneration, savedRevision = activeEditor.revision;
           var metadata = { name: name.value, slug: slug.value, description: description.value };
           ['html', 'css', 'javascript', 'themeCss'].forEach(function (key) { fields[key] = inputs[key].value; });
+          fields.parameters = JSON.parse(parameterEditor.value) ?? C.noParameters();
           fields.files = Object.assign({}, fileSources);
           var code = await root.AppBackup.work('prepare-code', { declarations: inputs.declarations.value, fields: fields, scope: app.permissions.generationScope });
           var current = unwrap(await client.put('/apps/' + appId + '/draft', Object.assign(metadata, { code: code }), { preconditions: { ifMatch: '"' + savedRevision + '"' } }));
@@ -864,6 +938,7 @@
               ['html', 'css', 'javascript', 'themeCss'].forEach(function (key) { inputs[key].value = current.code[key]; delete declarations[key]; });
               delete declarations.description;
               delete declarations.files; loadFiles(current.code.files);
+              delete declarations.parameters; loadParameters(current.code.parameters);
               inputs.declarations.value = JSON.stringify(declarations, null, 2);
               activeEditor.inputGeneration++;
               refresh.hidden = true;
@@ -901,10 +976,19 @@
         ['应用别名', appAddressHelp],
         ['保存与发布', '保存写入草稿，预览查看效果；发布后更新应用入口。'],
         ['主题资源', '文件名限字母、数字、点、横线或下划线。上传即保存，用 app-asset:assets/文件名 引用；代码需另存。'],
+        ['启动参数', '默认无参数，按需配置字段和处理方式。'],
       ]), metadata, source, review);
       document.getElementById('drawer-title').textContent = app.name + ' · 编辑代码';
       document.getElementById('drawer-content').replaceChildren(container);
       document.getElementById('drawer-actions').replaceChildren(save, preview, publishButton, status);
+      if (readOnly) {
+        [name, slug, description, asset, addFile, removeFile].forEach(function (control) { control.disabled = true; });
+        container.querySelectorAll('page-code-editor').forEach(function (control) { control.readOnly = true; });
+        assetRow.hidden = true;
+        document.getElementById('drawer-title').textContent = app.name + ' · 查看源码';
+        document.getElementById('drawer-actions').replaceChildren(button('关闭', function () { options.closeDrawer(); }));
+        parameterTab.click();
+      }
       activeEditor.focus();
     }
     function onChanged(event) {
@@ -918,10 +1002,10 @@
     }
     function onLayoutChanged(changes, area) {
       if (area !== 'local' || disposed) return;
-      var settingsChange = options.compact && changes[root.PageAutomationSystemSettings.SETTINGS_KEY];
+      var settingsChange = options.compact && changes[root.PageAgentSystemSettings.SETTINGS_KEY];
       if (!changes[layoutKey] && !settingsChange) return;
       if (changes[layoutKey]) layout = normalizeLayout(changes[layoutKey].newValue);
-      if (settingsChange) sidebarFavoritesOnly = root.PageAutomationSystemSettings.normalize(settingsChange.newValue).sidebarAppsFavoritesOnly;
+      if (settingsChange) sidebarFavoritesOnly = root.PageAgentSystemSettings.normalize(settingsChange.newValue).sidebarAppsFavoritesOnly;
       if (options.isActive() && !document.hidden) draw();
     }
     function visible() {

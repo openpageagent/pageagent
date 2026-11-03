@@ -1,4 +1,4 @@
-// Network Capture Hook — 注入到页面 MAIN world，捕获 fetch/XHR/SSE 响应
+// Network Capture Hook — 注入到页面 MAIN world，捕获 fetch/XHR/WebSocket/SSE
 // 通过 chrome.scripting.registerContentScripts({ world: 'MAIN', runAt: 'document_start' }) 注册
 // 与 isolated world 的统一页面网络事实 provider 通过 CustomEvent('__pfa_net_req'/'__pfa_net_res') 桥接
 (function () {
@@ -15,6 +15,10 @@
   var MIN_ENTRY_AGE_MS = 5 * 60 * 1000;
   var MAX_ENTRY_AGE_MS = 24 * 60 * 60 * 1000;
   var entries = [];
+  var recordingNetwork = {};
+  document.addEventListener('__pfa_recording_network_config', function (event) {
+    try { recordingNetwork = JSON.parse(event.detail || '{}') || {}; } catch (_) { recordingNetwork = {}; }
+  });
 
   function headersToObject(headers) {
     var out = {};
@@ -36,18 +40,19 @@
   function safeRequestBody(body) {
     try {
       if (body === undefined || body === null) return '';
-      if (typeof body === 'string') return body.slice(0, MAX_REQUEST_BODY_LENGTH);
-      if (body instanceof URLSearchParams) return body.toString().slice(0, MAX_REQUEST_BODY_LENGTH);
+      if (typeof body === 'string') return body.slice(0, MAX_REQUEST_BODY_LENGTH + 1);
+      if (body instanceof URLSearchParams) return body.toString().slice(0, MAX_REQUEST_BODY_LENGTH + 1);
       if (body instanceof FormData) {
         var obj = {};
         body.forEach(function (v, k) {
           obj[k] = (v && v.name) ? '[File ' + v.name + ']' : String(v);
         });
-        return JSON.stringify(obj).slice(0, MAX_REQUEST_BODY_LENGTH);
+        return JSON.stringify(obj).slice(0, MAX_REQUEST_BODY_LENGTH + 1);
       }
       if (body instanceof Blob) return '[Blob ' + body.type + ', ' + body.size + ' bytes]';
       if (body instanceof ArrayBuffer) return '[ArrayBuffer ' + body.byteLength + ' bytes]';
-      return String(body).slice(0, MAX_REQUEST_BODY_LENGTH);
+      if (ArrayBuffer.isView(body)) return '[' + body.constructor.name + ' ' + body.byteLength + ' bytes]';
+      return String(body).slice(0, MAX_REQUEST_BODY_LENGTH + 1);
     } catch (e) {
       return '[不可读取请求体: ' + e.message + ']';
     }
@@ -92,12 +97,21 @@
         method: String(method || 'GET').toUpperCase(),
         status: status,
         bodyText: String(bodyText || '').slice(0, MAX_BODY_LENGTH),
+        bodyTruncated: String(bodyText || '').length > MAX_BODY_LENGTH,
         ts: Date.now(),
       }, extra || {});
       if (!entry.resourceType) entry.resourceType = 'unknown';
       if (!entry.type) entry.type = entry.resourceType;
+      if (entry.requestBody) {
+        entry.requestBodyTruncated = entry.requestBody.length > MAX_REQUEST_BODY_LENGTH;
+        entry.requestBody = entry.requestBody.slice(0, MAX_REQUEST_BODY_LENGTH);
+      }
       entries.push(entry);
       trimEntries();
+      var category = entry.resourceType === 'fetch' || entry.resourceType === 'xhr' ? 'http' : entry.resourceType;
+      if (recordingNetwork[category] === true) {
+        document.dispatchEvent(new CustomEvent('__pfa_recording_network_entry', { detail: JSON.stringify(entry) }));
+      }
     } catch (_) {}
   }
 
@@ -107,7 +121,7 @@
   }
 
   function parseSseBlock(block) {
-    var lines = String(block || '').replace(/\r\n/g, '\n').split('\n');
+    var lines = String(block || '').replace(/\r\n|\r/g, '\n').split('\n');
     var eventName = 'message';
     var eventId = '';
     var data = [];
@@ -218,7 +232,12 @@
             });
           }
           pump();
-        }).catch(function () {});
+        }).catch(function (error) {
+          record(url, method, response.status, '', {
+            streamId: streamMeta.streamId, streamSeq: seq + 1, resourceType: 'sse',
+            phase: 'error', error: String(error && error.message || error), contentType: contentType,
+          });
+        });
       }
 
       pump();
@@ -230,17 +249,28 @@
 
   // --- fetch 包装 ---
 
+  function responseText(response, contentType) {
+    if (!contentType || /(?:^text\/|json|xml|javascript|x-www-form-urlencoded)/i.test(contentType)) return response.text();
+    return response.blob().then(safeRequestBody);
+  }
+
   var originalFetch = window.fetch;
   if (typeof originalFetch === 'function') {
     window.fetch = function (input, init) {
-      var url = absoluteUrl((typeof input === 'string') ? input : (input && input.url) || '');
+      var url = absoluteUrl(input && input.url !== undefined ? input.url : input);
       var method = (init && init.method) || (input && input.method) || 'GET';
       var requestHeaders = headersToObject((init && init.headers) || (input && input.headers));
       var requestBody = safeRequestBody(init && init.body);
+      var requestBodyReady = Promise.resolve(requestBody);
+      if ((!init || init.body === undefined) && input instanceof Request && input.body) {
+        try { requestBodyReady = responseText(input.clone(), input.headers.get('content-type') || '').then(safeRequestBody).catch(function () { return '[不可读取 Request 请求体]'; }); }
+        catch (_) { requestBodyReady = Promise.resolve('[不可读取 Request 请求体]'); }
+      }
       var requestStartedAt = Date.now();
       return originalFetch.apply(this, arguments).then(function (response) {
-        try {
-          var clone = response.clone();
+        var clone;
+        try { clone = response.clone(); } catch (_) { return response; }
+        function captureResponse(requestBody) {
           var durationMs = Math.max(0, Date.now() - requestStartedAt);
           var contentType = '';
           try { contentType = response.headers && response.headers.get('content-type') || ''; } catch (_) {}
@@ -295,18 +325,35 @@
               }).catch(function () {});
             }
           } else {
-            clone.text().then(function (text) {
+            responseText(clone, contentType).then(function (text) {
               record(finalUrl, method, response.status, text, {
                 resourceType: 'fetch',
+                phase: 'response',
                 contentType: contentType,
                 requestHeaders: requestHeaders,
                 requestBody: requestBody,
                 durationMs: durationMs,
               });
-            }).catch(function () {});
+            }).catch(function (error) {
+              record(finalUrl, method, response.status, '', {
+                resourceType: 'fetch', phase: 'error', contentType: contentType,
+                requestHeaders: requestHeaders, requestBody: requestBody, durationMs: durationMs,
+                error: String(error && error.message || error),
+              });
+            });
           }
-        } catch (_) {}
+        }
+        requestBodyReady.then(captureResponse).catch(function () {});
         return response;
+      }, function (error) {
+        requestBodyReady.then(function (body) {
+          record(url, method, 0, '', {
+            resourceType: 'fetch', phase: 'error', requestHeaders: requestHeaders,
+            requestBody: body, durationMs: Math.max(0, Date.now() - requestStartedAt),
+            error: String(error && error.message || error),
+          });
+        });
+        throw error;
       });
     };
   }
@@ -336,8 +383,50 @@
     var xhr = this;
     var requestBody = safeRequestBody(arguments[0]);
     var requestStartedAt = Date.now();
-    xhr.addEventListener('load', function () {
+    var requestUrl = xhr.__pfaUrl;
+    var requestMethod = xhr.__pfaMethod;
+    var requestHeaders = Object.assign({}, xhr.__pfaRequestHeaders || {});
+    var streamId = '';
+    var streamSeq = 0;
+    var streamOffset = 0;
+    var streamBuffer = '';
+    function streamEntry(phase, body, extra) {
+      record(xhr.responseURL || requestUrl, requestMethod, xhr.status, body, Object.assign({
+        resourceType: 'sse', phase: phase, streamId: streamId, streamSeq: streamSeq++,
+        contentType: 'text/event-stream', requestHeaders: phase === 'open' ? requestHeaders : undefined,
+        requestBody: phase === 'open' ? requestBody : undefined,
+        durationMs: Math.max(0, Date.now() - requestStartedAt),
+      }, extra || {}));
+    }
+    function readStream() {
       try {
+        if (xhr.readyState < 2 || !/text\/event-stream/i.test(xhr.getResponseHeader('content-type') || '')) return;
+        if (!streamId) {
+          streamId = createStreamId();
+          streamEntry('open', '');
+        }
+        if (xhr.readyState < 3 || xhr.responseType && xhr.responseType !== 'text') return;
+        var text = xhr.responseText || '';
+        streamBuffer += text.slice(streamOffset);
+        streamOffset = text.length;
+        var parts = streamBuffer.split(/\n\n|\r\n\r\n|\r\r/);
+        streamBuffer = parts.pop() || '';
+        parts.forEach(function (part) {
+          var parsed = parseSseBlock(part);
+          if (parsed) streamEntry('message', parsed.data, { eventName: parsed.eventName, eventId: parsed.eventId, retry: parsed.retry });
+        });
+      } catch (_) {}
+    }
+    function finish(event) {
+      xhr.removeEventListener('readystatechange', readStream);
+      xhr.removeEventListener('progress', readStream);
+      ['load', 'error', 'abort', 'timeout'].forEach(function (type) { xhr.removeEventListener(type, finish); });
+      try {
+        readStream();
+        if (streamId) {
+          streamEntry(event.type === 'load' ? 'close' : 'error', '', event.type === 'load' ? {} : { error: event.type });
+          return;
+        }
         var body = '';
         var durationMs = Math.max(0, Date.now() - requestStartedAt);
         var contentType = xhr.getResponseHeader && xhr.getResponseHeader('content-type') || '';
@@ -345,50 +434,57 @@
           body = xhr.responseText;
         } else if (xhr.responseType === 'json') {
           try { body = JSON.stringify(xhr.response); } catch (_) {}
-        }
-        if (/text\/event-stream/i.test(contentType)) {
-          var streamId = createStreamId();
-          record(xhr.responseURL || xhr.__pfaUrl, xhr.__pfaMethod, xhr.status, '', {
-            streamId: streamId,
-            streamSeq: 0,
-            resourceType: 'sse',
-            phase: 'open',
-            eventName: 'open',
-            contentType: contentType,
-            requestHeaders: xhr.__pfaRequestHeaders || {},
-            requestBody: requestBody,
-            durationMs: durationMs,
-          });
-          var messageCount = recordSseText(xhr.responseURL || xhr.__pfaUrl, xhr.__pfaMethod, xhr.status, body, {
-            streamId: streamId,
-            contentType: contentType,
-            requestHeaders: xhr.__pfaRequestHeaders || {},
-            requestBody: requestBody,
-            durationMs: durationMs,
-          });
-          record(xhr.responseURL || xhr.__pfaUrl, xhr.__pfaMethod, xhr.status, '', {
-            streamId: streamId,
-            streamSeq: messageCount + 1,
-            resourceType: 'sse',
-            phase: 'close',
-            eventName: 'close',
-            contentType: contentType,
-            requestHeaders: xhr.__pfaRequestHeaders || {},
-            requestBody: requestBody,
-            durationMs: durationMs,
-          });
-        }
-        record(xhr.responseURL || xhr.__pfaUrl, xhr.__pfaMethod, xhr.status, body, {
+        } else body = safeRequestBody(xhr.response);
+        record(xhr.responseURL || requestUrl, requestMethod, xhr.status, body, {
           resourceType: 'xhr',
+          phase: event.type === 'load' ? 'response' : 'error',
+          error: event.type === 'load' ? '' : event.type,
           contentType: contentType,
-          requestHeaders: xhr.__pfaRequestHeaders || {},
+          requestHeaders: requestHeaders,
           requestBody: requestBody,
           durationMs: durationMs,
         });
       } catch (_) {}
-    });
-    return originalSend.apply(this, arguments);
+    }
+    xhr.addEventListener('readystatechange', readStream);
+    xhr.addEventListener('progress', readStream);
+    ['load', 'error', 'abort', 'timeout'].forEach(function (type) { xhr.addEventListener(type, finish); });
+    try { return originalSend.apply(this, arguments); }
+    catch (error) { finish({ type: 'error' }); throw error; }
   };
+
+  // --- WebSocket 包装：文本保留正文，二进制仅记录类型和大小 ---
+
+  var OriginalWebSocket = window.WebSocket;
+  if (typeof OriginalWebSocket === 'function') {
+    window.WebSocket = new Proxy(OriginalWebSocket, {
+      construct: function (target, args, newTarget) {
+        var socket = Reflect.construct(target, args, newTarget);
+        var streamId = createStreamId();
+        var seq = 0;
+        function socketEntry(phase, data, extra) {
+          record(socket.url, 'GET', 0, typeof data === 'string' ? data : safeRequestBody(data), Object.assign({
+            resourceType: 'websocket', phase: phase, streamId: streamId, streamSeq: seq++,
+            readyState: socket.readyState, protocol: socket.protocol,
+          }, extra || {}));
+        }
+        socketEntry('request', '');
+        socket.addEventListener('open', function () { socketEntry('open', ''); });
+        socket.addEventListener('message', function (event) { socketEntry('message', event.data); });
+        socket.addEventListener('error', function () { socketEntry('error', '', { error: 'WebSocket error' }); });
+        socket.addEventListener('close', function (event) {
+          socketEntry('close', '', { closeCode: event.code, closeReason: event.reason, wasClean: event.wasClean });
+        });
+        var originalSocketSend = socket.send;
+        socket.send = function (data) {
+          var result = originalSocketSend.apply(this, arguments);
+          if (this === socket) socketEntry('send', data);
+          return result;
+        };
+        return socket;
+      },
+    });
+  }
 
   // --- EventSource 包装 ---
 
@@ -397,7 +493,7 @@
     window.EventSource = function (url, eventSourceInitDict) {
       var finalUrl = absoluteUrl(url);
       var es = new OriginalEventSource(url, eventSourceInitDict);
-      var tracked = {};
+      var tracked = Object.create(null);
       var streamId = createStreamId();
       var seq = 0;
 
@@ -445,6 +541,12 @@
       es.addEventListener = function (type) {
         trackEventType(type);
         return originalAddEventListener.apply(es, arguments);
+      };
+      var originalClose = es.close;
+      es.close = function () {
+        var result = originalClose.apply(this, arguments);
+        if (this === es) recordSseEvent('close', 'close');
+        return result;
       };
 
       return es;

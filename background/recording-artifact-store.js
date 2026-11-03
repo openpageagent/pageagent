@@ -1,12 +1,12 @@
 (function attachRecordingArtifactStore(root, factory) {
   'use strict';
   var commonJs = typeof module === 'object' && module.exports;
-  var contract = commonJs ? require('../shared/recording-contract') : root.PageAutomationRecordingContract;
+  var contract = commonJs ? require('../shared/recording-contract') : root.PageAgentRecordingContract;
   var nodeCrypto = null;
   if (commonJs) { try { nodeCrypto = require('node:crypto'); } catch (_) {} }
   var api = factory(root, contract, nodeCrypto);
   if (commonJs) module.exports = api;
-  if (root) root.PageAutomationRecordingArtifactStore = api;
+  if (root) root.PageAgentRecordingArtifactStore = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, contract, nodeCrypto) {
   'use strict';
   if (!contract || contract.API_VERSION !== 1) throw new Error('RecordingContract must load before RecordingArtifactStore');
@@ -518,6 +518,7 @@
           draftCollectionId: collection.draftCollectionId, incognito: runtimeIncognito,
           profileId: collection.profileId,
           consentVersion: text(input.consentVersion), confirmedAt: Number(input.confirmedAt) || Number(clock()),
+          networkCapture: contract.normalizeNetworkCapture(input.networkCapture),
           scopeFrozen: false, trackedTabs: clone(input.trackedTabs || {}), excludedTabIds: clone(input.excludedTabIds || []),
           knownWindowIds: clone(input.knownWindowIds || []),
           documents: {}, seenBatches: {}, seenLocalEvents: {}, pendingHellos: {}, navigationOccurrences: {}, diagnostics: [], autoStopRevision: 1, drainRevision: 0,

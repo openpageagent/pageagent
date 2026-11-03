@@ -123,6 +123,7 @@
         // 服务端证据。厂商不支持该字段时由对应 compat 删除。
         stream_options: { include_usage: true },
       };
+      if (service.serviceTier === 'priority') body.service_tier = 'priority';
       var tools = toolDefinitions(input.tools);
       if (tools.length) body.tools = tools;
       var temperature = numberSetting(settings.temperature);

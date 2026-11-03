@@ -7,13 +7,13 @@
     var chrome = deps.chrome || globalThis.chrome;
     var cdpSessionManager = deps.cdpSessionManager;
     if (!cdpSessionManager || typeof cdpSessionManager.acquire !== 'function') throw new Error('SessionTabAccess requires CdpSessionManager');
-    var pageAutomation = deps.pageAutomation;
-    if (!pageAutomation || !pageAutomation.action || typeof pageAutomation.action.act !== 'function'
-      || typeof pageAutomation.action.cleanupOwner !== 'function'
-      || !pageAutomation.perception || typeof pageAutomation.perception.perceive !== 'function'
-      || !pageAutomation.verification || typeof pageAutomation.verification.createFactReceipt !== 'function'
-      || typeof pageAutomation.verification.waitForPageLoad !== 'function') {
-      throw new Error('SessionTabAccess requires PageAutomationRuntime');
+    var pageAgent = deps.pageAgent;
+    if (!pageAgent || !pageAgent.action || typeof pageAgent.action.act !== 'function'
+      || typeof pageAgent.action.cleanupOwner !== 'function'
+      || !pageAgent.perception || typeof pageAgent.perception.perceive !== 'function'
+      || !pageAgent.verification || typeof pageAgent.verification.createFactReceipt !== 'function'
+      || typeof pageAgent.verification.waitForPageLoad !== 'function') {
+      throw new Error('SessionTabAccess requires PageAgentRuntime');
     }
     var getConfig = deps.getConfig || (function () { return { flows: {}, pages: {} }; });
     var pageIdFromSource = deps.pageIdFromSource || (function () { return ''; });
@@ -51,7 +51,7 @@
       }
       function lifecycleFactResult(tabId, kind, performed, evidence, reason, startedAt) {
         var completedAt = new Date().toISOString();
-        var receipt = pageAutomation.verification.createFactReceipt({
+        var receipt = pageAgent.verification.createFactReceipt({
           source: 'flow', tabId: tabId, kind: kind, performed: performed,
           conditionMet: true, signals: [kind], evidence: evidence || [], reason: reason,
           startedAt: startedAt || completedAt, completedAt: completedAt,
@@ -62,7 +62,7 @@
 
       function executeLifecycleAction(tabId, kind, input, options) {
         options = options || {};
-        return authorizePage(tabId, kind, input).then(function () { return pageAutomation.action.act({
+        return authorizePage(tabId, kind, input).then(function () { return pageAgent.action.act({
           source: 'flow',
           owner: String(session.runId || session.flowId || ''),
           tabId: tabId,
@@ -514,7 +514,7 @@
               return new Promise(function (resolve) { setTimeout(resolve, 100); }).then(waitRestored);
             });
           }).then(function (currentTab) {
-            return authorizePage(tabId, 'waitForPageLoad').then(function () { return pageAutomation.verification.waitForPageLoad({
+            return authorizePage(tabId, 'waitForPageLoad').then(function () { return pageAgent.verification.waitForPageLoad({
               source: 'flow', tabId: tabId,
               params: { tabId: tabId, timeoutMs: 300000, stableMs: 800, readyState: 'complete' },
             }); }).then(function () { return currentTab; });
@@ -623,7 +623,7 @@
         var cleanup = Promise.all(pending).then(function () {
           return Promise.all(Object.values(session.keepAliveLeases || {}).map(function (lease) { return lease.release(); }));
         }).then(function () {
-          return pageAutomation.action.cleanupOwner(
+          return pageAgent.action.cleanupOwner(
             String(session.runId || session.flowId || ''),
             { detachImmediately: true }
           );
@@ -657,7 +657,7 @@
             throw error;
           }) : Promise.resolve(false);
         },
-        foregroundTabForAutomation: function (tabId) {
+        foregroundTabForAgent: function (tabId) {
           return focusTabForCommand(tabId);
         },
         preparePageCommandTab: function (tabId, options) {
@@ -665,7 +665,7 @@
             return preparePageCommandTab(tabId, tab, options);
           });
         },
-        describeAutomationTab: function (tabId) {
+        describeAgentTab: function (tabId) {
           var describeTab = sessionTabRuntime.describeTab
             ? sessionTabRuntime.describeTab(tabId)
             : chrome.tabs.get(tabId).then(function (tab) { return 'tab=' + tabId + ', url=' + String(tab && tab.url || ''); });

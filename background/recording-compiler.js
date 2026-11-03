@@ -1,12 +1,12 @@
 (function attachRecordingCompiler(root, factory) {
   'use strict';
   var commonJs = typeof module === 'object' && module.exports;
-  var contract = commonJs ? require('../shared/recording-contract') : root.PageAutomationRecordingContract;
+  var contract = commonJs ? require('../shared/recording-contract') : root.PageAgentRecordingContract;
   var nodeCrypto = null;
   if (commonJs) { try { nodeCrypto = require('node:crypto'); } catch (_) {} }
   var api = factory(root, contract, nodeCrypto);
   if (commonJs) module.exports = api;
-  if (root) root.PageAutomationRecordingCompiler = api;
+  if (root) root.PageAgentRecordingCompiler = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, contract, nodeCrypto) {
   'use strict';
   if (!contract || contract.API_VERSION !== 1) throw new Error('RecordingContract must load before RecordingCompiler');
@@ -243,6 +243,7 @@
       navigation: payload.navigation ? clone(payload.navigation) : undefined,
       causation: payload.causation ? clone(payload.causation) : undefined,
       input: payload.input ? clone(payload.input) : undefined,
+      network: payload.network ? clone(payload.network) : undefined,
     };
     if (recordingStart && payload.title !== undefined) event.title = text(payload.title);
     if (payload.href !== undefined) event.href = text(payload.href);

@@ -27,7 +27,7 @@
     name: true, baseUrl: true, model: true, visionModel: true, summaryModel: true, protocol: true,
     apiStyle: true, providerType: true, provider_type: true, reasoningProviderType: true,
     userAgent: true, maxContextTokens: true,
-    autoCompactTokenLimit: true, reasoningEffort: true, requestTimeoutMs: true,
+    autoCompactTokenLimit: true, reasoningEffort: true, serviceTier: true, requestTimeoutMs: true,
     maxRetries: true, maxRetryDelayMs: true, contextCompression: true, secret: true,
   });
   var AGENT_SETTINGS_KEYS = Object.freeze({
@@ -324,6 +324,7 @@
         maxContextTokens: Math.max(0, Number(service.maxContextTokens) || 0),
         autoCompactTokenLimit: Math.max(0, Number(service.autoCompactTokenLimit) || 0),
         reasoningEffort: String(service.reasoningEffort || 'auto'),
+        serviceTier: service.serviceTier === 'priority' ? 'priority' : 'auto',
         requestTimeoutMs: Math.max(1000, Number(service.requestTimeoutMs) || 120000),
         maxRetries: Math.max(0, Number(service.maxRetries) || 0),
         maxRetryDelayMs: Math.max(0, Number(service.maxRetryDelayMs) || 0),

@@ -1,10 +1,10 @@
 (function attachConversationRecordingAttachments(root, factory) {
   'use strict';
   var commonJs = typeof module === 'object' && module.exports;
-  var contract = commonJs ? require('../shared/recording-contract') : root.PageAutomationRecordingContract;
+  var contract = commonJs ? require('../shared/recording-contract') : root.PageAgentRecordingContract;
   var api = factory(contract);
   if (commonJs) module.exports = api;
-  else root.PageAutomationConversationRecordingAttachments = api;
+  else root.PageAgentConversationRecordingAttachments = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (contract) {
   'use strict';
 

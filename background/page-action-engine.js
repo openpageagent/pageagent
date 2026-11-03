@@ -633,7 +633,7 @@
           var tree = await command('Page.getFrameTree', {});
           var mainFrameId = tree.frameTree && tree.frameTree.frame && tree.frameTree.frame.id;
           if (!mainFrameId) throw new Error('无法创建 ISOLATED world：主 frame 不可用');
-          var isolated = await command('Page.createIsolatedWorld', { frameId: mainFrameId, worldName: 'page-automation-script', grantUniveralAccess: false });
+          var isolated = await command('Page.createIsolatedWorld', { frameId: mainFrameId, worldName: 'page-agent-script', grantUniveralAccess: false });
           evaluateParams.contextId = isolated.executionContextId;
         }
         var evaluated = await command('Runtime.evaluate', evaluateParams);

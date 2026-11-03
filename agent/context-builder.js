@@ -526,7 +526,7 @@
       var generation = await validateGeneration(input);
       if (!input.service || !text(input.service.model)) throw contextError('SERVICE_NOT_FOUND', 'Resolved Model Service is required by ContextBuilder');
       var journalEvents = await journal.getAllEvents(input.conversationId);
-      var events = await journalMaterializer.materializeEvents(journalEvents);
+      var events = await journalMaterializer.materializeEvents(journalEvents, { view: 'runtime' });
       events = await materializeResourceResults(events);
       var checkpoint = await journal.getActiveCheckpoint(input.conversationId);
       if (checkpoint && checkpoint.throughSequence > generation.metadata.lastSequence) {
@@ -578,11 +578,21 @@
       var contract = toolContract(input);
       var policy = contract.policy;
       var tools = contract.tools;
+      var pageUrl = '';
+      if (root.PageAgentApps && input.surface && input.surface.type === 'page' && root.chrome && root.chrome.tabs) {
+        var pageTab = await root.chrome.tabs.get(input.surface.tabId).catch(function () { return null; });
+        pageUrl = pageTab && pageTab.url || '';
+      }
+      var applicationContext = root.PageAgentApps && input.conversationId
+        ? await root.PageAgentApps.conversationContext(input.conversationId, pageUrl) : null;
+      var currentResource = applicationContext && applicationContext.page && applicationContext.appId
+        ? '/apps/' + applicationContext.appId
+        : dynamic.currentResource || input.entry && input.entry.currentResource || '/';
       var promptInput = {
-        applicationContext: root.PageAgentApps && input.conversationId ? await root.PageAgentApps.conversationContext(input.conversationId) : null,
+        applicationContext: applicationContext,
         surface: input.surface,
-        entry: Object.assign({}, input.entry || {}, { currentResource: dynamic.currentResource || input.entry && input.entry.currentResource || '/' }),
-        currentResource: dynamic.currentResource || input.entry && input.entry.currentResource || '/',
+        entry: Object.assign({}, input.entry || {}, { currentResource: currentResource }),
+        currentResource: currentResource,
         conversationSummary: checkpoint ? clone(checkpoint.summary) : null,
         representation: dynamic.representation === undefined ? input.representation : dynamic.representation,
         assistantPrompt: dynamic.assistantPrompt,
@@ -899,7 +909,8 @@
             var advanced = await maybeSummarize(input, assembled, targetRatio, input.forceSummary === true || input.reason === 'overflow_retry');
             if (advanced) return build(Object.assign({}, input, { _summaryAdvanced: true, forceSummary: false }));
           } catch (error) {
-            if (error && (error.code === 'GENERATION_STALE' || error.code === 'SERVICE_WORKER_TERMINATED')) throw error;
+            if (error && (error.code === 'GENERATION_STALE' || error.code === 'SERVICE_WORKER_TERMINATED'
+                || error.retryable === false)) throw error;
             summaryFailure = { code: error && error.code || 'SUMMARY_FAILED', message: error && error.message || String(error) };
           }
         }

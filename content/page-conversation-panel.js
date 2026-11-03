@@ -1,11 +1,11 @@
 (function attachPageConversationPanel(root, factory) {
   'use strict';
   var commonJs = typeof module === 'object' && module.exports;
-  var recordingContract = commonJs ? require('../shared/recording-contract') : root.PageAutomationRecordingContract;
-  var syncEventStreamApi = commonJs ? require('../shared/sync-event-stream') : root.PageAutomationSyncEventStream;
+  var recordingContract = commonJs ? require('../shared/recording-contract') : root.PageAgentRecordingContract;
+  var syncEventStreamApi = commonJs ? require('../shared/sync-event-stream') : root.PageAgentSyncEventStream;
   var api = factory(recordingContract, syncEventStreamApi);
   if (typeof module === 'object' && module.exports) module.exports = api;
-  if (root) root.PageAutomationPageConversationPanel = api;
+  if (root) root.PageAgentPageConversationPanel = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (recordingContract, syncEventStreamApi) {
   'use strict';
 
@@ -29,15 +29,14 @@
 
   function iconSend() {
     return createSvg([
-      { attrs: { d: 'm22 2-7 20-4-9-9-4Z' } },
-      { attrs: { d: 'M22 2 11 13' } },
+      { attrs: { d: 'M12 19V5m-7 7 7-7 7 7' } },
     ]);
   }
 
   function iconStop() {
     return createSvg([{
       tag: 'rect',
-      attrs: { x: '8', y: '8', width: '8', height: '8', rx: '1.5', fill: 'currentColor', stroke: 'none' },
+      attrs: { x: '6', y: '6', width: '12', height: '12', rx: '1', fill: 'currentColor', stroke: 'none' },
     }]);
   }
 
@@ -47,16 +46,34 @@
 
   function iconNewTopic() {
     return createSvg([
-      { attrs: { d: 'M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 3v-3a2 2 0 0 1-1-2V6a2 2 0 0 1 2-2Z' } },
-      { attrs: { d: 'M12 8v6M9 11h6' } },
+      { attrs: { d: 'M12 5v14M5 12h14' } },
     ]);
   }
 
   function iconOpenConversation() {
     return createSvg([
-      { attrs: { d: 'M15 3h6v6' } },
-      { attrs: { d: 'm10 14 11-11' } },
-      { attrs: { d: 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6' } },
+      { attrs: { d: 'M15 3h6v6m-11 5L21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6' } },
+    ]);
+  }
+
+  function iconLoader() {
+    var icon = createSvg([{ attrs: { d: 'M20 12a8 8 0 1 1-8-8' } }]);
+    icon.classList.add('spinning');
+    return icon;
+  }
+
+  function iconStatus(kind) {
+    if (kind === 'running') return iconLoader();
+    if (kind === 'summarizing') {
+      var dot = createSvg([{ tag: 'circle', attrs: { cx: '12', cy: '12', r: '5', fill: 'currentColor', stroke: 'none' } }]);
+      dot.classList.add('summary-breathe');
+      return dot;
+    }
+    if (kind === 'stopped') return iconStop();
+    if (kind === 'waiting') return createSvg([{ attrs: { d: 'M9 5v14M15 5v14' } }]);
+    return createSvg([
+      { tag: 'circle', attrs: { cx: '12', cy: '12', r: '9' } },
+      { attrs: { d: kind === 'failed' ? 'M12 8v4m0 4h.01' : 'm8 12 3 3 5-6' } },
     ]);
   }
 
@@ -102,6 +119,7 @@
     if (!positionControllerApi || typeof positionControllerApi.createFree !== 'function') {
       throw new Error('page conversation panel requires page element position controller');
     }
+    var applicationEntry = win.AppContract && win.AppContract.parseUrl(win.location.href, runtime.getURL('/'));
 
     function hydrateImages() {
       if (!imageArtifactClient || typeof imageArtifactClient.hydrate !== 'function' || !messages) return;
@@ -130,9 +148,22 @@
     var recordingSummaryText = null;
     var recordingLibraryButton = null;
     var recordingDrawer = null;
+    var recordingDrawerTitle = null;
     var recordingDrawerBody = null;
+    var recordingDrawerClose = null;
+    var recordingDrawerNotice = null;
+    var recordingDrawerFocusKey = '';
     var newTopicButton = null;
     var openOptionsButton = null;
+    var contextMeter = null;
+    var contextMeterValue = null;
+    var contextThreshold = null;
+    var contextCompactButton = null;
+    var contextPopover = null;
+    var contextPopoverBody = null;
+    var contextRefreshButton = null;
+    var contextUsage = null;
+    var contextRenderKey = '';
     var toggleButton = null;
     var closeButton = null;
     var headerStopButton = null;
@@ -142,7 +173,8 @@
     var actionButton = null;
     var notice = null;
     var appContextNotice = null;
-    var appContextTopicId = '';
+    var appContextTopicId = null;
+    var appContext = null;
     var appContextRequest = 0;
     var assistants = [];
     var entryConfig = null;
@@ -177,6 +209,7 @@
     var refreshQueued = false;
     var requestRevision = 0;
     var pollTimer = 0;
+    var messageElapsedTimer = 0;
     var assistantRenderKey = null;
     var messageRenderCache = Object.create(null);
     var messageRenderCacheTopicId = '';
@@ -185,14 +218,33 @@
     var presentationWaiting = false;
     var recordingState = null;
     var recordingLibrary = null;
+    var RECORDING_SOURCE_PAGE_SIZE = 5;
+    var recordingSourceLimit = RECORDING_SOURCE_PAGE_SIZE;
+    var recordingSourceScrollTop = 0;
     var recordingBusy = '';
     var recordingTimer = 0;
     var recordingWarningNotifiedId = '';
     var previewState = { recordingId: '', manifest: null, events: [], query: {}, nextCursor: '', errorDetails: null, selectedSeqs: null };
+    var RECORDING_CATEGORIES = [
+      { id: 'all', label: '全部', kinds: [] },
+      { id: 'actions', label: '页面操作', kinds: ['click', 'fill', 'select', 'key', 'submit'] },
+      { id: 'pages', label: '页面与标签', kinds: ['recording_start', 'navigation', 'navigation_target', 'tab_created', 'tab_closed'] },
+      { id: 'http', label: 'HTTP 请求', kinds: ['http'] },
+      { id: 'websocket', label: 'WebSocket', kinds: ['websocket'] },
+      { id: 'sse', label: 'SSE', kinds: ['sse'] },
+    ];
     var PANEL_POSITION_STORAGE_KEY = 'page-agent-conversation-panel-position';
     var ASSISTANT_SELECTION_STORAGE_KEY_PREFIX = 'page-agent-conversation-selected-assistant:';
+    var RECORDING_NETWORK_STORAGE_KEY = 'page-agent-recording-network-capture';
+    var RECORDING_CONSENT_STORAGE_KEY = 'page-agent-recording-consent-version';
+    var recordingPreferenceWrite = Promise.resolve();
     var panelPositionController = null;
-    var CONSENT_TEXT = '录制会记录当前页面及录制期间新开标签中的操作，包括你和 Conversation、Flow、MCP 等自动化执行的操作。内容可能包含密码、验证码、银行卡号、token、URL 参数等敏感信息，将原样保存且不会自动脱敏。录制完成后会在主窗口与隐私窗口间共享并持久保留，关闭隐私窗口不会删除。选择录制中的动作后，Agent 可按需读取整份录制，内容可能发送给所选大模型。是否开始？';
+    var RECORDING_PRIVACY_TERMS = [
+      ['一、录制范围', '当前页面及录制期间新开标签中的操作，包括你和 Conversation、Flow、MCP 等自动化执行的操作。网络按勾选项采集，SSE 单独归类。'],
+      ['二、采集限制', '监听启用前的请求和已有连接可能无法捕获；长正文会截断，二进制仅记录类型与大小。'],
+      ['三、敏感信息', '内容可能包含密码、验证码、银行卡号、token、URL 参数等，将原样保存，不会自动脱敏。'],
+      ['四、保存与使用', '录制会在主窗口与隐私窗口间共享并持久保留，关闭隐私窗口不会删除。选择事件后，Agent 可按需读取整份录制，内容可能发送给所选大模型。'],
+    ];
     var cleanups = [];
     // pending 问答控件每轮 ASK_USER 都重建，监听器必须随旧控件一起释放，
     // 挂到 cleanups 会一直积累到 destroy。
@@ -295,6 +347,7 @@
       return sendRecording(contract.TYPES.GET_RECORDING_LIBRARY, {
         draftCollectionId: collection.draftCollectionId,
       }).then(function (response) {
+        if (destroyed) return response;
         if (response.ok) {
           recordingLibrary = response.payload || null;
           syncPreviewSelection();
@@ -307,7 +360,9 @@
     }
 
     function refreshRecordingState() {
+      if (destroyed) return Promise.resolve(null);
       return sendRecording(contract.TYPES.GET_RECORDING_STATE, {}).then(function (response) {
+        if (destroyed) return response;
         if (!response.ok) {
           setNotice(response.error || '加载录制状态失败', true);
           return response;
@@ -321,9 +376,24 @@
       });
     }
 
-    function showConsent(options) {
+    async function showConsent(options) {
       options = options || {};
-      if (pendingConsent || destroyed) return Promise.resolve(false);
+      if (pendingConsent || destroyed) return false;
+      closeContextPopover(false);
+      var cancelled = false;
+      pendingConsent = function () { cancelled = true; };
+      var networkCapture = recordingContract.normalizeNetworkCapture();
+      var privacyAccepted = false;
+      var storage = globalThis.chrome && globalThis.chrome.storage && globalThis.chrome.storage.local;
+      if (options.networkCapture && storage) {
+        try {
+          await recordingPreferenceWrite;
+          var stored = await storage.get([RECORDING_NETWORK_STORAGE_KEY, RECORDING_CONSENT_STORAGE_KEY]);
+          networkCapture = recordingContract.normalizeNetworkCapture(stored[RECORDING_NETWORK_STORAGE_KEY]);
+          privacyAccepted = stored[RECORDING_CONSENT_STORAGE_KEY] === recordingContract.CONSENT_VERSION;
+        } catch (_) {}
+      }
+      if (cancelled || destroyed) { pendingConsent = null; return false; }
       return new Promise(function (resolve) {
         var previous = panel.getRootNode().activeElement, settled = false;
         var overlay = documentRef.createElement('div');
@@ -331,39 +401,166 @@
         overlay.setAttribute('role', 'dialog');
         overlay.setAttribute('aria-modal', 'true');
         overlay.setAttribute('aria-labelledby', 'recording-consent-title');
+        overlay.setAttribute('aria-describedby', 'recording-consent-copy');
         var dialog = documentRef.createElement('section');
         dialog.className = 'recording-consent';
+        var dialogHeader = element('header', 'recording-consent-header');
         var heading = documentRef.createElement('h2');
         heading.id = 'recording-consent-title';
-        heading.textContent = options.title || '开始页面操作录制';
+        heading.textContent = options.title || '开始录制';
+        var body = documentRef.createElement('div');
+        body.className = 'recording-consent-body';
         var copy = documentRef.createElement('p');
-        copy.textContent = options.message || CONSENT_TEXT;
+        copy.id = 'recording-consent-copy';
+        copy.textContent = options.message || '按需勾选要同时采集的网络内容：';
+        body.appendChild(copy);
+        var networkChoices = documentRef.createElement('div');
+        var networkInputs = {};
+        var privacyConsent = null;
+        function selectedNetworkCapture() {
+          var selected = {};
+          Object.keys(networkInputs).forEach(function (key) { selected[key] = networkInputs[key].checked; });
+          return selected;
+        }
+        if (options.networkCapture) {
+          networkChoices.className = 'recording-network-choices';
+          networkChoices.setAttribute('role', 'group');
+          networkChoices.setAttribute('aria-label', '同时录制的网络内容');
+          [['http', 'HTTP（Fetch/XHR）', '请求与响应'], ['websocket', 'WebSocket', '连接与双向消息'], ['sse', 'SSE', '服务器推送事件']].forEach(function (choice) {
+            var label = documentRef.createElement('label');
+            label.title = choice[2];
+            var checkbox = documentRef.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.setAttribute('aria-label', choice[1] + '：' + choice[2]);
+            checkbox.checked = networkCapture[choice[0]];
+            networkInputs[choice[0]] = checkbox;
+            checkbox.addEventListener('change', function () {
+              if (!storage) return;
+              var value = {};
+              value[RECORDING_NETWORK_STORAGE_KEY] = selectedNetworkCapture();
+              recordingPreferenceWrite = recordingPreferenceWrite.then(function () { return storage.set(value); }).catch(function () {
+                if (!destroyed) setNotice('录制选项保存失败，下次需要重新选择', true);
+              });
+            });
+            label.appendChild(checkbox);
+            label.appendChild(documentRef.createTextNode(choice[1]));
+            networkChoices.appendChild(label);
+          });
+          body.appendChild(networkChoices);
+          var agreement = documentRef.createElement('div');
+          agreement.className = 'recording-privacy-agreement';
+          var agreementLabel = documentRef.createElement('label');
+          privacyConsent = documentRef.createElement('input');
+          privacyConsent.type = 'checkbox';
+          privacyConsent.checked = privacyAccepted;
+          privacyConsent.setAttribute('aria-label', '我已阅读并同意录制隐私条款');
+          agreementLabel.appendChild(privacyConsent);
+          agreementLabel.appendChild(documentRef.createTextNode('我已阅读并同意录制隐私条款'));
+          var termsLink = documentRef.createElement('button');
+          termsLink.type = 'button';
+          termsLink.className = 'recording-privacy-link';
+          termsLink.textContent = '查看条款';
+          termsLink.setAttribute('aria-expanded', 'false');
+          termsLink.setAttribute('aria-controls', 'recording-privacy-terms');
+          var terms = documentRef.createElement('section');
+          terms.id = 'recording-privacy-terms';
+          terms.className = 'recording-privacy-terms';
+          terms.setAttribute('aria-label', '录制隐私条款');
+          terms.tabIndex = 0;
+          terms.hidden = true;
+          RECORDING_PRIVACY_TERMS.forEach(function (clause) {
+            var section = documentRef.createElement('section');
+            var clauseTitle = documentRef.createElement('h3');
+            clauseTitle.textContent = clause[0];
+            var clauseText = documentRef.createElement('p');
+            clauseText.textContent = clause[1];
+            section.appendChild(clauseTitle); section.appendChild(clauseText);
+            terms.appendChild(section);
+          });
+          termsLink.addEventListener('click', function () {
+            terms.hidden = !terms.hidden;
+            termsLink.setAttribute('aria-expanded', String(!terms.hidden));
+            termsLink.textContent = terms.hidden ? '查看条款' : '收起条款';
+            if (!terms.hidden) {
+              terms.focus({ preventScroll: true });
+              terms.scrollIntoView({ block: 'nearest' });
+            }
+          });
+          agreement.appendChild(agreementLabel); agreement.appendChild(termsLink);
+          body.appendChild(terms);
+        }
         var actions = documentRef.createElement('div');
         actions.className = 'recording-consent-actions';
         var cancel = documentRef.createElement('button');
         cancel.type = 'button'; cancel.className = 'secondary-command'; cancel.textContent = '取消';
         var start = documentRef.createElement('button');
-        start.type = 'button'; start.className = 'primary-command' + (options.danger ? ' danger-command' : ''); start.textContent = options.okText || '开始';
+        start.type = 'button'; start.className = 'primary-command' + (options.danger ? ' danger-command' : ''); start.textContent = options.okText || '开始录制';
+        if (privacyConsent) {
+          var consentHint = element('p', 'recording-consent-hint', privacyAccepted ? '' : '请先同意条款');
+          consentHint.id = 'recording-consent-hint';
+          consentHint.setAttribute('role', 'status');
+          start.setAttribute('aria-describedby', consentHint.id);
+          actions.appendChild(agreement);
+          start.disabled = !privacyAccepted;
+          start.title = privacyAccepted ? '' : '请先勾选同意录制隐私条款';
+          privacyConsent.addEventListener('change', function () {
+            start.disabled = !privacyConsent.checked;
+            start.title = privacyConsent.checked ? '' : '请先勾选同意录制隐私条款';
+            consentHint.textContent = privacyConsent.checked ? '' : '请先同意条款';
+            if (!storage) return;
+            var value = {};
+            value[RECORDING_CONSENT_STORAGE_KEY] = privacyConsent.checked ? recordingContract.CONSENT_VERSION : '';
+            recordingPreferenceWrite = recordingPreferenceWrite.then(function () { return storage.set(value); }).catch(function () {
+              if (destroyed) return;
+              var message = '同意状态保存失败，下次需重新确认';
+              if (overlay.isConnected) consentHint.textContent = message;
+              else setNotice(message, true);
+            });
+          });
+        }
         function finish(value) {
           if (settled) return;
           settled = true; pendingConsent = null; overlay.remove();
+          dialogBackground.forEach(function (node) { node.inert = false; });
+          if (!destroyed) refreshPanelPosition();
           if (previous && previous.isConnected && !destroyed) previous.focus({ preventScroll: true });
+          else if (!destroyed && recordingDrawer && !recordingDrawer.hidden) recordingDrawerClose.focus({ preventScroll: true });
           resolve(value);
         }
         pendingConsent = function () { finish(false); };
+        var dismiss = element('button', 'icon-button');
+        dismiss.type = 'button'; dismiss.title = '取消并关闭';
+        dismiss.setAttribute('aria-label', dismiss.title);
+        dismiss.appendChild(iconClose());
+        dismiss.addEventListener('click', function () { finish(false); });
         cancel.addEventListener('click', function () { finish(false); });
-        start.addEventListener('click', function () { finish(true); });
+        start.addEventListener('click', function () {
+          if (!options.networkCapture) { finish(true); return; }
+          if (!privacyConsent.checked) return;
+          finish(selectedNetworkCapture());
+        });
         overlay.addEventListener('keydown', function (event) {
           if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finish(false); }
           if (event.key === 'Tab') {
             event.preventDefault();
-            (overlay.getRootNode().activeElement === cancel ? start : cancel).focus();
+            var focusable = Array.prototype.slice.call(dialog.querySelectorAll('input:not(:disabled),button:not(:disabled),[tabindex="0"]')).filter(function (node) {
+              return !node.hidden && !node.closest('[hidden]');
+            });
+            var index = focusable.indexOf(overlay.getRootNode().activeElement);
+            var nextIndex = index < 0 ? (event.shiftKey ? focusable.length - 1 : 0) : (index + (event.shiftKey ? -1 : 1) + focusable.length) % focusable.length;
+            if (focusable[nextIndex]) focusable[nextIndex].focus();
           }
         });
-        actions.appendChild(cancel); actions.appendChild(start);
-        dialog.appendChild(heading); dialog.appendChild(copy); dialog.appendChild(actions); overlay.appendChild(dialog);
+        actions.appendChild(start); actions.appendChild(cancel);
+        if (consentHint) actions.appendChild(consentHint);
+        dialogHeader.appendChild(heading); dialogHeader.appendChild(dismiss);
+        dialog.appendChild(dialogHeader); dialog.appendChild(body);
+        dialog.appendChild(actions); overlay.appendChild(dialog);
+        var dialogBackground = Array.prototype.filter.call(panel.children, function (node) { return !node.inert; });
+        dialogBackground.forEach(function (node) { node.inert = true; });
         panel.appendChild(overlay);
-        cancel.focus();
+        refreshPanelPosition();
+        cancel.focus({ preventScroll: true });
       });
     }
 
@@ -374,12 +571,15 @@
         recordingBusy = 'stopping';
         renderRecordingControls();
         sendRecording(contract.TYPES.STOP_RECORDING, {}).then(function (response) {
+          if (destroyed) return response;
           if (!response.ok) setNotice(response.error || '停止录制失败', true);
           return refreshRecordingState();
+        }).catch(function (error) {
+          if (!destroyed) setNotice(error && error.message || '停止录制失败，请重试', true);
         }).finally(function () { recordingBusy = ''; renderRecordingControls(); });
         return;
       }
-      showConsent().then(function (confirmed) {
+      showConsent({ networkCapture: true }).then(function (confirmed) {
         if (!confirmed || destroyed) return;
         recordingBusy = 'starting';
         renderRecordingControls();
@@ -388,7 +588,9 @@
           draftCollectionId: String(collection && collection.draftCollectionId || ''),
           consentVersion: recordingContract.CONSENT_VERSION,
           confirmedAt: Date.now(),
+          networkCapture: confirmed,
         }).then(function (response) {
+          if (destroyed) return response;
           if (!response.ok) {
             setNotice(response.error || '开始录制失败', true);
             return response;
@@ -396,6 +598,8 @@
           recordingState = Object.assign({}, recordingState || {}, response.payload || {});
           recordingLibrary = null;
           return refreshRecordingState();
+        }).catch(function (error) {
+          if (!destroyed) setNotice(error && error.message || '开始录制失败，请重试', true);
         }).finally(function () { recordingBusy = ''; renderRecordingControls(); });
       });
     }
@@ -406,7 +610,8 @@
     }
 
     function conversationStorageKey(assistantId) {
-      return 'page-agent-conversation:' + String(entryConfig && entryConfig.tabId || 0) + ':' + String(assistantId || '');
+      return 'page-agent-conversation:' + String(entryConfig && entryConfig.tabId || 0) + ':' + String(assistantId || '')
+        + (applicationEntry ? ':' + win.location.pathname : '');
     }
 
     function rememberConversationId(assistantId, conversationId) {
@@ -420,9 +625,19 @@
       var key = conversationStorageKey(assistantId);
       var value = '';
       try { value = forceNew ? '' : String(win.sessionStorage.getItem(key) || ''); } catch (_) {}
+      if (!value && applicationEntry && !forceNew) {
+        var previous = (entryConfig && entryConfig.applicationConversations || []).find(function (item) {
+          return item.assistantId === assistantId;
+        });
+        if (previous) {
+          value = String(previous.conversationId || '');
+          rememberConversationId(assistantId, value);
+        }
+      }
       if (!value) {
         value = 'page:' + String(entryConfig && entryConfig.tabId || 0) + ':' + String(assistantId || 'assistant');
-        if (forceNew) value += ':' + Date.now().toString(36);
+        if (applicationEntry) value = nextId(value);
+        else if (forceNew) value += ':' + Date.now().toString(36);
         try { win.sessionStorage.setItem(key, value); } catch (_) {}
       }
       return value;
@@ -465,7 +680,11 @@
     function ensureSelectedAssistant() {
       if (assistantById(selectedAssistantId)) return selectedAssistantId;
       var remembered = selectedAssistantId ? '' : rememberedAssistantId();
+      var previous = applicationEntry && (entryConfig && entryConfig.applicationConversations || []).find(function (item) {
+        return !!assistantById(item.assistantId);
+      });
       selectedAssistantId = String(assistantById(remembered) && remembered
+        || previous && previous.assistantId
         || assistants[0] && assistants[0].id
         || '');
       rememberAssistantId(selectedAssistantId);
@@ -509,6 +728,9 @@
       if (!topic) return { text: newTopicDraft ? '新话题' : '就绪', kind: 'idle' };
       if (topic.pendingUserInput) return { text: '等待回答', kind: 'waiting' };
       if (topic.active || topic.status === 'running') {
+        if (contextUsage && contextUsage.topicId === topic.topicId && contextUsage.data.summaryStatus === 'running') {
+          return { text: '正在压缩摘要…', kind: 'summarizing' };
+        }
         return { text: runningStatusText(), kind: 'running' };
       }
       if (topic.status === 'failed') return { text: '失败', kind: 'failed' };
@@ -523,6 +745,11 @@
       notice.textContent = String(text || '');
       notice.className = 'notice' + (error ? ' error' : '');
       notice.hidden = !text;
+      if (recordingDrawerNotice) {
+        recordingDrawerNotice.textContent = String(text || '');
+        recordingDrawerNotice.className = 'recording-drawer-notice' + (error ? ' error' : '');
+        recordingDrawerNotice.hidden = !text || !recordingDrawer || recordingDrawer.hidden;
+      }
       if (text && autoClearMs > 0) {
         noticeTimer = win.setTimeout(function () {
           noticeTimer = 0;
@@ -567,7 +794,12 @@
 
     function setExpanded(next, focusInput) {
       expanded = !!next;
-      if (!expanded && recordingDrawer) recordingDrawer.hidden = true;
+      if (!expanded) closeContextPopover(false);
+      if (!expanded && recordingDrawer) {
+        recordingDrawer.hidden = true;
+        panel.classList.remove('recording-open');
+        recordingLibraryButton.setAttribute('aria-expanded', 'false');
+      }
       if (panel) panel.classList.toggle('expanded', expanded);
       refreshPanelPosition();
       var collapsedRunning = !expanded && !!(topic && topic.active);
@@ -578,9 +810,12 @@
         toggleButton.setAttribute('aria-label', toggleButton.title);
         toggleButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
       }
-      if (recordingLibraryButton) recordingLibraryButton.disabled = !expanded;
       resizeInput();
-      if (focusInput && input) win.setTimeout(function () { if (!destroyed) input.focus(); }, 0);
+      renderContextUsage();
+      if (expanded) loadContextUsage(false);
+      if (focusInput && input) win.setTimeout(function () {
+        if (!destroyed && !pendingConsent && (!recordingDrawer || recordingDrawer.hidden)) input.focus();
+      }, 0);
     }
 
     function syncRunPresentation(running, waitingForInput) {
@@ -595,7 +830,8 @@
       if (running && waitingForInput && !presentationWaiting) {
         setExpanded(true, false);
       } else if (running && !waitingForInput && (!presentationRunning || presentationWaiting)) {
-        setExpanded(false, false);
+        if (!pendingConsent && (!recordingDrawer || recordingDrawer.hidden)
+            && (!contextPopover || contextPopover.hidden)) setExpanded(false, false);
       } else if (!running && presentationRunning) {
         var revealingFromCollapsed = !expanded;
         setExpanded(true, true);
@@ -633,7 +869,9 @@
         event && event.status || '',
         detail.status || '',
         event && event.__live ? Number(event.at) || 0 : 0,
-        liveText.length,
+        event && Number(event.startedAt) || 0,
+        event && Number(event.durationMs) || 0,
+        liveText,
         index,
       ].join('\u001f');
     }
@@ -655,6 +893,20 @@
       win.requestAnimationFrame(function () {
         if (!destroyed && messages) messages.scrollTop = messages.scrollHeight;
       });
+    }
+
+    function stopMessageElapsedTimer() {
+      if (messageElapsedTimer) win.clearInterval(messageElapsedTimer);
+      messageElapsedTimer = 0;
+    }
+
+    function syncMessageElapsedTimer() {
+      // The shared document timer cannot reach labels inside this panel's Shadow DOM.
+      if (destroyed || documentRef.hidden || !messages || !eventView.updateElapsedLabels(messages, Date.now())) {
+        stopMessageElapsedTimer();
+        return;
+      }
+      if (!messageElapsedTimer) messageElapsedTimer = win.setInterval(syncMessageElapsedTimer, 100);
     }
 
     function setHistoryLoading(active) {
@@ -702,7 +954,10 @@
           disclosurePrefix: topicId,
           renderItem: renderMessageEvent,
           requestAnimationFrame: win.requestAnimationFrame && win.requestAnimationFrame.bind(win),
-          onRendered: hydrateImages,
+          onRendered: function (rows) {
+            hydrateImages(rows);
+            syncMessageElapsedTimer();
+          },
         });
         virtualListTopicId = topicId;
       }
@@ -885,9 +1140,8 @@
 
     function resizeInput() {
       if (!input) return;
-      var minimum = expanded ? 38 : 34;
       input.style.height = 'auto';
-      input.style.height = Math.min(112, Math.max(minimum, input.scrollHeight)) + 'px';
+      input.style.height = Math.min(112, Math.max(30, input.scrollHeight)) + 'px';
     }
 
     function formatDuration(value) {
@@ -917,34 +1171,30 @@
       recordButton.textContent = '';
       if (active) {
         recordButton.className = 'record-button recording';
-        recordButton.appendChild(iconStop());
-        var label = documentRef.createElement('span');
-        label.textContent = formatDuration(activeRecordingElapsed()) + ' · ' + String(Number(active.count) || 0);
-        recordButton.appendChild(label);
-        recordButton.title = activeState === 'recording' ? '停止页面操作录制' : '正在停止页面操作录制';
+        var stopping = activeState !== 'recording' || recordingBusy === 'stopping';
+        recordButton.textContent = stopping ? '正在停止' : '停止 ' + formatDuration(activeRecordingElapsed());
+        recordButton.title = stopping ? '正在停止页面操作录制' : '停止页面操作录制';
         if (active.warning) recordButton.title += '（已达到事件上限的 80%）';
-        recordButton.setAttribute('aria-label', recordButton.title + '，' + label.textContent);
+        recordButton.setAttribute('aria-label', recordButton.title + '，' + formatDuration(activeRecordingElapsed()) + '，' + String(Number(active.count) || 0) + ' 个事件');
         recordButton.disabled = !!recordingBusy || activeState !== 'recording';
       } else {
         recordButton.className = 'record-button';
-        recordButton.textContent = '录制';
+        recordButton.textContent = recordingBusy === 'starting' ? '准备中' : '录制';
         recordButton.title = recordingBusy === 'starting' ? '正在开始录制' : '录制页面操作';
         recordButton.setAttribute('aria-label', recordButton.title);
         recordButton.disabled = !!recordingBusy;
       }
       var collection = recordingCollection();
       var sourceCount = collection && Array.isArray(collection.sourceRecordingIds) ? collection.sourceRecordingIds.length : 0;
-      var fullSelectionCount = 0;
-      var partialActionCount = 0;
+      var selectedEventCount = 0;
       (recordingLibrary && recordingLibrary.sources || []).forEach(function (source) {
-        var selection = sourceSelectionState(source);
-        if (selection.fullySelected) fullSelectionCount += 1;
-        else partialActionCount += selection.selectedActionCount;
+        selectedEventCount += sourceSelectionState(source).selectedActionCount;
       });
       recordingSummary.hidden = !sourceCount;
-      recordingSummaryText.textContent = sourceCount + ' 个录制 · ' + fullSelectionCount + ' 个全选 ' + partialActionCount + ' 个动作';
+      recordingSummaryText.textContent = sourceCount + ' 份录制 · ' + (selectedEventCount
+        ? '已选 ' + selectedEventCount + ' 个事件' : '尚未选择事件');
       recordingLibraryButton.textContent = '查看与选择';
-      recordingLibraryButton.disabled = !expanded;
+      recordingLibraryButton.disabled = false;
       recordingLibraryButton.onclick = openRecordingLibrary;
     }
 
@@ -969,6 +1219,7 @@
         expectedRevision: collection.revision,
         ranges: requested,
       }).then(function (response) {
+        if (destroyed) return response;
         if (!response.ok) {
           syncPreviewSelection();
           setNotice(response.error || '更新录制选择失败', true);
@@ -977,9 +1228,7 @@
         if (!recordingState) recordingState = {};
         recordingState.collection = response.payload;
         if (recordingLibrary) recordingLibrary.collection = response.payload;
-        if (previewState.recordingId && !sourceIsSelected(previewState.recordingId)) {
-          previewState = { recordingId: '', manifest: null, events: [], query: {}, nextCursor: '', errorDetails: null, selectedSeqs: null };
-        } else syncPreviewSelection();
+        syncPreviewSelection();
         var finalRanges = response.payload && response.payload.selectedRanges || [];
         if (JSON.stringify(cleanSelectionRanges(finalRanges)) !== JSON.stringify(requested)) {
           setNotice('重叠或重复范围已归一为：' + finalRanges.map(function (range) {
@@ -987,6 +1236,11 @@
           }).join('；'), false, 5000);
         }
         return refreshRecordingLibrary();
+      }).catch(function (error) {
+        if (destroyed) return null;
+        syncPreviewSelection();
+        setNotice(error && error.message || '选择保存失败，请重试', true);
+        return null;
       }).finally(function () { recordingBusy = ''; renderRecordingControls(); renderRecordingDrawer(); });
     }
 
@@ -997,25 +1251,23 @@
       if (destroyed || recordingBusy) return;
       recordingBusy = 'remove-source';
       renderRecordingControls();
+      renderRecordingDrawer();
       sendRecording(contract.TYPES.REMOVE_RECORDING_SOURCE, {
         draftCollectionId: collection.draftCollectionId, recordingId: source.recordingId,
         expectedRevision: collection.revision,
       }).then(function (response) {
         if (!response.ok) { setNotice(response.error || '删除录制失败', true); return response; }
+        if (destroyed) return response;
         recordingState.collection = response.payload;
         previewState = { recordingId: '', manifest: null, events: [], query: {}, nextCursor: '', errorDetails: null, selectedSeqs: null };
         return refreshRecordingLibrary();
+      }).catch(function (error) {
+        if (!destroyed) setNotice(error && error.message || '删除录制失败，请重试', true);
       }).finally(function () { recordingBusy = ''; renderRecordingControls(); renderRecordingDrawer(); });
     }
 
     function sourceById(recordingId) {
       return (recordingLibrary && recordingLibrary.sources || []).find(function (source) { return source.recordingId === recordingId; }) || null;
-    }
-
-    function sourceIsSelected(recordingId) {
-      return selectedRecordingRanges().some(function (range) {
-        return String(range.recordingId || '') === String(recordingId || '');
-      });
     }
 
     function selectRecordingSource(source, selected) {
@@ -1026,7 +1278,7 @@
       if (selected) {
         var eventCount = Math.max(0, Number(source.stats && source.stats.eventCount) || 0);
         if (!eventCount || source.missing) {
-          setNotice('这份录制没有可选择的动作', true);
+          setNotice('这份录制没有可选择的事件', true);
           renderRecordingDrawer();
           return;
         }
@@ -1035,8 +1287,6 @@
           recordingId: source.recordingId, sourceSha256: source.sourceSha256,
           fromSeq: 1, toSeq: eventCount, selectionOrder: insertAt,
         });
-      } else if (previewState.recordingId === source.recordingId) {
-        previewState = { recordingId: '', manifest: null, events: [], query: {}, nextCursor: '', errorDetails: null, selectedSeqs: null };
       }
       retained.forEach(function (range, index) { range.selectionOrder = index; });
       if (retained.length > recordingContract.LIMITS.MAX_COMMAND_RANGES) {
@@ -1061,57 +1311,130 @@
 
     function previewRequest(source, query, append) {
       var collection = recordingCollection();
-      if (!collection || !source) return Promise.resolve(null);
+      if (destroyed || !collection || !source || recordingBusy) return Promise.resolve(null);
+      var currentPreview = previewState;
       recordingBusy = 'preview';
+      previewState.errorDetails = null;
+      previewState.error = '';
+      previewState.failedQuery = null;
+      renderRecordingControls();
       renderRecordingDrawer();
       return sendRecording(contract.TYPES.GET_RECORDING_PREVIEW, {
         draftCollectionId: collection.draftCollectionId, recordingId: source.recordingId,
         expectedRevision: collection.revision,
         query: query || {},
       }).then(function (response) {
+        if (destroyed || previewState !== currentPreview) return response;
         if (!response.ok) {
           previewState.errorDetails = response.details || null;
-          setNotice(response.error || '加载录制源失败', true);
+          previewState.error = response.error || '加载录制失败，请重试';
+          previewState.failedQuery = query || {};
+          previewState.failedAppend = append === true;
           return response;
         }
         var representation = response.payload || {};
         if (!query || !query.view || query.view === 'manifest') previewState.manifest = representation.data || null;
         else {
           var data = representation.data || {};
-          var nextItems = data.events || [];
+          var nextItems = data.events || data.results || [];
           previewState.events = append ? previewState.events.concat(nextItems) : nextItems;
           previewState.nextCursor = String(data.nextCursor || '');
+          previewState.totalMatched = Number(data.totalMatched) || 0;
           previewState.errorDetails = null;
         }
         return response;
-      }).finally(function () { recordingBusy = ''; renderRecordingDrawer(); });
+      }).catch(function (error) {
+        if (destroyed || previewState !== currentPreview) return null;
+        previewState.error = error && error.message || '加载录制失败，请重试';
+        previewState.failedQuery = query || {};
+        previewState.failedAppend = append === true;
+        return null;
+      }).finally(function () { recordingBusy = ''; renderRecordingControls(); renderRecordingDrawer(); });
     }
 
     function openRecordingSource(source) {
-      if (!expanded || !recordingDrawer || !sourceIsSelected(source && source.recordingId)) return;
-      if (previewState.recordingId === source.recordingId) {
-        previewState = { recordingId: '', manifest: null, events: [], query: {}, nextCursor: '', errorDetails: null, selectedSeqs: null };
-        renderRecordingDrawer();
-        return;
-      }
+      if (!expanded || !recordingDrawer || !source || source.missing || recordingBusy) return;
+      recordingSourceScrollTop = recordingDrawerBody.scrollTop;
       previewState = {
         recordingId: source.recordingId, manifest: null, events: [],
         query: { view: 'events', limit: 20 }, nextCursor: '', errorDetails: null,
+        category: 'all', searchText: '', expandedSeqs: Object.create(null), totalMatched: 0,
         selectedSeqs: previewSelectionForSource(source.recordingId),
       };
       recordingDrawer.hidden = false;
+      recordingDrawerFocusKey = '';
+      recordingDrawerBody.scrollTop = 0;
       renderRecordingDrawer();
+      recordingDrawerClose.focus({ preventScroll: true });
+      var currentPreview = previewState;
       previewRequest(source, {}).then(function (response) {
-        if (!response || !response.ok) return;
+        if (destroyed || previewState !== currentPreview || !response || !response.ok) return;
         return previewRequest(source, previewState.query, false);
       });
     }
 
     function openRecordingLibrary() {
-      if (!expanded || !recordingDrawer) return;
-      recordingDrawer.hidden = false;
+      if (!recordingDrawer) return;
+      closeContextPopover(false);
+      if (!expanded) { setExpanded(true, false); renderMessages(); }
       previewState = { recordingId: '', manifest: null, events: [], query: {}, nextCursor: '', errorDetails: null, selectedSeqs: null };
+      recordingSourceLimit = RECORDING_SOURCE_PAGE_SIZE;
+      recordingSourceScrollTop = 0;
+      recordingDrawerFocusKey = '';
+      recordingDrawer.hidden = false;
+      recordingDrawerBody.scrollTop = 0;
+      panel.classList.add('recording-open');
+      recordingLibraryButton.setAttribute('aria-expanded', 'true');
       renderRecordingDrawer();
+      refreshPanelPosition();
+      recordingDrawerClose.focus({ preventScroll: true });
+    }
+
+    function closeRecordingLibrary() {
+      if (!recordingDrawer) return;
+      if (sourceById(previewState.recordingId)) {
+        var sourceId = previewState.recordingId;
+        var listScrollTop = recordingSourceScrollTop;
+        previewState = { recordingId: '', manifest: null, events: [], query: {}, nextCursor: '', errorDetails: null, selectedSeqs: null };
+        recordingDrawerFocusKey = '';
+        recordingDrawerClose.focus({ preventScroll: true });
+        recordingDrawerBody.scrollTop = 0;
+        renderRecordingDrawer();
+        recordingDrawerBody.scrollTop = listScrollTop;
+        var sourceButton = Array.prototype.find.call(recordingDrawerBody.querySelectorAll('[data-recording-focus]'), function (node) {
+          return node.getAttribute('data-recording-focus') === 'preview-' + sourceId;
+        });
+        if (sourceButton) {
+          if (!sourceButton.disabled) sourceButton.focus({ preventScroll: true });
+          sourceButton.scrollIntoView({ block: 'nearest' });
+        }
+        recordingSourceScrollTop = recordingDrawerBody.scrollTop;
+        return;
+      }
+      recordingDrawer.hidden = true;
+      panel.classList.remove('recording-open');
+      recordingLibraryButton.setAttribute('aria-expanded', 'false');
+      renderMessages({ preserveScroll: true });
+      refreshPanelPosition();
+      recordingLibraryButton.focus({ preventScroll: true });
+    }
+
+    function filterRecordingEvents(category, searchText) {
+      if (recordingBusy) return;
+      var source = sourceById(previewState.recordingId);
+      var filter = RECORDING_CATEGORIES.find(function (item) { return item.id === category; }) || RECORDING_CATEGORIES[0];
+      var query = { view: 'events', limit: 20 };
+      searchText = String(searchText || '').trim();
+      if (filter.kinds.length) query.kinds = filter.kinds;
+      if (searchText) { query.view = 'search'; query.q = searchText; query.context = 0; }
+      previewState.category = filter.id;
+      previewState.searchText = searchText;
+      previewState.query = query;
+      previewState.events = [];
+      previewState.nextCursor = '';
+      previewState.totalMatched = 0;
+      recordingDrawerBody.scrollTop = 0;
+      return previewRequest(source, query, false);
     }
 
     function element(tag, className, textValue) {
@@ -1170,6 +1493,12 @@
 
     function eventTitle(event) {
       event = eventRecord(event);
+      if (event.network) {
+        var network = event.network;
+        var type = { fetch: 'Fetch', xhr: 'XHR', websocket: 'WebSocket', sse: 'SSE' }[network.resourceType] || '网络';
+        var phase = { request: '发起', open: '连接打开', send: '发送', message: '接收', close: '连接关闭', error: '错误', response: '响应' }[network.phase] || '响应';
+        return type + ' ' + phase + '：' + (event.kind === 'http' ? String(network.method || 'GET') + ' ' : '') + compactDisplay(event.url, 180);
+      }
       var target = targetLabel(event);
       var value = displayValue(event.value, 160);
       var inputValue = event.input || {};
@@ -1203,7 +1532,7 @@
 
     function setPreviewSeq(seq, checked) {
       seq = Number(seq);
-      if (!(seq > 0)) return;
+      if (!(seq > 0) || recordingBusy) return;
       if (!previewState.selectedSeqs) previewState.selectedSeqs = Object.create(null);
       if (checked) previewState.selectedSeqs[seq] = true;
       else delete previewState.selectedSeqs[seq];
@@ -1211,12 +1540,17 @@
       persistPreviewSelection(sourceById(previewState.recordingId));
     }
 
-    function setAllPreviewSelection(checked, eventCount) {
+    function clearPreviewSelection() {
+      if (recordingBusy) return;
       previewState.selectedSeqs = Object.create(null);
-      if (checked) {
-        for (var seq = 1; seq <= Number(eventCount); seq += 1) previewState.selectedSeqs[seq] = true;
-      }
       renderRecordingDrawer();
+      persistPreviewSelection(sourceById(previewState.recordingId));
+    }
+
+    function selectLoadedPreviewEvents() {
+      if (recordingBusy) return;
+      if (!previewState.selectedSeqs) previewState.selectedSeqs = Object.create(null);
+      previewState.events.forEach(function (event) { previewState.selectedSeqs[eventSequence(event)] = true; });
       persistPreviewSelection(sourceById(previewState.recordingId));
     }
 
@@ -1258,7 +1592,7 @@
     async function exportRecordingSource(source) {
       var collection = recordingCollection();
       if (!collection || !source || recordingBusy) return;
-      if (!await showConsent({ title: '导出录制', message: '导出的 Recording Artifact 会包含录制到的原始页面内容、输入值和完整 URL，可能含密码、验证码、账号或其他敏感信息。是否导出这份录制？', okText: '导出录制' })) return;
+      if (!await showConsent({ title: '导出录制', message: '导出文件包含整份录制中的页面操作、输入值、URL，以及勾选采集的网络请求和消息，可能含密码、验证码、账号或其他敏感信息。是否导出这份录制？', okText: '导出录制' })) return;
       if (destroyed || recordingBusy) return;
       recordingBusy = 'export';
       renderRecordingDrawer();
@@ -1288,38 +1622,87 @@
       }).finally(function () { recordingBusy = ''; renderRecordingDrawer(); });
     }
 
+    function loadMoreRecordingSources() {
+      if (destroyed || !recordingDrawer || recordingDrawer.hidden || sourceById(previewState.recordingId)) return;
+      var sourceCount = (recordingLibrary && recordingLibrary.sources || []).length;
+      if (recordingSourceLimit >= sourceCount) return;
+      recordingSourceLimit = Math.min(sourceCount, recordingSourceLimit + RECORDING_SOURCE_PAGE_SIZE);
+      renderRecordingDrawer();
+    }
+
+    function handleRecordingSourcesScroll() {
+      if (destroyed || !recordingDrawer || recordingDrawer.hidden || sourceById(previewState.recordingId)) return;
+      var previousTop = recordingSourceScrollTop;
+      recordingSourceScrollTop = recordingDrawerBody.scrollTop;
+      if (recordingSourceScrollTop > previousTop
+          && recordingDrawerBody.scrollHeight - recordingSourceScrollTop - recordingDrawerBody.clientHeight <= 24) {
+        loadMoreRecordingSources();
+      }
+    }
+
+    function handleRecordingSourcesWheel(event) {
+      if (event.deltaY > 0 && recordingDrawerBody.scrollHeight <= recordingDrawerBody.clientHeight + 1) {
+        loadMoreRecordingSources();
+      }
+    }
+
     function renderSourceList(parent) {
+      var sources = (recordingLibrary && recordingLibrary.sources || []).slice().sort(function (left, right) {
+        return (Number(right.startedAt) || 0) - (Number(left.startedAt) || 0);
+      });
       var section = element('section', 'recording-section recording-source-list');
-      (recordingLibrary && recordingLibrary.sources || []).forEach(function (source, sourceIndex) {
+      section.appendChild(element('p', 'recording-help', '勾选整份录制，或点击「查看」按需选择事件。'));
+      if (!sources.length) {
+        section.appendChild(element('p', 'recording-empty', '暂无录制。关闭此窗口，点击「录制」开始采集。'));
+      }
+      sources.slice(0, recordingSourceLimit).forEach(function (source) {
+        var sourceName = sourceDisplayName(source.recordingId);
         var selection = sourceSelectionState(source);
         var selected = selection.selected;
-        var open = previewState.recordingId === source.recordingId;
-        var row = element('div', 'recording-source-row' + (selected ? ' checked' : '') + (selection.fullySelected ? ' full' : (selected ? ' partial' : '')) + (open ? ' open' : ''));
+        var row = element('div', 'recording-source-row' + (selected ? ' checked' : ''));
         var checkbox = element('input', 'recording-source-check');
         checkbox.type = 'checkbox'; checkbox.checked = selection.fullySelected;
         checkbox.indeterminate = selected && !selection.fullySelected;
         checkbox.disabled = !!recordingBusy || !!source.missing || !(Number(source.stats && source.stats.eventCount) > 0);
-        checkbox.setAttribute('aria-label', (selection.fullySelected ? '取消全选' : '全选') + '录制 ' + (sourceIndex + 1));
+        checkbox.setAttribute('aria-label', (selection.fullySelected ? '取消全选' : '全选') + sourceName);
+        checkbox.setAttribute('data-recording-focus', 'source-' + source.recordingId);
         checkbox.addEventListener('change', function () { selectRecordingSource(source, checkbox.checked); });
         var info = element('div', 'recording-source-copy');
-        var sourceTitle = element('strong', '', '录制 ' + (sourceIndex + 1));
-        sourceTitle.title = source.recordingId;
-        info.appendChild(sourceTitle);
-        info.appendChild(element('span', '', source.missing ? '录制缺失' : (selection.fullySelected ? '已全选，可继续分选动作' : (selected ? '已选择 ' + selection.selectedActionCount + ' 个动作' : '勾选后可分选动作'))));
+        var sourceHeading = element('div', 'recording-source-heading');
+        var sourceTitle = element('strong', '', sourceName);
+        sourceHeading.appendChild(sourceTitle);
+        if (source.startedAt) {
+          var startedAt = new Date(source.startedAt);
+          var timestamp = element('time', '', startedAt.toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }));
+          timestamp.title = startedAt.toLocaleString();
+          sourceHeading.appendChild(timestamp);
+        }
+        info.appendChild(sourceHeading);
+        info.appendChild(element('span', '', source.missing ? '录制缺失' : '已选 ' + selection.selectedActionCount + '/' + (Number(source.stats && source.stats.eventCount) || 0) + ' 项 · ' + formatDuration(source.durationMs)));
         var actions = element('div', 'recording-row-actions');
-        var refineButton = commandButton(open ? '收起' : '分选', function () { openRecordingSource(source); }, !selected);
-        refineButton.disabled = !!recordingBusy || !!source.missing || !selected;
-        refineButton.setAttribute('aria-expanded', String(open));
+        var refineButton = commandButton('查看', function () { openRecordingSource(source); });
+        refineButton.disabled = !!recordingBusy || !!source.missing;
+        refineButton.setAttribute('data-recording-focus', 'preview-' + source.recordingId);
         actions.appendChild(refineButton);
         var exportButton = commandButton(recordingBusy === 'export' ? '导出中…' : '导出', function () { exportRecordingSource(source); }, true);
         exportButton.disabled = !!recordingBusy || !!source.missing;
+        exportButton.setAttribute('data-recording-focus', 'export-' + source.recordingId);
         actions.appendChild(exportButton);
         var removeButton = commandButton('删除', function () { removeRecordingSource(source); }, true);
         removeButton.classList.add('danger-command');
         removeButton.disabled = !!recordingBusy;
+        removeButton.setAttribute('data-recording-focus', 'remove-' + source.recordingId);
         actions.appendChild(removeButton);
         row.appendChild(checkbox); row.appendChild(info); row.appendChild(actions); section.appendChild(row);
       });
+      if (recordingSourceLimit < sources.length) {
+        var loadMore = commandButton('加载更多', loadMoreRecordingSources, true);
+        loadMore.title = '向下滚动加载更多录制，每次 5 条';
+        loadMore.setAttribute('data-recording-focus', 'load-more-sources');
+        var moreActions = element('div', 'recording-row-actions');
+        moreActions.appendChild(loadMore);
+        section.appendChild(moreActions);
+      }
       parent.appendChild(section);
     }
 
@@ -1346,6 +1729,26 @@
     }
 
     function appendStructuredEventDetails(parent, record) {
+      var network = record.network;
+      if (network) {
+        appendEventDetail(parent, '请求方式', network.resourceType === 'websocket' ? '' : network.method);
+        appendEventDetail(parent, '状态码', network.status || '');
+        appendEventDetail(parent, '阶段', network.phase);
+        appendEventDetail(parent, '耗时(ms)', network.durationMs);
+        appendEventDetail(parent, '内容类型', network.contentType);
+        appendEventDetail(parent, '请求头', network.requestHeaders ? JSON.stringify(network.requestHeaders, null, 2) : '');
+        appendEventDetail(parent, '请求正文', network.requestBody, 'raw-value');
+        appendEventDetail(parent, '响应/消息', network.bodyText, 'raw-value');
+        appendEventDetail(parent, '连接标识', network.streamId);
+        appendEventDetail(parent, '消息序号', network.streamSeq);
+        appendEventDetail(parent, '事件名称', network.eventName);
+        appendEventDetail(parent, '事件 ID', network.eventId);
+        appendEventDetail(parent, '关闭代码', network.closeCode);
+        appendEventDetail(parent, '关闭原因', network.closeReason);
+        appendEventDetail(parent, '错误', network.error);
+        appendEventDetail(parent, '采集截断', network.bodyTruncated || network.requestBodyTruncated ? '正文超过采集上限，已截断' : '');
+        appendEventDetail(parent, '显示截断', record.fieldWindows ? '长字段仅显示摘要，可导出查看已采集正文' : '');
+      }
       var navigation = record.navigation || {};
       appendEventDetail(parent, '来源页面', navigation.from);
       appendEventDetail(parent, '目标页面', navigation.to);
@@ -1392,22 +1795,34 @@
       var checkbox = element('input'); checkbox.type = 'checkbox'; checkbox.checked = selected;
       checkbox.disabled = !!recordingBusy;
       checkbox.setAttribute('aria-label', '选择事件 ' + seq + '：' + eventTitle(record));
+      checkbox.id = 'recording-event-check-' + seq;
+      checkbox.setAttribute('data-recording-focus', 'event-' + seq);
       checkbox.addEventListener('change', function () { setPreviewSeq(seq, checkbox.checked); });
       var order = element('span', 'recording-action-order', String(seq));
-      var copy = element('div', 'recording-action-copy');
-      var heading = element('div', 'recording-action-heading');
+      var copy = element('label', 'recording-action-copy');
+      copy.htmlFor = checkbox.id;
+      var heading = element('span', 'recording-action-heading');
       heading.appendChild(element('strong', '', eventTitle(record)));
       copy.appendChild(heading);
-      copy.appendChild(element('div', 'recording-action-meta', formatDuration(Number(record.t) || 0) + ' · ' + String(record.tab || 'T1') + (record.frame === 'child' ? ' · 子 frame' : '')));
+      var category = RECORDING_CATEGORIES.find(function (item) { return item.kinds.indexOf(record.kind) !== -1; });
+      copy.appendChild(element('span', 'recording-action-meta', (category ? category.label + ' · ' : '') + formatDuration(Number(record.t) || 0) + ' · ' + String(record.tab || 'T1') + (record.frame === 'child' ? ' · 子页面' : '') + (record.network && record.network.status ? ' · 状态 ' + record.network.status : '')));
       var details = element('details', 'recording-action-details');
-      details.appendChild(element('summary', '', '查看详情'));
-      appendEventDetail(details, '目标', targetLabel(record));
+      var detailSummary = element('summary', '', '查看详情');
+      detailSummary.setAttribute('data-recording-focus', 'details-' + seq);
+      details.appendChild(detailSummary);
+      details.open = !!(previewState.expandedSeqs && previewState.expandedSeqs[seq]);
+      details.addEventListener('toggle', function () {
+        if (!details.isConnected || previewState.recordingId !== source.recordingId) return;
+        if (!previewState.expandedSeqs) previewState.expandedSeqs = Object.create(null);
+        previewState.expandedSeqs[seq] = details.open;
+      });
+      if (!record.network) appendEventDetail(details, '目标', targetLabel(record));
       appendEventDetail(details, '目标语境', record.target && record.target.context);
       appendEventDetail(details, '原始值', record.value, 'raw-value');
       appendEventDetail(details, '链接', record.href);
       appendEventDetail(details, '表单地址', record.action);
       appendEventDetail(details, '页面标题', record.title);
-      appendEventDetail(details, '页面地址', record.url);
+      appendEventDetail(details, record.network ? '请求地址' : '页面地址', record.url);
       appendStructuredEventDetails(details, record);
       card.appendChild(checkbox); card.appendChild(order); card.appendChild(copy); card.appendChild(details);
       return card;
@@ -1417,11 +1832,26 @@
       var source = sourceById(previewState.recordingId);
       if (!source) return;
       var section = element('section', 'recording-section recording-preview');
-      var previewHeader = element('div', 'recording-preview-header');
-      var headerCopy = element('div', 'recording-preview-title');
-      headerCopy.appendChild(element('h3', '', sourceDisplayName(source.recordingId) + ' · 录制详情'));
-      previewHeader.appendChild(headerCopy);
-      section.appendChild(previewHeader);
+      if (previewState.error) {
+        var errorBox = element('div', 'recording-error-hint');
+        errorBox.setAttribute('role', 'alert');
+        errorBox.appendChild(element('p', '', previewState.errorDetails && previewState.errorDetails.seq
+          ? '第 ' + previewState.errorDetails.seq + ' 个事件内容较长，暂时无法展示。可返回列表导出录制查看。'
+          : previewState.error));
+        var retry = commandButton('重试', function () {
+          var query = previewState.failedQuery;
+          var currentPreview = previewState;
+          previewRequest(source, query, previewState.failedAppend).then(function (response) {
+            if (!destroyed && previewState === currentPreview && response && response.ok && (!query || !query.view)) {
+              previewRequest(source, previewState.query, false);
+            }
+          });
+        }, true);
+        retry.disabled = !!recordingBusy;
+        retry.setAttribute('data-recording-focus', 'retry');
+        errorBox.appendChild(retry);
+        section.appendChild(errorBox);
+      }
       if (!previewState.manifest) {
         section.appendChild(element('p', 'recording-empty', recordingBusy === 'preview' ? '正在读取录制…' : '录制详情不可用'));
         parent.appendChild(section); return;
@@ -1431,16 +1861,69 @@
       var selectedCount = Object.keys(previewState.selectedSeqs || {}).filter(function (seq) {
         return previewState.selectedSeqs[seq] === true;
       }).length;
+      var filters = element('div', 'recording-filters');
+      var categories = element('div', 'recording-categories');
+      categories.setAttribute('role', 'group');
+      categories.setAttribute('aria-label', '按事件分类筛选');
+      RECORDING_CATEGORIES.forEach(function (category) {
+        var categoryButton = commandButton(category.label, function () {
+          filterRecordingEvents(category.id, previewState.searchText);
+        }, true);
+        categoryButton.setAttribute('aria-pressed', String((previewState.category || 'all') === category.id));
+        categoryButton.setAttribute('data-recording-focus', 'category-' + category.id);
+        categoryButton.disabled = !!recordingBusy;
+        categories.appendChild(categoryButton);
+      });
+      filters.appendChild(categories);
+      var search = element('form', 'recording-search');
+      search.setAttribute('role', 'search');
+      var searchInput = element('input');
+      searchInput.type = 'search';
+      searchInput.placeholder = '搜索请求地址、名称或内容';
+      searchInput.setAttribute('aria-label', '在整份录制的当前分类中搜索');
+      searchInput.setAttribute('data-recording-focus', 'search');
+      searchInput.maxLength = recordingContract.LIMITS.MAX_SEARCH_QUERY;
+      searchInput.value = previewState.searchText || '';
+      searchInput.addEventListener('input', function () { previewState.searchText = searchInput.value; });
+      searchInput.addEventListener('search', function () {
+        if (!searchInput.value && !recordingBusy) filterRecordingEvents(previewState.category, '');
+      });
+      var searchButton = element('button', 'primary-command', '搜索');
+      searchButton.type = 'submit'; searchButton.disabled = !!recordingBusy;
+      searchButton.setAttribute('data-recording-focus', 'search-submit');
+      search.addEventListener('submit', function (event) {
+        event.preventDefault();
+        filterRecordingEvents(previewState.category, searchInput.value);
+      });
+      search.appendChild(searchInput); search.appendChild(searchButton);
+      if (previewState.query.q || previewState.category !== 'all') {
+        var reset = commandButton('重置', function () { filterRecordingEvents('all', ''); }, true);
+        reset.disabled = !!recordingBusy;
+        reset.setAttribute('data-recording-focus', 'reset');
+        search.appendChild(reset);
+      }
+      filters.appendChild(search);
+      section.appendChild(filters);
       var selectionBar = element('div', 'recording-selection-bar');
-      selectionBar.appendChild(element('strong', '', '已选择 ' + selectedCount + ' / ' + eventCount + ' 个动作'));
-      var selectAll = commandButton('全选', function () { setAllPreviewSelection(true, eventCount); }, true);
-      selectAll.disabled = !!recordingBusy || selectedCount === eventCount;
-      selectionBar.appendChild(selectAll);
-      var clearSelection = commandButton('清空', function () { setAllPreviewSelection(false, 0); }, true);
+      var selectionStatus = element('strong', '', '已选 ' + selectedCount + '/' + eventCount + (recordingBusy === 'selection' ? ' · 保存中…' : ''));
+      selectionStatus.title = '选择自动保存';
+      selectionStatus.setAttribute('role', 'status');
+      selectionBar.appendChild(selectionStatus);
+      var selectLoaded = commandButton('全选', selectLoadedPreviewEvents, true);
+      selectLoaded.title = '全选当前已显示的事件';
+      selectLoaded.setAttribute('aria-label', selectLoaded.title);
+      selectLoaded.disabled = !!recordingBusy || !previewState.events.length || previewState.events.every(function (event) { return previewState.selectedSeqs && previewState.selectedSeqs[eventSequence(event)]; });
+      selectLoaded.setAttribute('data-recording-focus', 'select-loaded');
+      selectionBar.appendChild(selectLoaded);
+      var clearSelection = commandButton('清空', clearPreviewSelection, true);
+      clearSelection.title = '清空这份录制的所有已选事件';
       clearSelection.disabled = !!recordingBusy || selectedCount === 0;
+      clearSelection.setAttribute('data-recording-focus', 'clear-selection');
       selectionBar.appendChild(clearSelection);
       section.appendChild(selectionBar);
-      if (previewState.errorDetails) section.appendChild(element('p', 'recording-error-hint', '这条动作内容较长，请导出录制查看完整原始内容。'));
+      var resultText = recordingBusy === 'preview' ? '正在加载…' : '显示 ' + previewState.events.length + '/' + (previewState.totalMatched || 0) + ' 个匹配事件';
+      if (previewState.query.q) resultText += ' · 搜索「' + previewState.query.q + '」';
+      section.appendChild(element('p', 'recording-help', resultText));
 
       var events = element('div', 'recording-events recording-timeline');
       events.setAttribute('role', 'list');
@@ -1451,19 +1934,46 @@
         card.setAttribute('role', 'listitem');
         events.appendChild(card);
       });
-      if (!previewState.events.length) events.appendChild(element('p', 'recording-empty', recordingBusy === 'preview' ? '正在读取时间线…' : '没有可展示的录制动作。'));
+      if (!previewState.events.length && !previewState.error && recordingBusy !== 'preview') events.appendChild(element('p', 'recording-empty', '没有匹配的事件。可切换分类或重置搜索；网络事件需要在录制前勾选对应采集项。'));
       section.appendChild(events);
-      if (previewState.nextCursor) section.appendChild(commandButton('加载下一页', function () {
-        previewRequest(source, Object.assign({}, previewState.query, { cursor: previewState.nextCursor }), true);
-      }, true));
+      if (previewState.nextCursor) {
+        var loadMore = commandButton(recordingBusy === 'preview' ? '加载中…' : '加载更多匹配事件', function () {
+          previewRequest(source, Object.assign({}, previewState.query, { cursor: previewState.nextCursor }), true);
+        }, true);
+        loadMore.disabled = !!recordingBusy;
+        loadMore.setAttribute('data-recording-focus', 'load-more');
+        section.appendChild(loadMore);
+      }
       parent.appendChild(section);
     }
 
     function renderRecordingDrawer() {
-      if (!recordingDrawer || recordingDrawer.hidden) return;
+      if (destroyed || !recordingDrawer || recordingDrawer.hidden) return;
+      var active = panel.getRootNode().activeElement;
+      var restoreFocus = !active || recordingDrawerBody.contains(active);
+      if (active && recordingDrawerBody.contains(active)) recordingDrawerFocusKey = active.getAttribute('data-recording-focus') || '';
+      var selectionStart = active && active.tagName === 'INPUT' && active.type === 'search' ? active.selectionStart : null;
+      var selectionEnd = selectionStart !== null ? active.selectionEnd : null;
+      var scrollTop = recordingDrawerBody.scrollTop;
+      var hasPreview = !!sourceById(previewState.recordingId);
+      recordingDrawerTitle.textContent = hasPreview ? sourceDisplayName(previewState.recordingId) + ' · 录制详情' : '查看与选择录制';
+      recordingDrawerClose.title = hasPreview ? '返回录制列表' : '关闭录制选择器';
+      recordingDrawerClose.setAttribute('aria-label', recordingDrawerClose.title);
       recordingDrawerBody.textContent = '';
-      renderSourceList(recordingDrawerBody);
-      renderPreview(recordingDrawerBody);
+      if (hasPreview) renderPreview(recordingDrawerBody);
+      else renderSourceList(recordingDrawerBody);
+      recordingDrawerBody.scrollTop = scrollTop;
+      if (restoreFocus && recordingDrawerFocusKey) {
+        var next = Array.prototype.find.call(recordingDrawerBody.querySelectorAll('[data-recording-focus]'), function (node) {
+          return node.getAttribute('data-recording-focus') === recordingDrawerFocusKey;
+        });
+        if (next && !next.disabled) {
+          next.focus({ preventScroll: true });
+          if (selectionStart !== null && next.type === 'search') next.setSelectionRange(selectionStart, selectionEnd);
+        }
+      }
+      if (!hasPreview) recordingSourceScrollTop = recordingDrawerBody.scrollTop;
+      refreshPanelPosition();
     }
 
     function refreshApplicationContext(force) {
@@ -1471,24 +1981,192 @@
       if (!force && conversationId === appContextTopicId) return;
       appContextTopicId = conversationId;
       var request = ++appContextRequest;
+      appContext = null;
       appContextNotice.hidden = true;
-      if (!conversationId) return;
+      if (!conversationId && !applicationEntry) return;
       runtime.sendMessage({ type: 'APP_CONVERSATION_CONTEXT', conversationId: conversationId }).then(function (response) {
         if (destroyed || request !== appContextRequest || !response || response.error || !response.result) return;
         var app = response.result;
-        appContextNotice.textContent = '正在编辑应用：' + app.name + (app.unavailable ? ' · ' + app.unavailable : '');
+        appContext = app;
+        var label = '正在编辑应用：' + app.name;
+        if (app.page) {
+          label = '当前应用：' + app.page.name + ' · ' + (app.page.slot === 'draft' ? '草稿预览' : '发布版')
+            + (app.page.appId !== app.appId ? '；正在编辑：' + app.name : '') + '；代码修改保存到草稿';
+        }
+        appContextNotice.textContent = label + (app.unavailable ? ' · ' + app.unavailable : '');
         appContextNotice.hidden = false;
       }).catch(function () {});
     }
 
+    function ensureContextUsage() {
+      var topicId = String(topic && topic.topicId || '');
+      if (!contextUsage || contextUsage.topicId !== topicId) {
+        closeContextPopover(false);
+        contextUsage = { topicId: topicId, data: {}, sequence: 0, version: 0, summaryRevision: 0, dirty: true, request: null, error: '' };
+        contextRenderKey = '';
+      }
+      return contextUsage;
+    }
+
+    function updateContextUsage(metadata, events) {
+      var current = ensureContextUsage();
+      (Array.isArray(events) ? events : []).forEach(function (event) {
+        if (Number(event.sequence) <= current.sequence) return;
+        current.sequence = Number(event.sequence);
+        if (event.type === 'model_response_completed') current.dirty = true;
+        var payload = event.payload || {};
+        if (event.type === 'generation_started') {
+          current.data.contextCompression = payload.preferences && payload.preferences.contextCompression || 'auto';
+          current.summaryRevision += 1;
+          current.version += 1;
+        }
+        if (/^(?:summary_requested|summary_committed|summary_failed)$/.test(event.type)) {
+          current.data.summaryStatus = event.type === 'summary_requested' ? 'running'
+            : event.type === 'summary_committed' ? 'completed' : 'failed';
+          current.data.summaryError = event.type === 'summary_failed' ? payload.error || payload.errorCode || '' : '';
+          current.summaryGenerationId = event.generationId;
+          if (event.type === 'summary_committed') {
+            current.data.checkpoint = {
+              checkpointId: payload.checkpointId,
+              createdAt: event.at,
+            };
+          }
+          current.summaryRevision += 1;
+          current.version += 1;
+        }
+      });
+      var active = metadata && metadata.activeGeneration;
+      if (current.data.summaryStatus === 'running' && (!active
+          || ['starting', 'running', 'waiting_user', 'cancelling'].indexOf(active.state) === -1
+          || current.summaryGenerationId && current.summaryGenerationId !== active.generationId)) {
+        current.data.summaryStatus = 'interrupted';
+        current.summaryRevision += 1;
+        current.version += 1;
+      }
+    }
+
+    function loadContextUsage(force) {
+      var current = ensureContextUsage();
+      if (destroyed || documentRef.hidden || !expanded || !current.topicId
+          || !conversationMetadata || conversationMetadata.conversationId !== current.topicId) return null;
+      if (current.request) return current.request;
+      if (!force && !current.dirty) return null;
+      current.dirty = false;
+      current.error = '';
+      var summaryRevision = current.summaryRevision;
+      current.request = sendCommand(contract.COMMANDS.GET_SUMMARY, { conversationId: current.topicId }).then(function (response) {
+        if (destroyed || contextUsage !== current) return;
+        if (!response.ok) throw new Error(response.error || '读取上下文用量失败');
+        var data = response.payload || {};
+        // Summary events can arrive while this read is pending. Keep their
+        // newer status while accepting the request's budget snapshot.
+        if (current.summaryRevision !== summaryRevision) {
+          ['summaryStatus', 'summaryError', 'contextCompression', 'checkpoint'].forEach(function (key) {
+            if (Object.prototype.hasOwnProperty.call(current.data, key)) data[key] = current.data[key];
+          });
+        }
+        current.data = data;
+        if (summaryRevision === current.summaryRevision && data.summaryStatus === 'running') {
+          current.summaryGenerationId = conversationMetadata.activeGeneration && conversationMetadata.activeGeneration.generationId;
+        }
+      }).catch(function (error) {
+        if (!destroyed && contextUsage === current) current.error = String(error && error.message || error);
+      }).finally(function () {
+        current.request = null;
+        if (destroyed || contextUsage !== current) return;
+        current.version += 1;
+        renderControls();
+      });
+      current.version += 1;
+      renderContextUsage();
+      return current.request;
+    }
+
+    function renderContextUsage() {
+      if (!contextMeter || destroyed) return;
+      var current = ensureContextUsage();
+      var key = [current.topicId, current.version, expanded, contextPopover.hidden].join(':');
+      if (contextRenderKey === key) return;
+      contextRenderKey = key;
+      var data = current.data;
+      var context = data.context;
+      var hasUsage = !current.error && context && Number.isFinite(context.inputTokens) && context.inputTokens >= 0
+        && Number.isFinite(context.inputLimit) && context.inputLimit > 0;
+      var percent = hasUsage ? context.inputTokens / context.inputLimit * 100 : 0;
+      var hasRatio = hasUsage && context.highWaterRatio > 0 && context.highWaterRatio < 1;
+      var thresholdPercent = hasRatio ? context.highWaterRatio * 100 : 85;
+      var showThreshold = hasRatio && data.contextCompression !== 'off';
+      var threshold = showThreshold ? Math.floor(context.inputLimit * context.highWaterRatio) : 0;
+      var tone = !hasUsage ? 'unknown' : percent >= thresholdPercent ? 'high'
+        : percent >= 70 ? 'warning' : percent >= 50 ? 'moderate' : 'low';
+      var remainingText = showThreshold ? (context.inputTokens > threshold ? '已超过阈值'
+        : '距阈值约 ' + (threshold - context.inputTokens).toLocaleString() + ' tokens') : '';
+      var tooltip = hasUsage ? '最近请求上下文占用' + (context.estimated ? '约 ' : ' ') + percent.toFixed(1) + '%；'
+        + context.inputTokens.toLocaleString() + ' / ' + context.inputLimit.toLocaleString() + ' tokens（可用输入预算）'
+        : current.error || (current.request ? '正在读取上下文用量' : '暂无上下文用量');
+      if (showThreshold) tooltip += '；刻度为自动摘要阈值 ' + thresholdPercent.toFixed(0) + '%，' + remainingText;
+      tooltip += '。点击查看上下文。';
+      contextMeter.className = 'context-meter is-' + tone;
+      contextMeter.disabled = !current.topicId;
+      contextMeterValue.textContent = hasUsage ? percent.toFixed(0) + '%' : '—';
+      contextMeter.title = tooltip;
+      contextMeter.setAttribute('aria-label', tooltip);
+      contextMeter.style.setProperty('--context-usage', Math.min(100, percent) + '%');
+      contextThreshold.hidden = !showThreshold;
+      if (showThreshold) contextMeter.style.setProperty('--context-threshold', thresholdPercent + '%');
+      contextCompactButton.hidden = expanded || tone !== 'high' || data.summaryStatus === 'running';
+      contextCompactButton.textContent = '上下文 ' + percent.toFixed(0) + '%';
+      contextCompactButton.title = tooltip;
+      contextRefreshButton.disabled = !!current.request || !current.topicId;
+      if (contextPopover.hidden) return;
+      contextPopoverBody.textContent = '';
+      contextPopoverBody.title = current.error || '';
+      conversationShared.contextUsageRows(data, { error: current.error, loading: !!current.request }).forEach(function (row) {
+        var item = element('div', 'context-detail-row');
+        item.appendChild(element('b', '', row[0]));
+        item.appendChild(element('span', '', row[1]));
+        contextPopoverBody.appendChild(item);
+      });
+    }
+
+    function closeContextPopover(restoreFocus) {
+      if (!contextPopover || contextPopover.hidden) return;
+      contextPopover.hidden = true;
+      panel.classList.remove('context-open');
+      contextRenderKey = '';
+      contextMeter.setAttribute('aria-expanded', 'false');
+      renderMessages({ preserveScroll: true });
+      refreshPanelPosition();
+      if (restoreFocus && expanded) contextMeter.focus();
+    }
+
+    function openContextPopover() {
+      if (!topic || !topic.topicId || pendingConsent) return;
+      if (!contextPopover.hidden) { closeContextPopover(true); return; }
+      if (!expanded) setExpanded(true, false);
+      contextPopover.hidden = false;
+      panel.classList.add('context-open');
+      contextMeter.setAttribute('aria-expanded', 'true');
+      renderContextUsage();
+      loadContextUsage(false);
+      refreshPanelPosition();
+      contextPopover.querySelector('.icon-button').focus();
+    }
+
     function renderControls() {
       if (destroyed) return;
+      ensureContextUsage();
       refreshApplicationContext(false);
       var meta = statusMeta();
       var running = !!(topic && topic.active);
       var collapsedRunning = running && !expanded && meta.kind === 'running';
       if (runtimeStatus) runtimeStatus.setAttribute('aria-live', collapsedRunning ? 'off' : 'polite');
       if (statusText.textContent !== meta.text) statusText.textContent = meta.text;
+      if (statusDot.getAttribute('data-status') !== meta.kind) {
+        statusDot.textContent = '';
+        statusDot.appendChild(iconStatus(meta.kind));
+        statusDot.setAttribute('data-status', meta.kind);
+      }
       statusDot.className = 'status-dot ' + meta.kind;
       title.textContent = '页面对话';
       topicLabel.textContent = topic && topic.label || (newTopicDraft ? '新话题' : '');
@@ -1496,7 +2174,7 @@
       var waitingForInput = !!pendingInputState();
       var operationPending = !!busy;
       syncRunPresentation(running, waitingForInput);
-      if (messages) messages.removeAttribute('inert');
+      if (messages && !pendingConsent && contextPopover.hidden) messages.removeAttribute('inert');
       assistantSelect.disabled = operationPending || running || !assistants.length;
       newTopicButton.disabled = operationPending || running || !assistants.length;
       openOptionsButton.disabled = !selectedAssistantId;
@@ -1504,7 +2182,6 @@
       input.placeholder = waitingForInput ? '请先回答上方问题' : (running ? '追加指令' : '输入消息');
       actionButton.disabled = operationPending || waitingForInput || !assistants.length || !String(input.value || '').trim();
       actionButton.className = 'action-button send';
-      replaceIcon(actionButton, iconSend());
       actionButton.title = running ? '追加指令' : '发送';
       actionButton.setAttribute('aria-label', actionButton.title);
       headerStopButton.disabled = operationPending || !running || !(topic && topic.topicId);
@@ -1512,6 +2189,8 @@
       headerStopButton.setAttribute('aria-label', headerStopButton.title);
       updatePendingInputControls();
       renderRecordingControls();
+      renderContextUsage();
+      loadContextUsage(false);
       if (!assistants.length && !busy && notice.hidden) setNotice('请先在设置中创建助手', true);
     }
 
@@ -1538,7 +2217,9 @@
         if (documentRef.hidden || !(topic && topic.active)) stopPoll();
         return;
       }
-      pollTimer = win.setInterval(function () { refreshState({ quiet: true }); }, 900);
+      pollTimer = win.setInterval(function () {
+        if (!refreshPromise) refreshState({ quiet: true });
+      }, 180);
     }
 
     function pendingFromActive(active) {
@@ -1694,6 +2375,7 @@
         cursor: { beforeSequence: beforeSequence },
         limit: listView.DEFAULT_PAGE_SIZE,
         includePayloads: true,
+        view: 'conversation',
       }).then(function (response) {
         if (!response.ok || destroyed || !topic || topic.topicId !== conversationId) return response;
         applyConversationEventPage(conversationId, response.payload || {}, 'older');
@@ -1749,6 +2431,7 @@
           if (payload.page) applyConversationEventPage(conversationId, payload.page, payload.pageDirection || 'initial');
           else if (rawConversationEventsTopicId !== conversationId) resetConversationEventWindow(conversationId);
           topic = projectedTopic(conversationMetadata);
+          updateContextUsage(conversationMetadata, payload.page && payload.page.events);
           if (payload.pageDirection === 'newer' && payload.page && payload.page.hasMoreAfter) {
             refreshQueued = true;
           }
@@ -1807,6 +2490,7 @@
             conversationId: conversationId,
             limit: listView.DEFAULT_PAGE_SIZE,
             includePayloads: true,
+            view: 'conversation',
           };
           if (!initialPage) eventInput.cursor = { afterSequence: cachedLastSequence };
           return sendCommand(contract.COMMANDS.GET_EVENTS, eventInput).then(function (eventsResponse) {
@@ -1907,7 +2591,7 @@
         recordingSelectionClaim: recordingAttachmentInput.recordingSelectionClaim || undefined,
         entry: {
           type: 'page',
-          currentResource: '/page/current',
+          currentResource: applicationEntry && appContext && appContext.appId ? '/apps/' + appContext.appId : '/page/current',
           origin: String(win.location && win.location.origin || ''),
         },
         budgets: {
@@ -2334,6 +3018,7 @@
 
     function handleVisibility() {
       renderControls();
+      syncMessageElapsedTimer();
       if (documentRef.hidden) stopPoll();
       else {
         refreshApplicationContext(true);
@@ -2344,8 +3029,8 @@
 
     function createHost() {
       host = documentRef.createElement('div');
-      host.id = 'page-automation-page-conversation';
-      host.setAttribute('data-page-automation-ui', 'page-conversation');
+      host.id = 'page-agent-page-conversation';
+      host.setAttribute('data-page-agent-ui', 'page-conversation');
       host.style.position = 'fixed';
       host.style.left = '50%';
       host.style.bottom = positionControllerApi.EDGE_GAP + 'px';
@@ -2357,7 +3042,7 @@
 
       var shadow = host.attachShadow({ mode: 'closed' });
       cleanups.push(globalThis.PageAgentCodeEditor.attach(shadow));
-      if (globalThis.PageAutomationConversationEventView.attachApplications) cleanups.push(globalThis.PageAutomationConversationEventView.attachApplications(shadow));
+      if (globalThis.PageAgentConversationEventView.attachApplications) cleanups.push(globalThis.PageAgentConversationEventView.attachApplications(shadow));
       // 键盘事件穿过 Shadow DOM 后会以 host 为目标，需阻止冒泡以免触发页面快捷键。
       ['keydown', 'keypress', 'keyup'].forEach(function (type) {
         listen(shadow, type, function (event) { event.stopPropagation(); });
@@ -2367,9 +3052,8 @@
         ':host{all:initial;color-scheme:light;--bg:#ffffff;--bg-secondary:#f9fafb;--bg-muted:#eaeef0;--text:#262626;--text-secondary:#728e9b;--value:#775351;--border:#d0dbe0;--border-strong:#aabbc3;--border-link:#ccdadb;--table-header:#728e9b;--accent:#004849;--accent-soft:rgba(0,72,73,.08);--danger:#ba554a;--success:#3da67a;--transmitting:#44a3cf;--warn:#cf9f5d;--control-radius:4px;--control-bg:rgba(249,250,251,.72);--control-bg-hover:#e3e8eb;--control-border:var(--border-link);--disabled:#a8a8a8;}',
         '*,*::before,*::after{box-sizing:border-box;letter-spacing:0;}',
         'button,select,textarea,input{font:inherit;letter-spacing:0;}',
-        '.panel{position:relative;display:flex;flex-direction:column;width:100%;max-height:calc(100vh - 96px);margin:0 auto;overflow:hidden;border:1px solid rgba(193,207,214,.88);border-radius:10px;background:rgba(255,255,255,.91);color:#10282b;box-shadow:0 16px 36px rgba(10,33,36,.15),0 2px 8px rgba(0,0,0,.10);font:13px/1.45 Inter,Roboto,Arial,sans-serif;pointer-events:auto;backdrop-filter:saturate(1.15) blur(14px);-webkit-backdrop-filter:saturate(1.15) blur(14px);transition:width .28s cubic-bezier(.22,1,.36,1),height .28s cubic-bezier(.22,1,.36,1),border-radius .24s ease,box-shadow .24s ease;animation:panel-enter .22s ease both;will-change:width,height;}.panel.positioning{transition:none!important;animation:none!important;}.panel.running{background:#fff;backdrop-filter:none;-webkit-backdrop-filter:none;will-change:auto;}',
+        '.panel{position:relative;display:flex;flex-direction:column;width:100%;max-height:calc(100vh - 96px);margin:0 auto;overflow:hidden;border:1px solid rgba(193,207,214,.88);border-radius:var(--control-radius);background:rgba(255,255,255,.91);color:#10282b;box-shadow:0 16px 36px rgba(10,33,36,.15),0 2px 8px rgba(0,0,0,.10);font:13px/1.45 Inter,Roboto,Arial,sans-serif;pointer-events:auto;backdrop-filter:saturate(1.15) blur(14px);-webkit-backdrop-filter:saturate(1.15) blur(14px);transition:width .28s cubic-bezier(.22,1,.36,1),height .28s cubic-bezier(.22,1,.36,1),border-radius .24s ease,box-shadow .24s ease;animation:panel-enter .22s ease both;will-change:width,height;}.panel.positioning{transition:none!important;animation:none!important;}.panel.running{background:#fff;backdrop-filter:none;-webkit-backdrop-filter:none;will-change:auto;}',
         '.panel.expanded{height:min(420px,calc(100vh - 96px));min-height:min(300px,calc(100vh - 96px));}',
-        '.panel.expanded:not(.has-events){height:min(320px,calc(100vh - 96px));}',
         '.panel:not(.expanded){height:auto;}',
         '.panel.running:not(.expanded){height:auto;max-height:calc(100vh - 96px);}',
         '.panel:not(.expanded) .messages,.panel:not(.expanded) .pending-input,.panel:not(.expanded) .notice{display:none;}',
@@ -2378,72 +3062,86 @@
         '.panel.has-events:not(.expanded) .conversation-event{display:none;}',
         '.panel.has-events:not(.expanded) [data-conversation-virtual-rows]>.conversation-event:last-child{display:block;max-height:none;overflow:visible;}',
         '.panel:not(.expanded) .notice:not([hidden]){display:block;}',
-        '.panel-header{display:flex;align-items:center;justify-content:space-between;gap:10px;height:44px;min-height:44px;padding:0 10px;border-bottom:1px solid rgba(220,228,231,.9);background:rgba(248,250,249,.82);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;}.panel.dragging .panel-header{cursor:grabbing;}',
+        '.panel-header{display:flex;flex-shrink:0;align-items:center;justify-content:space-between;gap:8px;min-height:36px;padding:4px 8px;border-bottom:1px solid rgba(220,228,231,.9);background:rgba(248,250,249,.82);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;}.panel.dragging .panel-header{cursor:grabbing;}',
         '.heading{display:flex;align-items:center;min-width:0;gap:8px;}',
-        '.brand-icon{width:22px;height:22px;flex:0 0 auto;border-radius:50%;}',
+        '.brand-icon{width:18px;height:18px;flex:0 0 auto;border-radius:50%;}',
         '.heading-copy{display:flex;flex-direction:column;min-width:0;}',
         '.panel-title{font:600 13px/1.25 Inter,Roboto,Arial,sans-serif;color:#10282b;}',
         '.topic-label{max-width:240px;color:#72838a;font:11px/1.25 Inter,Roboto,Arial,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
         '.header-actions{display:flex;min-width:0;align-items:center;justify-content:flex-end;gap:4px;}',
-        '.runtime-status{display:flex;align-items:center;gap:6px;min-width:0;color:#61757c;font:11px/1.2 Inter,Roboto,Arial,sans-serif;white-space:nowrap;}',
+        '.panel-header .icon-button svg{width:14px;height:14px}.panel:not(.expanded) .header-actions{gap:2px}',
+        '.runtime-status{display:flex;align-items:center;gap:4px;min-width:0;height:24px;margin-right:4px;color:#61757c;font:11px/1.2 Inter,Roboto,Arial,sans-serif;white-space:nowrap;}',
         '.status-text{display:block;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;}',
         '.panel.running:not(.expanded) .runtime-status{flex:1;margin-right:4px;color:#36565b;font-size:12px;font-weight:500;}',
-        '.status-dot{width:7px;height:7px;flex:0 0 auto;border-radius:50%;background:#9aabb1;}',
-        '.status-dot.running{background:#0b7772;box-shadow:0 0 0 3px rgba(11,119,114,.12);animation:status-pulse 1.4s ease-in-out infinite;}',
-        '.status-dot.waiting{background:#c28a42;box-shadow:0 0 0 3px rgba(194,138,66,.13);}.status-dot.failed{background:#b84e45;}.status-dot.stopped{background:#c28a42;}',
-        '@keyframes status-pulse{50%{opacity:.45;}}',
-        '.messages{flex:1;min-height:0;overflow-y:auto;padding:10px 10px 8px;scrollbar-color:#c5d0d4 transparent;scrollbar-width:thin;background:rgba(255,255,255,.78);}',
+        '.status-dot{display:inline-flex;width:14px;height:14px;flex:0 0 auto;color:#637980}.status-dot svg{width:14px;height:14px}.status-dot.running{color:var(--accent)}.status-dot.waiting,.status-dot.stopped{color:#946323}.status-dot.failed{color:var(--danger)}',
+        '.spinning{animation:icon-spin 1s linear infinite}@keyframes icon-spin{to{transform:rotate(360deg)}}',
+        '.messages{flex:1;min-height:0;overflow-y:auto;padding:8px;scrollbar-color:#c5d0d4 transparent;scrollbar-width:thin;background:rgba(255,255,255,.78);}',
         '.placeholder{display:flex;align-items:center;justify-content:center;min-height:100%;color:var(--text-secondary);font:12px/1.4 Roboto,Arial,sans-serif;}',
-        '.pending-input{flex:0 0 auto;max-height:min(46vh,310px);overflow:auto;padding:10px 12px;border-top:1px solid #dce4e7;background:#f8faf9;}',
+        '.pending-input{flex:0 0 auto;max-height:min(46vh,310px);overflow:auto;padding:8px;border-top:1px solid #dce4e7;background:#f8faf9;}',
         '.pending-input[hidden]{display:none;}.pending-input-heading{margin:0 0 8px;color:#0f5555;font:600 12px/1.35 Inter,Roboto,Arial,sans-serif;}',
-        '.pending-question{min-width:0;margin:0 0 10px;padding:0;border:0;}.pending-question legend{display:grid;width:100%;gap:2px;margin:0 0 6px;padding:0;color:#173336;}',
+        '.pending-question{min-width:0;margin:0 0 8px;padding:0;border:0;}.pending-question legend{display:grid;width:100%;gap:2px;margin:0 0 6px;padding:0;color:#173336;}',
         '.pending-question legend span{color:#6d8388;font:600 10px/1.3 Inter,Roboto,Arial,sans-serif;}.pending-question legend b{font:500 12px/1.45 Inter,Roboto,Arial,sans-serif;}',
         '.pending-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:6px;}',
         '.pending-option{display:flex;min-width:0;min-height:48px;align-items:flex-start;gap:7px;padding:7px 8px;border:1px solid #cbd7db;border-radius:6px;background:#fff;cursor:pointer;}',
         '.pending-option:has(input[type="radio"]:checked){border-color:#478381;background:#edf6f4;}.pending-option>input[type="radio"]{flex:0 0 auto;margin:3px 0 0;accent-color:var(--accent);}',
         '.pending-option>span{display:grid;min-width:0;flex:1;gap:2px;}.pending-option b{color:#173336;font:500 11.5px/1.35 Inter,Roboto,Arial,sans-serif;}.pending-option small{color:#71858b;font:10.5px/1.4 Inter,Roboto,Arial,sans-serif;}',
         '.pending-other-input{display:block;width:100%;min-width:0;height:28px;margin-top:2px;padding:4px 6px;border:1px solid #cbd7db;border-radius:5px;background:#fff;color:#10282b;outline:none;}',
-        '.pending-input-actions{display:flex;justify-content:flex-end;margin-top:2px;}.pending-submit{height:30px;padding:0 11px;border:1px solid #006d6b;border-radius:5px;background:#006d6b;color:#fff;cursor:pointer;font:500 11.5px/1 Inter,Roboto,Arial,sans-serif;}.pending-submit:hover,.pending-submit:focus-visible{background:#075856;border-color:#075856;outline:none;}.pending-submit:disabled{cursor:default;opacity:.45;}',
-        '.composer{flex:0 0 auto;padding:7px 9px 9px;border-top:1px solid rgba(220,228,231,.9);background:rgba(248,250,249,.82);}',
+        '.pending-input-actions{display:flex;justify-content:flex-start;margin-top:2px;}.pending-submit{height:28px;padding:0 8px;border:1px solid #006d6b;border-radius:5px;background:#006d6b;color:#fff;cursor:pointer;font:500 11.5px/1 Inter,Roboto,Arial,sans-serif;}.pending-submit:hover,.pending-submit:focus-visible{background:#075856;border-color:#075856;outline:none;}.pending-submit:disabled{cursor:default;opacity:.45;}',
+        '.composer{flex:0 0 auto;padding:7px 8px 8px;border-top:1px solid rgba(220,228,231,.9);background:rgba(248,250,249,.82);}',
         '.panel:not(.expanded) .composer{padding:7px 8px 8px;}',
-        '.composer-toolbar{display:flex;align-items:center;gap:6px;height:28px;margin-bottom:5px;}',
+        '.composer-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:5px;min-height:26px;margin-bottom:5px}.composer-toolbar .assistant-select{flex:1 1 100px}',
+        '.context-meter{--context-color:#16a085;display:grid;grid-template-rows:12px 3px;align-content:center;gap:3px;flex:0 0 100px;width:100px;height:26px;padding:0 6px;border:1px solid color-mix(in srgb,var(--context-color) 22%,var(--control-border));border-radius:6px;background:color-mix(in srgb,var(--context-color) 4%,var(--bg));color:var(--text-secondary);font:10px/12px Inter,Roboto,Arial,sans-serif;cursor:pointer}',
+        '.context-meter:hover:not(:disabled){background:color-mix(in srgb,var(--context-color) 9%,var(--bg));border-color:color-mix(in srgb,var(--context-color) 55%,var(--control-border))}.context-meter:disabled{cursor:default;opacity:.65}.context-meter-caption{white-space:nowrap}.context-meter-value{color:color-mix(in srgb,var(--context-color) 65%,var(--text));font-variant-numeric:tabular-nums}.context-meter-track{position:relative;display:block;width:100%;height:3px;border-radius:2px;background:color-mix(in srgb,var(--context-color) 12%,var(--bg-muted))}.context-meter-fill{display:block;width:var(--context-usage,0%);height:100%;border-radius:inherit;background:var(--context-color)}',
+        '.context-meter-threshold{position:absolute;top:-1px;left:var(--context-threshold);width:1px;height:5px;background:var(--text-secondary);opacity:.75}.context-meter.is-moderate{--context-color:#4a8ed8}.context-meter.is-warning{--context-color:var(--warn)}.context-meter.is-high{--context-color:var(--danger)}.context-meter.is-unknown{--context-color:var(--text-secondary)}.context-meter.is-unknown .context-meter-fill{width:100%;background:repeating-linear-gradient(135deg,transparent 0 4px,var(--border) 4px 6px)}',
+        '.context-compact-button{flex:0 0 auto;height:24px;padding:0 5px;border:1px solid color-mix(in srgb,var(--danger) 30%,var(--border));border-radius:4px;background:color-mix(in srgb,var(--danger) 5%,var(--bg));color:var(--danger);font:10px/1 Inter,Roboto,Arial,sans-serif;cursor:pointer}.context-compact-button:hover{background:color-mix(in srgb,var(--danger) 10%,var(--bg))}.context-compact-button[hidden],.context-popover[hidden],.context-meter-threshold[hidden]{display:none}',
+        '.status-dot.summarizing,.runtime-status:has(.summarizing){color:#8a72b7}.summary-breathe{animation:page-context-breathe 2s ease-in-out infinite}@keyframes page-context-breathe{0%,100%{opacity:.35}50%{opacity:1}}',
+        '.context-popover{position:relative;z-index:8;display:flex;flex:1;min-height:0;flex-direction:column;background:var(--bg);color:var(--text);font:12px/1.5 Inter,Roboto,Arial,sans-serif}.context-popover-header{display:flex;align-items:center;gap:6px;flex-shrink:0;min-height:34px;padding:4px 8px;border-bottom:1px solid var(--border)}.context-popover-header h2{min-width:0;flex:1;margin:0;font-size:13px;font-weight:600}.context-popover-body{min-height:0;flex:1;padding:8px}.context-detail-row{display:grid;grid-template-columns:76px minmax(0,1fr);gap:8px;align-items:start;padding:4px 0;border-bottom:1px solid rgba(208,219,224,.55);font-size:12px}.context-detail-row:last-child{border-bottom:0}.context-detail-row b{color:var(--accent);font-weight:500}.context-detail-row span{min-width:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}',
         '.panel:not(.expanded) .composer-toolbar{display:none;}',
-        '.assistant-select{min-width:0;max-width:250px;height:28px;padding:0 26px 0 8px;border:1px solid #cbd7db;border-radius:5px;background:#fff;color:#274248;font:11.5px/1 Inter,Roboto,Arial,sans-serif;outline:none;text-overflow:ellipsis;}',
+        '.assistant-select{min-width:0;max-width:250px;height:26px;padding:0 24px 0 6px;border:1px solid var(--control-border);border-radius:var(--control-radius);background:var(--control-bg);color:#274248;font:12px/1 Inter,Roboto,Arial,sans-serif;outline:none;text-overflow:ellipsis;}',
         '.toolbar-spacer{flex:1;min-width:4px;}',
-        '.record-button{all:unset;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:auto;min-width:46px;height:28px;padding:0 9px;flex:0 0 auto;border:1px solid rgba(186,85,74,.34);border-radius:6px;background:rgba(186,85,74,.06);color:#a6463f;font:600 11px/1 Inter,Roboto,Arial,sans-serif;cursor:pointer;transition:background .16s ease,color .16s ease,transform .16s ease,border-color .16s ease;}.record-button:hover,.record-button:focus-visible{outline:none;border-color:rgba(186,85,74,.52);background:#f4e8e7;color:#8d332d;}.record-button:focus-visible{box-shadow:0 0 0 2px rgba(0,72,73,.18);}.record-button:active{transform:scale(.94)}.record-button:disabled{cursor:default;opacity:.42}.record-button.recording{min-width:88px;max-width:156px;gap:5px;border-color:rgba(186,85,74,.42);border-radius:7px;background:rgba(186,85,74,.08);font-variant-numeric:tabular-nums}.record-button.recording svg{width:13px;height:13px}',
-        '.recording-summary{display:flex;align-items:center;gap:8px;min-height:27px;margin:0 1px 5px;padding:4px 6px;border:1px solid var(--border-strong);border-radius:var(--control-radius);background:var(--control-bg);color:var(--text-secondary);font:11px/1.35 Inter,Roboto,Arial,sans-serif}.recording-summary[hidden]{display:none}.recording-summary-text{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.recording-summary button{all:unset;flex:0 0 auto;color:var(--text-secondary);font-weight:600;cursor:pointer}.panel:not(.expanded) .recording-summary button{display:none}.recording-summary button:focus-visible{outline:2px solid rgba(0,72,73,.24);outline-offset:2px}',
+        '.record-button{all:unset;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;height:26px;padding:0 7px;flex:0 0 auto;border:1px solid var(--control-border);border-radius:var(--control-radius);background:var(--control-bg);color:#536d73;font:400 12px/1 Inter,Roboto,Arial,sans-serif;cursor:pointer}.record-button:hover:not(:disabled){border-color:#a6463f;background:#fff7f6;color:#a6463f}.record-button:disabled{cursor:default;opacity:.5}.record-button.recording{color:#a6463f;border-color:#d9b3ae;background:#fff7f6;font-variant-numeric:tabular-nums}',
+        '.recording-summary{display:flex;align-items:center;gap:6px;min-height:26px;margin:0 1px 5px;padding:0 6px;border:1px solid var(--border);border-radius:var(--control-radius);background:var(--control-bg);color:#536d73;font:11px/1.4 Inter,Roboto,Arial,sans-serif}.recording-summary[hidden]{display:none}.recording-summary-text{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.recording-summary button{all:unset;display:inline-flex;align-items:center;height:24px;padding:0 4px;flex:0 0 auto;color:var(--accent);border-radius:var(--control-radius);cursor:pointer}.recording-summary button:hover{background:var(--accent-soft)}',
         '.icon-button,.action-button,.header-stop-button{all:unset;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;color:#536d73;}',
-        '.icon-button{width:28px;height:28px;border-radius:5px;transition:transform .16s ease,background .16s ease,color .16s ease;}.icon-button:hover,.icon-button:focus-visible{outline:none;background:#e8eeee;color:#004849;}',
-        '.icon-button:active,.header-stop-button:active,.action-button:active{transform:scale(.92);}',
-        '.icon-button svg{width:17px;height:17px;}',
-        '.header-stop-button{display:none;width:28px;height:28px;border:1px solid rgba(186,85,74,.34);border-radius:7px;background:rgba(186,85,74,.07);color:#ad473e;}',
-        '.panel.running .header-stop-button{display:inline-flex;animation:control-enter .18s cubic-bezier(.22,1,.36,1) both;}.header-stop-button:hover,.header-stop-button:focus-visible{outline:none;border-color:rgba(186,85,74,.55);background:rgba(186,85,74,.13);color:#963a33;}',
-        '.header-stop-button svg{width:15px;height:15px;}',
+        '.icon-button{width:24px;height:24px;flex:0 0 auto;border-radius:var(--control-radius);transition:background .16s ease,color .16s ease;}.icon-button:hover:not(:disabled){background:#e8eeee;color:#004849;}',
+        '.icon-button:active,.action-button:active{transform:scale(.92);}',
+        '.icon-button svg{width:16px;height:16px;}',
+        '.header-stop-button{display:none;width:24px;height:24px;flex:0 0 auto;border:0;border-radius:var(--control-radius);background:transparent;color:#a3423a;}',
+        '.panel.running .header-stop-button{display:inline-flex;animation:control-enter .18s cubic-bezier(.22,1,.36,1) both;}.header-stop-button:hover:not(:disabled){background:#fceeed}.header-stop-button:active:not(:disabled){background:#f8dfdc}',
+        '.header-stop-button svg{width:16px;height:16px;flex-shrink:0;}',
         '.icon-button:disabled,.action-button:disabled,.header-stop-button:disabled{cursor:default;opacity:.42;}',
         '.composer-row{display:flex;align-items:flex-end;gap:7px;}',
-        '.message-input{display:block;min-width:0;flex:1;height:38px;min-height:34px;max-height:112px;padding:7px 9px;border:1px solid rgba(203,215,219,.94);border-radius:7px;background:rgba(255,255,255,.9);color:#10282b;font:12.5px/1.45 Inter,Roboto,Arial,sans-serif;outline:none;resize:none;overflow:auto;}',
+        '.message-input{display:block;min-width:0;flex:1;height:30px;min-height:30px;max-height:112px;padding:5px 7px;border:1px solid rgba(203,215,219,.94);border-radius:var(--control-radius);background:rgba(255,255,255,.9);color:#10282b;font:12.5px/1.45 Inter,Roboto,Arial,sans-serif;outline:none;resize:none;overflow:auto;}',
         'input:focus,select:focus,textarea:focus{outline:1px solid var(--accent);outline-offset:-1px;box-shadow:none;}',
         '.message-input::placeholder{color:#93a1a6;}.message-input:disabled{background:#f1f4f4;color:#829298;}',
-        '.action-button{width:38px;height:38px;flex:0 0 auto;border:1px solid #004849;border-radius:7px;background:#004849;color:#fff;transition:transform .16s ease,background .16s ease,border-color .16s ease,color .16s ease;}',
+        '.action-button{width:30px;height:28px;flex:0 0 auto;border:1px solid #004849;border-radius:var(--control-radius);background:#004849;color:#fff;transition:transform .16s ease,background .16s ease,border-color .16s ease,color .16s ease;}',
         '.action-button:hover,.action-button:focus-visible{outline:none;background:#103f44;border-color:#103f44;}',
-        '.action-button.stop{width:34px;height:34px;margin:2px;border-color:rgba(184,78,69,.42);border-radius:50%;background:rgba(184,78,69,.08);color:#b34b42;}.action-button.stop:hover,.action-button.stop:focus-visible{background:rgba(184,78,69,.15);border-color:rgba(184,78,69,.62);color:#963a33;}',
-        '.action-button svg{width:17px;height:17px;}',
+        '.action-button svg{width:16px;height:16px;}',
         '.notice{margin:0 2px 6px;color:#60757b;font:11px/1.35 Inter,Roboto,Arial,sans-serif;overflow-wrap:anywhere;}.notice[hidden]{display:none;}.notice.error{color:#a3423a;}',
-        '.recording-drawer{position:absolute;inset:44px 0 0;z-index:8;display:flex;flex-direction:column;background:var(--bg);color:var(--text)}.recording-drawer[hidden]{display:none}.recording-drawer-header{display:flex;align-items:center;gap:8px;min-height:42px;padding:0 10px;border-bottom:1px solid var(--border-strong)}.recording-drawer-header h2{min-width:0;flex:1;margin:0;font:650 13px/1.3 Inter,Roboto,Arial,sans-serif}.recording-drawer-close{all:unset;display:inline-flex;width:28px;height:28px;align-items:center;justify-content:center;border-radius:var(--control-radius);cursor:pointer}.recording-drawer-close:hover,.recording-drawer-close:focus-visible{outline:none;background:var(--control-bg-hover)}.recording-drawer-close svg{width:16px;height:16px}.recording-drawer-body{min-height:0;flex:1;overflow:auto;padding:10px}.recording-section{padding:9px 0;border-top:1px solid var(--border-strong)}.recording-section h3{margin:0 0 7px;color:var(--text);font:650 12px/1.3 Inter,Roboto,Arial,sans-serif}.recording-empty{margin:5px 0;color:var(--text-secondary);font-size:11px}.recording-error-hint{margin:6px 0;padding:6px;border-left:3px solid #c28a42;background:#fff9ee;color:#735526;font:10.5px/1.45 Inter,Roboto,Arial,sans-serif;overflow-wrap:anywhere}.recording-source-list{display:grid;gap:6px;padding:0;border:0}.recording-source-row{display:flex;align-items:center;gap:8px;min-height:42px;padding:7px 8px;border:1px solid var(--border-strong);border-radius:var(--control-radius);background:var(--control-bg)}.recording-source-row:hover{border-color:var(--border-strong);background:var(--control-bg-hover)}.recording-source-row.checked{border-color:var(--border-strong);background:var(--bg-muted)}.recording-source-check{width:15px;height:15px;flex:0 0 auto;margin:0;accent-color:var(--text-secondary)}.recording-source-copy{display:flex;min-width:0;flex:1;flex-direction:column}.recording-source-copy span{color:var(--text-secondary);font-size:10.5px}.recording-source-copy strong{color:var(--text);overflow-wrap:anywhere}.recording-row-actions{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.primary-command,.secondary-command{display:inline-flex;box-sizing:border-box;min-width:0;height:30px;align-items:center;justify-content:center;padding:0 10px;border-radius:var(--control-radius);cursor:pointer;font:400 12px/1 Inter,Roboto,Arial,sans-serif}.primary-command{border:1px solid var(--border-strong);background:var(--control-bg);color:var(--text-secondary)}.secondary-command{border:1px solid var(--border-strong);background:var(--control-bg);color:var(--text-secondary)}.primary-command:focus-visible,.secondary-command:focus-visible{outline:1px solid var(--border-strong);outline-offset:1px}.primary-command:hover:not(:disabled),.primary-command[aria-expanded="true"]{border-color:var(--border-strong);background:var(--bg-muted);color:var(--text)}.secondary-command:hover:not(:disabled){border-color:var(--border-strong);background:var(--control-bg-hover);color:var(--text)}.danger-command{color:var(--danger);border-color:var(--border-strong)}.danger-command:hover:not(:disabled){color:var(--danger);border-color:var(--border-strong);background:rgba(186,85,74,.08)}.recording-consent-overlay{position:absolute;inset:0;z-index:12;display:flex;align-items:center;justify-content:center;padding:14px;background:rgba(20,40,43,.34)}.recording-consent{max-height:100%;overflow:auto;padding:14px;border:1px solid var(--border-strong);border-radius:var(--control-radius);background:#fff;box-shadow:0 14px 34px rgba(10,33,36,.22)}.recording-consent h2{margin:0 0 8px;font:650 14px/1.3 Inter,Roboto,Arial,sans-serif}.recording-consent p{margin:0;color:#4f6268;font:11.5px/1.55 Inter,Roboto,Arial,sans-serif;white-space:pre-wrap}.recording-consent-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:12px}',
-        '.recording-drawer-body{padding:8px}.recording-section{padding:7px 0}.recording-source-list{padding:0}.recording-source-row{min-height:42px;padding:7px 8px}.recording-preview-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}.recording-preview-title{min-width:0;flex:1}.recording-preview-title h3{margin:0}.recording-selection-bar{position:sticky;top:-8px;z-index:2;display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:7px;padding:6px;border:1px solid var(--border-strong);background:var(--bg-secondary)}.recording-selection-bar>strong{margin-right:auto;font-size:10.5px}.primary-command:disabled,.secondary-command:disabled{cursor:not-allowed;opacity:1;background:var(--bg-muted);border-color:var(--border-strong);color:var(--disabled)}.recording-timeline{margin-top:7px}.recording-action-card{position:relative;display:grid;grid-template-columns:18px 26px minmax(0,1fr);align-items:start;gap:6px;margin:0 0 6px;padding:7px;border:1px solid var(--border-strong);border-radius:var(--control-radius);background:var(--bg)}.recording-action-card:not(:last-child)::after{position:absolute;z-index:0;top:31px;bottom:-8px;left:43px;width:1px;background:#cddbdd;content:""}.recording-action-card:hover{border-color:var(--border-strong);background:var(--control-bg-hover)}.recording-action-card.selected{border-color:var(--border-strong);background:var(--bg-muted)}.recording-action-card>input{width:15px;height:15px;margin:4px 0 0;accent-color:var(--text-secondary)}.recording-action-order{z-index:1;display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;border:1px solid var(--border-strong);border-radius:50%;background:#fff;color:#61777c;font:9.5px/1 ui-monospace,SFMono-Regular,Consolas,monospace}.recording-action-copy{min-width:0}.recording-action-heading strong{color:var(--text);font:500 11px/1.4 Inter,Roboto,Arial,sans-serif;overflow-wrap:anywhere}.recording-action-meta{margin-top:2px;color:#7a8b90;font-size:9.5px}.recording-action-details{grid-column:3/4;color:var(--text-secondary);font-size:10px}.recording-action-details>summary{width:max-content;color:var(--text-secondary)}.recording-event-detail{display:grid;grid-template-columns:58px minmax(0,1fr);gap:6px;padding:4px 0;border-top:1px solid #edf1f2}.recording-event-detail>span{color:#849297}.recording-event-detail>div{min-width:0;color:#29464b;white-space:pre-wrap;overflow-wrap:anywhere}.recording-event-detail.raw-value>div{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}',
-        '.recording-selection-bar{border-radius:var(--control-radius)}',
+        '.recording-drawer{position:relative;z-index:8;display:flex;flex:1;min-height:0;flex-direction:column;background:var(--bg);color:var(--text)}.recording-drawer[hidden]{display:none}.recording-drawer-header{display:flex;align-items:center;gap:6px;flex-shrink:0;min-height:34px;padding:4px 8px;border-bottom:1px solid var(--border)}.recording-drawer-header h2{min-width:0;flex:1;margin:0;font-size:13px;font-weight:600}.recording-drawer-body{min-height:0;flex:1;overflow:auto;padding:8px;overscroll-behavior:contain;scrollbar-width:thin}.recording-section h3{margin:0;font-size:12px;font-weight:500}.recording-empty,.recording-help{margin:0 0 6px;color:#536d73;font-size:11px;line-height:1.4}.recording-empty{padding:8px 6px;text-align:center}.recording-error-hint{margin:0 0 6px;padding:6px;border-left:3px solid #c28a42;background:#fff9ee;color:#735526;font-size:12px;overflow-wrap:anywhere}.recording-error-hint p{margin:0 0 6px}.recording-drawer-notice{padding:6px 8px;background:#eef6f4;color:var(--accent);font-size:12px;overflow-wrap:anywhere}.recording-drawer-notice.error{background:#fff4f2;color:#a3423a}',
+        '.recording-source-list{display:grid;gap:6px}.recording-source-list>.recording-help{margin:0}.recording-source-row{display:grid;grid-template-columns:14px minmax(0,1fr) auto;align-items:center;gap:7px;padding:7px 8px;border:1px solid var(--border);border-radius:var(--control-radius);background:#fff}.recording-source-row.checked{border-color:#80aaa4;background:#f2f8f6}.recording-source-check{width:14px;height:14px;margin:0;accent-color:var(--accent);cursor:pointer}.recording-source-copy{display:flex;min-width:0;flex-direction:column;gap:2px}.recording-source-copy>span{color:#536d73;font-size:11px}.recording-source-heading{display:flex;min-width:0;align-items:baseline;gap:6px}.recording-source-heading strong{flex-shrink:0;font-size:12px;font-weight:500}.recording-source-heading time{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#536d73;font-size:11px}.recording-row-actions{display:flex;align-items:center;gap:4px;flex-shrink:0}',
+        '.primary-command,.secondary-command{display:inline-flex;box-sizing:border-box;min-width:0;height:24px;align-items:center;justify-content:center;gap:4px;padding:0 7px;border:1px solid var(--control-border);border-radius:var(--control-radius);background:var(--control-bg);color:var(--accent);cursor:pointer;white-space:nowrap;font:400 12px/1 Inter,Roboto,Arial,sans-serif}.primary-command:hover:not(:disabled),.secondary-command:hover:not(:disabled){background:var(--control-bg-hover);border-color:var(--accent)}.secondary-command[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}.danger-command{color:var(--danger);border-color:rgba(186,85,74,.45)}.danger-command:hover:not(:disabled){background:rgba(186,85,74,.08);border-color:var(--danger);color:var(--danger)}.primary-command:disabled,.secondary-command:disabled{cursor:default;opacity:1;background:var(--bg-muted);border-color:var(--border);color:var(--disabled)}',
+        '.recording-filters{display:grid;gap:6px;margin-bottom:6px}.recording-categories{display:flex;min-width:0;gap:0;overflow-x:auto;scrollbar-width:thin}.recording-categories>button{flex:0 0 auto;padding:0 6px;border-radius:0;color:#536d73}.recording-categories>button+button{margin-left:-1px}.recording-categories>button:first-child{border-radius:var(--control-radius) 0 0 var(--control-radius)}.recording-categories>button:last-child{border-radius:0 var(--control-radius) var(--control-radius) 0}.recording-categories>button[aria-pressed="true"]{position:relative;z-index:1}.recording-search{display:flex;gap:4px}.recording-search input{min-width:0;flex:1;height:24px;padding:0 6px;border:1px solid var(--control-border);border-radius:var(--control-radius);font-size:12px;color:var(--text);background:#fff}.recording-selection-bar{position:sticky;top:-8px;z-index:2;display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:6px;padding:4px 0;border-bottom:1px solid var(--border);background:var(--bg)}.recording-selection-bar>strong{margin-right:auto;font-size:11px;font-weight:400;white-space:nowrap}',
+        '.recording-action-card{display:grid;grid-template-columns:14px 22px minmax(0,1fr);align-items:start;gap:3px 6px;margin-bottom:5px;padding:6px;border:1px solid var(--border);border-radius:var(--control-radius);background:#fff}.recording-action-card:hover{border-color:#8da7ad}.recording-action-card.selected{border-color:#80aaa4;background:#f2f8f6}.recording-action-card>input{width:14px;height:14px;margin:2px 0 0;accent-color:var(--accent);cursor:pointer}.recording-action-order{display:inline-flex;min-width:22px;min-height:18px;align-items:center;justify-content:center;color:#536d73;font:11px/1 ui-monospace,SFMono-Regular,Consolas,monospace}.recording-action-copy{min-width:0;cursor:pointer}.recording-action-heading{display:block}.recording-action-heading strong{font-size:12px;font-weight:400;line-height:1.4;overflow-wrap:anywhere}.recording-action-meta{display:block;margin-top:2px;color:#536d73;font-size:11px}.recording-action-details{grid-column:3/4;min-width:0;color:#536d73;font-size:12px}.recording-action-details>summary{width:fit-content;color:var(--accent)}.recording-event-detail{display:grid;grid-template-columns:64px minmax(0,1fr);gap:6px;padding:4px 0;border-top:1px solid #e2e9eb}.recording-event-detail>div{min-width:0;color:#29464b;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}.recording-event-detail.raw-value>div{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}',
+        '.recording-consent-overlay{position:absolute;inset:0;z-index:12;display:flex;align-items:center;justify-content:center;padding:8px;background:rgba(20,40,43,.34)}.recording-consent{display:flex;flex-direction:column;width:100%;min-width:0;max-height:100%;overflow:hidden;padding:8px;border:1px solid var(--border);border-radius:6px;background:#fff;box-shadow:0 8px 24px rgba(10,33,36,.18)}.recording-consent-header{display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-shrink:0}.recording-consent h2{flex:1;margin:0;font-size:13px;font-weight:600}.recording-consent p{margin:0;color:#4f6268;font-size:12px;line-height:1.5;white-space:pre-wrap}.recording-consent-body{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:0}.recording-consent-actions{display:flex;align-items:center;justify-content:flex-start;flex-wrap:wrap;gap:5px 6px;flex-shrink:0;padding-top:6px;margin-top:6px;border-top:1px solid var(--border)}.recording-consent-actions>.primary-command,.recording-consent-actions>.secondary-command{height:26px;padding:0 8px}',
+        '.recording-network-choices{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;margin:6px 0}.recording-network-choices label{display:inline-flex;align-items:center;gap:5px;min-height:24px;font-size:12px;white-space:nowrap;cursor:pointer}.recording-network-choices input,.recording-privacy-agreement input{flex-shrink:0;width:14px;height:14px;margin:0;accent-color:var(--accent)}',
+        '.recording-privacy-agreement{display:flex;align-items:center;gap:4px 6px;flex-wrap:wrap;flex-basis:100%;font-size:12px}.recording-privacy-agreement label{display:inline-flex;align-items:center;gap:5px;min-height:24px;cursor:pointer}.recording-privacy-link{all:unset;display:inline-flex;align-items:center;min-height:24px;padding:0 2px;color:var(--accent);font:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}.recording-consent .recording-consent-hint{min-width:0;flex:1;color:#536d73;font-size:11px}',
+        '.recording-privacy-terms{margin-top:6px;padding:8px;border:1px solid var(--border);border-radius:var(--control-radius);background:var(--bg-secondary)}.recording-privacy-terms section+section{margin-top:8px}.recording-privacy-terms h3{margin:0 0 4px;font-size:12px}.recording-privacy-terms p{line-height:1.6;overflow-wrap:anywhere}',
         '.panel.expanded .messages,.panel.expanded .pending-input,.panel.expanded .composer{animation:content-reveal .24s .06s cubic-bezier(.22,1,.36,1) both;}',
         '@keyframes panel-enter{from{opacity:0;}to{opacity:1;}}',
         '@keyframes content-reveal{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}',
         '@keyframes control-enter{from{opacity:0;transform:scale(.78);}to{opacity:1;transform:scale(1);}}',
-        '@media(max-width:640px){.panel.expanded{height:min(400px,calc(100vh - 96px));min-height:min(280px,calc(100vh - 96px));}.panel.expanded:not(.has-events){height:min(300px,calc(100vh - 96px));}.topic-label{max-width:150px;}.runtime-status{font-size:10px;}.assistant-select{max-width:190px;}.pending-options{grid-template-columns:1fr;}}',
-        '@media(max-width:390px){.panel-header{padding:0 8px;}.topic-label{max-width:112px;}.assistant-select{max-width:150px;}.composer{padding-left:7px;padding-right:7px;}}',
+        '@media(max-width:640px){.topic-label{max-width:150px;}.runtime-status{font-size:10px;}.assistant-select{max-width:190px;}.pending-options{grid-template-columns:1fr;}}',
+        '@media(max-width:390px){.topic-label{max-width:112px;}.assistant-select{max-width:150px;}.composer{padding-left:7px;padding-right:7px;}}',
+        '.panel.recording-open>:not(.panel-header):not(.recording-drawer):not(.recording-consent-overlay){display:none}.panel.expanded:has(>.recording-consent-overlay),.panel:not(.expanded):has(>.recording-consent-overlay){height:min(400px,calc(100vh - 96px));min-height:0}',
+        '.panel.context-open>:not(.panel-header):not(.context-popover):not(.recording-consent-overlay){display:none}',
+        '.panel button:focus-visible,.panel summary:focus-visible,.panel [tabindex="0"]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.panel button{touch-action:manipulation}.recording-drawer-notice[hidden],.recording-privacy-terms[hidden]{display:none}',
+        '@media(max-width:390px){.header-actions{gap:2px}.panel-header{gap:6px}.recording-event-detail{grid-template-columns:1fr;gap:2px}.recording-source-row{gap:5px;padding:6px}.recording-row-actions{gap:3px}.recording-row-actions button{padding:0 5px}.recording-source-heading{flex-wrap:wrap;gap:0 5px}.runtime-status{max-width:94px}.composer-toolbar{gap:4px}}',
         '@media(prefers-reduced-motion:reduce){.panel,.panel *{scroll-behavior:auto!important;transition:none!important;animation:none!important;}.status-dot.running{animation:none;}}',
       ].join('') + eventView.STYLE_TEXT + [
-        '.recording-action-details>summary{display:flex;align-items:center;gap:8px;min-height:24px;padding:0 4px;list-style:none;cursor:pointer;}.recording-action-details>summary::-webkit-details-marker{display:none;}',
-        '.recording-action-details>summary::before,.recording-row-actions [aria-expanded]::before{content:"";flex:0 0 8px;width:8px;height:8px;border:solid currentColor;border-width:0 2px 2px 0;transform:translateX(-2px) rotate(-45deg);}.recording-action-details[open]>summary::before,.recording-row-actions [aria-expanded="true"]::before{transform:translateY(-2px) rotate(45deg);}',
-        '.recording-row-actions [aria-expanded]{gap:8px;}.recording-action-details>summary:hover{background:var(--accent-soft);color:var(--accent);}.recording-action-details>summary:hover::before{color:var(--accent);}.recording-action-details>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}',
-        '.messages.conversation-event-stream{padding:10px 10px 8px;background:rgba(255,255,255,.74);}',
+        '.recording-action-details>summary{display:flex;align-items:center;gap:6px;min-height:24px;padding:0 3px;list-style:none;cursor:pointer;}.recording-action-details>summary::-webkit-details-marker{display:none;}',
+        '.recording-action-details>summary::before{content:"";flex:0 0 8px;width:8px;height:8px;border:solid currentColor;border-width:0 2px 2px 0;transform:translateX(-2px) rotate(-45deg);}.recording-action-details[open]>summary::before{transform:translateY(-2px) rotate(45deg);}',
+        '.recording-action-details>summary:hover{background:var(--accent-soft);color:var(--accent);}.recording-action-details>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}',
+        '.messages.conversation-event-stream{padding:8px;background:rgba(255,255,255,.74);}',
       ].join('');
 
       panel = documentRef.createElement('section');
@@ -2475,10 +3173,16 @@
       runtimeStatus.setAttribute('aria-live', 'polite');
       statusDot = documentRef.createElement('span');
       statusDot.className = 'status-dot';
+      statusDot.setAttribute('aria-hidden', 'true');
       statusText = documentRef.createElement('span');
       statusText.className = 'status-text';
       runtimeStatus.appendChild(statusDot);
       runtimeStatus.appendChild(statusText);
+      contextCompactButton = element('button', 'context-compact-button');
+      contextCompactButton.type = 'button';
+      contextCompactButton.hidden = true;
+      contextCompactButton.setAttribute('aria-haspopup', 'dialog');
+      contextCompactButton.setAttribute('aria-controls', 'page-context-popover');
       var headerActions = documentRef.createElement('div');
       headerActions.className = 'header-actions';
       toggleButton = documentRef.createElement('button');
@@ -2495,6 +3199,7 @@
       headerStopButton.className = 'header-stop-button';
       headerStopButton.appendChild(iconStop());
       headerActions.appendChild(runtimeStatus);
+      headerActions.appendChild(contextCompactButton);
       headerActions.appendChild(toggleButton);
       headerActions.appendChild(closeButton);
       headerActions.appendChild(headerStopButton);
@@ -2528,6 +3233,8 @@
       recordingSummaryText.className = 'recording-summary-text';
       recordingLibraryButton = documentRef.createElement('button');
       recordingLibraryButton.type = 'button';
+      recordingLibraryButton.setAttribute('aria-expanded', 'false');
+      recordingLibraryButton.setAttribute('aria-controls', 'recording-drawer');
       recordingSummary.appendChild(recordingSummaryText);
       recordingSummary.appendChild(recordingLibraryButton);
       var toolbar = documentRef.createElement('div');
@@ -2535,6 +3242,23 @@
       assistantSelect = documentRef.createElement('select');
       assistantSelect.className = 'assistant-select';
       assistantSelect.setAttribute('aria-label', '选择助手');
+      contextMeter = element('button', 'context-meter is-unknown');
+      contextMeter.type = 'button';
+      contextMeter.setAttribute('aria-expanded', 'false');
+      contextMeter.setAttribute('aria-haspopup', 'dialog');
+      contextMeter.setAttribute('aria-controls', 'page-context-popover');
+      var contextCaption = element('span', 'context-meter-caption', '上下文占用：');
+      contextCaption.setAttribute('aria-hidden', 'true');
+      contextMeterValue = element('span', 'context-meter-value', '—');
+      contextCaption.appendChild(contextMeterValue);
+      var contextTrack = element('span', 'context-meter-track');
+      contextTrack.setAttribute('aria-hidden', 'true');
+      contextTrack.appendChild(element('span', 'context-meter-fill'));
+      contextThreshold = element('span', 'context-meter-threshold');
+      contextThreshold.hidden = true;
+      contextTrack.appendChild(contextThreshold);
+      contextMeter.appendChild(contextCaption);
+      contextMeter.appendChild(contextTrack);
       var spacer = documentRef.createElement('span');
       spacer.className = 'toolbar-spacer';
       recordButton = documentRef.createElement('button');
@@ -2556,6 +3280,7 @@
       openOptionsButton.setAttribute('aria-label', '在对话页面打开');
       openOptionsButton.appendChild(iconOpenConversation());
       toolbar.appendChild(assistantSelect);
+      toolbar.appendChild(contextMeter);
       toolbar.appendChild(recordButton);
       toolbar.appendChild(spacer);
       toolbar.appendChild(openOptionsButton);
@@ -2580,22 +3305,68 @@
       composer.appendChild(composerRow);
 
       recordingDrawer = documentRef.createElement('section');
+      recordingDrawer.id = 'recording-drawer';
       recordingDrawer.className = 'recording-drawer';
       recordingDrawer.hidden = true;
       recordingDrawer.setAttribute('role', 'dialog');
-      recordingDrawer.setAttribute('aria-label', '录制选择器');
+      recordingDrawer.setAttribute('aria-labelledby', 'recording-drawer-title');
       var recordingDrawerHeader = documentRef.createElement('header');
       recordingDrawerHeader.className = 'recording-drawer-header';
-      recordingDrawerHeader.appendChild(element('h2', '', '录制'));
-      var recordingDrawerClose = documentRef.createElement('button');
-      recordingDrawerClose.type = 'button'; recordingDrawerClose.className = 'recording-drawer-close';
-      recordingDrawerClose.title = '关闭'; recordingDrawerClose.setAttribute('aria-label', '关闭录制选择器');
+      recordingDrawerTitle = element('h2', '', '查看与选择录制');
+      recordingDrawerTitle.id = 'recording-drawer-title';
+      recordingDrawerHeader.appendChild(recordingDrawerTitle);
+      recordingDrawerClose = documentRef.createElement('button');
+      recordingDrawerClose.type = 'button'; recordingDrawerClose.className = 'icon-button';
+      recordingDrawerClose.title = '关闭选择器'; recordingDrawerClose.setAttribute('aria-label', '关闭录制选择器');
       recordingDrawerClose.appendChild(iconClose());
-      recordingDrawerClose.addEventListener('click', function () { recordingDrawer.hidden = true; });
+      recordingDrawerClose.addEventListener('click', closeRecordingLibrary);
       recordingDrawerHeader.appendChild(recordingDrawerClose);
+      recordingDrawerNotice = element('div', 'recording-drawer-notice');
+      recordingDrawerNotice.hidden = true;
+      recordingDrawerNotice.setAttribute('role', 'status');
       recordingDrawerBody = documentRef.createElement('div');
       recordingDrawerBody.className = 'recording-drawer-body';
-      recordingDrawer.appendChild(recordingDrawerHeader); recordingDrawer.appendChild(recordingDrawerBody);
+      recordingDrawer.appendChild(recordingDrawerHeader); recordingDrawer.appendChild(recordingDrawerNotice); recordingDrawer.appendChild(recordingDrawerBody);
+      recordingDrawer.addEventListener('keydown', function (event) {
+        if (event.key !== 'Escape') return;
+        event.preventDefault(); event.stopPropagation();
+        if (event.target.type === 'search' && event.target.value && !recordingBusy) {
+          filterRecordingEvents(previewState.category, '');
+        } else closeRecordingLibrary();
+      });
+
+      contextPopover = element('section', 'context-popover');
+      contextPopover.id = 'page-context-popover';
+      contextPopover.hidden = true;
+      contextPopover.setAttribute('role', 'dialog');
+      contextPopover.setAttribute('aria-labelledby', 'page-context-title');
+      var contextHeader = element('header', 'context-popover-header');
+      var contextTitle = element('h2', '', '上下文');
+      contextTitle.id = 'page-context-title';
+      var contextClose = element('button', 'icon-button');
+      contextClose.type = 'button';
+      contextClose.title = '关闭上下文';
+      contextClose.setAttribute('aria-label', contextClose.title);
+      contextClose.appendChild(iconClose());
+      contextPopoverBody = element('div', 'context-popover-body');
+      contextRefreshButton = element('button', 'secondary-command', '刷新');
+      contextRefreshButton.type = 'button';
+      contextHeader.appendChild(contextTitle);
+      contextHeader.appendChild(contextRefreshButton);
+      contextHeader.appendChild(contextClose);
+      contextPopover.appendChild(contextHeader);
+      contextPopover.appendChild(contextPopoverBody);
+      listen(contextMeter, 'click', openContextPopover);
+      listen(contextCompactButton, 'click', openContextPopover);
+      listen(contextClose, 'click', function () { closeContextPopover(true); });
+      listen(contextRefreshButton, 'click', function () { loadContextUsage(true); });
+      listen(contextPopover, 'keydown', function (event) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          closeContextPopover(true);
+        }
+      });
 
       panel.appendChild(header);
       panel.appendChild(messages);
@@ -2603,6 +3374,7 @@
       panel.appendChild(pendingInputHost);
       panel.appendChild(composer);
       panel.appendChild(recordingDrawer);
+      panel.appendChild(contextPopover);
       shadow.appendChild(style);
       shadow.appendChild(panel);
       documentRef.documentElement.appendChild(host);
@@ -2646,6 +3418,7 @@
       if (pendingConsent) pendingConsent();
       ++requestRevision;
       stopPoll();
+      stopMessageElapsedTimer();
       if (panelPositionController) panelPositionController.destroy();
       panelPositionController = null;
       drainPendingInputCleanups();
@@ -2673,8 +3446,19 @@
       recordingSummaryText = null;
       recordingLibraryButton = null;
       recordingDrawer = null;
+      recordingDrawerTitle = null;
       recordingDrawerBody = null;
+      recordingDrawerClose = null;
+      recordingDrawerNotice = null;
       openOptionsButton = null;
+      contextMeter = null;
+      contextMeterValue = null;
+      contextThreshold = null;
+      contextCompactButton = null;
+      contextPopover = null;
+      contextPopoverBody = null;
+      contextRefreshButton = null;
+      contextUsage = null;
       closeButton = null;
       headerStopButton = null;
       panelHeader = null;
@@ -2725,6 +3509,8 @@
     listen(pendingSteeringHost, 'click', handlePendingSteeringAction);
     listen(messages, 'scroll', handleMessagesScroll, { passive: true });
     listen(messages, 'wheel', handleMessagesWheel, { passive: true });
+    listen(recordingDrawerBody, 'scroll', handleRecordingSourcesScroll, { passive: true });
+    listen(recordingDrawerBody, 'wheel', handleRecordingSourcesWheel, { passive: true });
     listen(input, 'input', function () { resizeInput(); renderControls(); });
     listen(input, 'keydown', handleInputKeydown);
     listen(documentRef, 'visibilitychange', handleVisibility);

@@ -1,9 +1,9 @@
-(function attachPageAutomationLifecycle(root, factory) {
+(function attachPageAgentLifecycle(root, factory) {
   'use strict';
 
   var api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  if (root) root.PageAutomationLifecycle = api;
+  if (root) root.PageAgentLifecycle = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 

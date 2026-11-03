@@ -13,7 +13,7 @@
     return;
   }
 
-  var lifecycleApi = root && root.PageAutomationLifecycle;
+  var lifecycleApi = root && root.PageAgentLifecycle;
   if (commonJs && !lifecycleApi) lifecycleApi = require('../ui/lifecycle.js');
   var api = factory(lifecycleApi);
   if (commonJs) module.exports = api;
@@ -117,7 +117,7 @@
     options = options || {};
     var lifecycleFactory = options.lifecycleApi || LifecycleApi;
     if (!lifecycleFactory || typeof lifecycleFactory.create !== 'function') {
-      throw new Error('PageAutomationLifecycle must load before OptionsPageController');
+      throw new Error('PageAgentLifecycle must load before OptionsPageController');
     }
 
     var window = options.window || (typeof globalThis !== 'undefined' ? globalThis : {});
@@ -279,10 +279,10 @@
         + (readonly ? '<div class="readonly-banner">内置页面来自扩展包，不能直接修改，请先复制为用户页面后编辑。</div>' : '')
         + '<div class="form-grid">'
         + '<div class="form-row"><label>名称</label><input type="text" id="page-label" value="' + esc(page.label) + '" placeholder="ERP 报表页"' + (readonly ? ' disabled' : '') + '></div>'
-        + '<div class="form-row"><label for="page-url">页面 URL</label><input type="text" id="page-url" value="' + esc(page.url) + '" placeholder="https://erp.internal.company.com/report"' + (readonly ? ' disabled' : '') + '></div>'
+        + '<div class="form-row"><label for="page-url">页面 URL</label><input type="text" id="page-url" value="' + esc(page.url) + '" placeholder="https://erp.example.com/report"' + (readonly ? ' disabled' : '') + '></div>'
         + '</div>'
         + '<div class="form-grid">'
-        + '<div class="form-row"><label for="page-hostnames">额外匹配域名（可选）</label><textarea id="page-hostnames" rows="2" placeholder="每行一个域名，如 erp2.internal.company.com"' + (readonly ? ' disabled' : '') + '>' + esc((page.matchers && page.matchers.hostnames) || '') + '</textarea></div>'
+        + '<div class="form-row"><label for="page-hostnames">额外匹配域名（可选）</label><textarea id="page-hostnames" rows="2" placeholder="每行一个域名，如 erp2.example.com"' + (readonly ? ' disabled' : '') + '>' + esc((page.matchers && page.matchers.hostnames) || '') + '</textarea></div>'
         + '<div class="form-row"><label for="page-urlincludes">URL 包含（可选）</label><input type="text" id="page-urlincludes" value="' + esc((page.matchers && page.matchers.urlIncludes) || '') + '" placeholder="/report/"' + (readonly ? ' disabled' : '') + '></div>'
         + '</div>'
         + '<div class="form-row form-row-spaced"><label class="switch-label"><input type="checkbox" id="page-capture"' + (page.captureNetwork ? ' checked' : '') + (readonly ? ' disabled' : '') + '><span class="switch-slider"></span><span class="switch-text">捕获网络请求</span></label></div>'

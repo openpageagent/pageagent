@@ -1,4 +1,4 @@
-const refreshIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-2L20 8M4 16l2.3 3A7 7 0 0 0 17.9 17"/></svg>';
+const refreshIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15.36-6.36L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.36 6.36L3 16M8 16H3v5"/></svg>';
 
 export const layout = `
 <main class="gitlab-app">
@@ -9,27 +9,30 @@ export const layout = `
 
   <fieldset id="operation-fields" disabled aria-label="GitLab 工作台">
     <div class="command-bar">
-      <div class="project-control">
-        <div class="field-heading">
-          <label for="project">项目</label>
-          <div class="field-actions">
-            <details id="project-filters" class="project-filters"><summary>筛选项目</summary><div class="filter-popover">
-              <label>接口搜索<input id="project-search" type="search" placeholder="按项目名称搜索" autocomplete="off"></label>
-              <label>本地过滤<input id="project-filter" type="search" placeholder="过滤已加载的项目" autocomplete="off"></label>
-              <label class="check"><input id="project-regex" type="checkbox" checked>使用正则表达式</label>
-            </div></details>
+      <div class="command-pane">
+        <div class="project-control">
+          <div class="field-heading">
+            <label for="project">项目</label>
             <button id="refresh-projects" class="icon-button small" type="button" title="刷新项目" aria-label="刷新项目">${refreshIcon}</button>
           </div>
+          <select id="project"><option value="">请选择项目</option></select>
+          <div class="project-filters">
+            <input id="project-search" type="search" placeholder="搜索项目（接口）" aria-label="项目接口搜索" autocomplete="off">
+            <div class="local-filter"><input id="project-filter" type="search" placeholder="本地过滤" aria-label="项目本地过滤" autocomplete="off"><label class="check"><input id="project-regex" type="checkbox" checked>正则</label></div>
+          </div>
+          <p id="project-status" class="message compact-message" role="status"></p>
+          <p id="project-name" class="sr-only"></p>
         </div>
-        <select id="project"><option value="">请选择项目</option></select>
-        <p id="project-status" class="message compact-message" role="status"></p>
-        <p id="project-name" class="sr-only"></p>
+        <div class="commit-control">
+          <div class="commit-input"><label for="commit">Commit</label><input id="commit" type="text" placeholder="输入 Commit SHA，自动读取标题" autocomplete="off" spellcheck="false" aria-describedby="commit-status"></div>
+          <p id="commit-status" class="message info-box" role="status" aria-label="Commit 信息" tabindex="0"></p>
+        </div>
       </div>
-      <div class="commit-control"><label for="commit" class="field-heading">Commit</label><input id="commit" type="text" placeholder="输入 Commit SHA，自动读取标题" autocomplete="off" spellcheck="false"></div>
-      <div class="operation-control"><label for="operation" class="field-heading">操作</label><select id="operation"><option value="merge">创建合并请求</option><option value="cherry-pick">Cherry-pick</option></select></div>
-      <div class="run-control"><span class="field-heading" aria-hidden="true">&nbsp;</span><button id="run" class="btn-primary" type="button" disabled>生成合并请求</button></div>
-      <div class="info-row">
-        <p id="commit-status" class="message info-box" role="status" aria-label="Commit 信息" tabindex="0"></p>
+      <div class="command-pane">
+        <div class="operation-bar">
+          <div class="operation-control"><label for="operation" class="field-heading">操作</label><select id="operation"><option value="merge">创建合并请求</option><option value="cherry-pick">Cherry-pick</option></select></div>
+          <button id="run" class="btn-primary" type="button" disabled>创建合并请求</button>
+        </div>
         <section class="preview-box info-box" aria-labelledby="preview-heading" tabindex="0"><h2 id="preview-heading">执行预览</h2><p id="operation-help" class="form-help"></p><p id="preview-empty" class="empty">添加待处理分支后，在这里确认迁移方向。</p><ul id="preview" class="preview"></ul></section>
       </div>
     </div>

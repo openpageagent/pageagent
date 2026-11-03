@@ -103,23 +103,23 @@ body {
   flex-shrink: 0;
   align-items: center;
   gap: 12px;
-  padding: 8px 12px;
+  padding: 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
 }
 .sidepanel-tabs { flex: 1; }
 .sidepanel-panel { flex: 1; min-height: 0; min-width: 0; }
 #flows-panel { display: flex; flex-direction: column; overflow: hidden; }
-#apps-panel { padding: 12px; overflow-y: auto; background: var(--bg); }
-#apps-message { margin-bottom: 12px; color: var(--danger); overflow-wrap: anywhere; }
+#apps-panel { padding: 8px; overflow-y: auto; background: var(--bg); }
+#apps-message { margin-bottom: 8px; color: var(--danger); overflow-wrap: anywhere; }
 #section-apps .app-grid { grid-template-columns: minmax(0, 1fr); }
 #section-apps .app-catalog-section { padding: 0; border: 0; }
-#section-apps .app-toolbar { margin-bottom: 12px; }
+#section-apps .app-toolbar { margin-bottom: 8px; }
 #section-apps .app-toolbar > input { flex: 1 1 160px; width: 100%; }
 
 /* Sections */
 section {
-  padding: 10px 12px;
+  padding: 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   flex-shrink: 0;
@@ -141,7 +141,7 @@ section h3 {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 14px 14px 12px;
+  padding: 8px;
 }
 .field-row {
   display: grid;
@@ -279,7 +279,7 @@ textarea:focus {
   max-height: min(340px, calc(100vh - 24px));
   overflow: auto;
   user-select: text;
-  padding: 10px 12px;
+  padding: 8px;
   border: 1px solid var(--border-strong);
   border-radius: var(--control-radius);
   background: var(--bg);
@@ -323,8 +323,8 @@ textarea:focus {
   justify-content: center;
   gap: 8px;
   min-width: 0;
-  height: var(--control-height);
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 8px;
   border: 1px solid var(--control-border);
   border-radius: var(--control-radius);
   font-size: 13px;
@@ -340,7 +340,7 @@ textarea:focus {
 .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-danger { background: var(--control-bg); color: var(--danger); border-color: rgba(186, 85, 74, 0.45); }
 .btn-danger:hover { background: var(--danger-soft); border-color: var(--danger); }
-.btn-small { height: 30px; padding: 0 10px; font-size: 12px; background: var(--control-bg); color: var(--accent); border-color: var(--control-border); }
+.btn-small { height: 28px; padding: 0 8px; font-size: 12px; background: var(--control-bg); color: var(--accent); border-color: var(--control-border); }
 .btn-small:hover { background: var(--control-bg-hover); border-color: var(--accent); }
 .btn-small.icon-only {
   min-width: 44px;
@@ -359,7 +359,7 @@ textarea:focus {
 .run-actions .btn-primary,
 .run-actions .btn-danger {
   width: 44px;
-  height: 32px;
+  height: 28px;
   min-width: 44px;
   padding: 0;
   font-size: 12px;
@@ -367,7 +367,7 @@ textarea:focus {
 }
 #btn-clear-sessions {
   width: 44px;
-  height: 32px;
+  height: 28px;
   min-width: 44px;
   padding: 0;
   font-size: 12px;
@@ -417,7 +417,7 @@ textarea:focus {
   align-content: center;
   gap: 6px;
   min-height: 92px;
-  padding: 12px 8px;
+  padding: 8px;
   color: var(--text-secondary);
   text-align: center;
 }
@@ -491,8 +491,8 @@ textarea:focus {
   pointer-events: none;
 }
 .panel-action {
-  height: var(--control-height);
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 8px;
   line-height: 1;
   box-shadow: none;
   pointer-events: auto;
@@ -540,7 +540,7 @@ textarea:focus {
   grid-template-columns: max-content minmax(0, 1fr) max-content;
   gap: 8px;
   align-items: center;
-  padding: 4px 12px;
+  padding: 4px 8px;
   border-top: 1px solid var(--border);
   background: var(--bg-toolbar);
   font-size: 11px;
@@ -590,11 +590,11 @@ textarea:focus {
 /* 停止后「继续」横幅 */
 .continue-banner {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 8px 10px; margin-bottom: 8px;
+  padding: 8px; margin-bottom: 8px;
   border: 1px solid var(--accent); border-radius: var(--radius);
   background: var(--accent-soft); font-size: 12px; color: var(--text);
 }
-.continue-banner .btn-continue { flex-shrink: 0; padding: 4px 12px; font-size: 12px; }
+.continue-banner .btn-continue { flex-shrink: 0; padding: 4px 8px; font-size: 12px; }
 
 #debug-content {
   flex: 1;
@@ -627,7 +627,7 @@ textarea:focus {
   align-items: center;
   justify-content: center;
   height: 30px;
-  padding: 0 10px;
+  padding: 0 8px;
   border: 1px solid var(--control-border);
   border-radius: 0;
   background: var(--control-bg);
@@ -738,11 +738,11 @@ textarea:focus {
   background: var(--bg-muted);
   border: 1px solid var(--bg-muted);
   border-radius: var(--radius);
-  padding: 6px 10px 50px;
+  padding: 6px 8px 50px;
 }
 
 .trace-item {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -801,7 +801,7 @@ textarea:focus {
   background: var(--bg-muted);
   border: 1px solid var(--bg-muted);
   border-radius: var(--radius);
-  padding: 7px 10px;
+  padding: 7px 8px;
   margin-top: 2px;
   white-space: pre-wrap;
   word-break: break-all;

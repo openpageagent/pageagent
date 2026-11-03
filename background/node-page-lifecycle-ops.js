@@ -270,7 +270,7 @@
       }
       var readinessOption = ownValue(options, 'readiness', undefined);
       var startedMs = Date.now();
-      var foreground = foregroundRequested(options) ? tabRuntime.foregroundTabForAutomation(tabId) : Promise.resolve(tabId);
+      var foreground = foregroundRequested(options) ? tabRuntime.foregroundTabForAgent(tabId) : Promise.resolve(tabId);
       return foreground.then(function () {
         // Load completion is followed by a short advisory DOM quiet window.
         // Network idle remains opt-in in the runtime's default policy.

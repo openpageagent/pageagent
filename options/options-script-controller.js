@@ -13,7 +13,7 @@
     return;
   }
 
-  var lifecycleApi = root && root.PageAutomationLifecycle;
+  var lifecycleApi = root && root.PageAgentLifecycle;
   if (commonJs && !lifecycleApi) lifecycleApi = require('../ui/lifecycle.js');
   var api = factory(lifecycleApi);
   if (commonJs) module.exports = api;
@@ -125,7 +125,7 @@
     options = options || {};
     var lifecycleFactory = options.lifecycleApi || LifecycleApi;
     if (!lifecycleFactory || typeof lifecycleFactory.create !== 'function') {
-      throw new Error('PageAutomationLifecycle must load before OptionsScriptController');
+      throw new Error('PageAgentLifecycle must load before OptionsScriptController');
     }
 
     var window = options.window || (typeof globalThis !== 'undefined' ? globalThis : {});
@@ -211,8 +211,8 @@
         + '<page-code-editor id="script-code" language="javascript" rows="18" aria-label="脚本代码" placeholder="const t = await ctx.get(\'orders\');\nawait log(\'共 \' + t.rowCount + \' 行\');\nreturn t.rows.filter(r => r[\'状态\'] === \'待处理\');">' + esc(draft.code) + '</page-code-editor></div>'
         + '<div class="editor-actions">'
         + '<button class="btn-primary" data-action="save-script">保存</button>'
-        + '<button class="btn-secondary" data-action="test-script">保存并运行</button>'
         + '<button class="btn-secondary" data-action="cancel-script">取消</button>'
+        + '<button class="btn-secondary" data-action="test-script">保存并运行</button>'
         + '<span class="spacer"></span>'
         + (draft.id ? '<button class="btn-danger" data-action="delete-script" data-id="' + esc(draft.id) + '">删除</button>' : '')
         + '</div>'

@@ -3,7 +3,7 @@
   'use strict';
   var api = factory(root);
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else if (root) root.PageAutomationZipStore = api;
+  else if (root) root.PageAgentZipStore = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 

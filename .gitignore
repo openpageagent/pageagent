@@ -21,5 +21,7 @@ mcp-server/dist/
 *.ipr
 *~
 
-# Docker
-docker/.env
+# Local environment files (keep the public template)
+.env
+.env.*
+!.env.example

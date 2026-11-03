@@ -291,7 +291,9 @@
       service = clone(service);
       service.id = text(service.id || service.serviceId);
       service.model = text(assistant.model || service.model);
-      var materializedEvents = await journalMaterializer.getAllEvents(input.conversationId);
+      var materializedEvents = await journalMaterializer.getAllEvents(input.conversationId, {
+        types: ['user_message_appended', 'steering_message_appended'],
+      });
       var checkpoint = await journal.getActiveCheckpoint(input.conversationId);
       var recordingHandles = journalMaterializer.collectRecordingContext(materializedEvents, checkpoint);
       if (recordingHandles.length) {
@@ -694,12 +696,10 @@
 
     async function reconcileGeneration(input, lease) {
       var components = await createComponents(input, lease);
-      var events = (await journalMaterializer.getAllEvents(lease.conversationId)).filter(function (event) {
-        return event.generationId === lease.generationId;
-      });
+      var events = await journalMaterializer.getAllEvents(lease.conversationId, { view: 'runtime', generationId: lease.generationId });
       await preserveInterruptedStreams(lease, events);
       if (await appendMissingPlans(lease, events)) {
-        events = (await journalMaterializer.getAllEvents(lease.conversationId)).filter(function (event) { return event.generationId === lease.generationId; });
+        events = await journalMaterializer.getAllEvents(lease.conversationId, { view: 'runtime', generationId: lease.generationId });
       }
       var plans = [];
       var starts = Object.create(null);

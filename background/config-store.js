@@ -3,9 +3,13 @@
   root.ConfigStore = factory();
 })(globalThis, function () {
 
-  var CONFIG_KEY = 'automation_config';
-  var RUNS_KEY = 'automation_runs';
-  var INCOGNITO_RUNS_KEY = 'automation_runs_incognito';
+  var CONFIG_KEY = 'page_agent_config';
+  var RUNS_KEY = 'page_agent_runs';
+  var INCOGNITO_RUNS_KEY = 'page_agent_runs_incognito';
+  // 新键优先；旧数据在首次写入时随完整记录保存到新键。
+  var LEGACY_CONFIG_KEY = 'automation_config';
+  var LEGACY_RUNS_KEY = 'automation_runs';
+  var LEGACY_INCOGNITO_RUNS_KEY = 'automation_runs_incognito';
   var MAX_RUNS = 50;
   var VALID_SECTIONS = ['pages', 'flows', 'flowGroups', 'scripts', 'schedules', 'urlTriggers'];
 
@@ -64,6 +68,7 @@
     var incognito = deps.incognito === true || (deps.incognito === undefined
       && !!(chrome && chrome.extension && chrome.extension.inIncognitoContext));
     var runsKey = incognito ? INCOGNITO_RUNS_KEY : RUNS_KEY;
+    var legacyRunsKey = incognito ? LEGACY_INCOGNITO_RUNS_KEY : LEGACY_RUNS_KEY;
     if (!runReport) throw new Error('RunReport 未加载');
     var configWriteQueue = Promise.resolve();
     var runsWriteQueue = Promise.resolve();
@@ -149,7 +154,7 @@
         }
       }
       delete config['sui' + 'tes'];
-      return migrateLegacyFlowConfig(globalThis.PageAutomationConfigMigration.cleanConfig(config));
+      return migrateLegacyFlowConfig(globalThis.PageAgentConfigMigration.cleanConfig(config));
     }
 
     function stripRuntimeMetadata(value) {
@@ -168,12 +173,12 @@
 
     function getConfig() {
       return new Promise(function (resolve, reject) {
-        chrome.storage.local.get(CONFIG_KEY, function (result) {
+        chrome.storage.local.get([CONFIG_KEY, LEGACY_CONFIG_KEY], function (result) {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
             return;
           }
-          resolve(ensureConfig(result[CONFIG_KEY]));
+          resolve(ensureConfig(result[CONFIG_KEY] === undefined ? result[LEGACY_CONFIG_KEY] : result[CONFIG_KEY]));
         });
       });
     }
@@ -257,12 +262,13 @@
 
     function getRuns() {
       return new Promise(function (resolve, reject) {
-        chrome.storage.local.get(runsKey, function (result) {
+        chrome.storage.local.get([runsKey, legacyRunsKey], function (result) {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
             return;
           }
-          var runs = Array.isArray(result[runsKey]) ? result[runsKey] : [];
+          var stored = result[runsKey] === undefined ? result[legacyRunsKey] : result[runsKey];
+          var runs = Array.isArray(stored) ? stored : [];
           resolve(runs.map(function (run) {
             return runReport.normalizeStoredRecord(run);
           }).filter(function (run) { return !!run; }));
@@ -460,7 +466,7 @@
           }).catch(reject);
           return;
         }
-        chrome.storage.local.getBytesInUse(runsKey, function (bytes) {
+        chrome.storage.local.getBytesInUse([runsKey, legacyRunsKey], function (bytes) {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
             return;

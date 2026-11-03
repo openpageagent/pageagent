@@ -1,18 +1,18 @@
 // 页面底部 Conversation 入口（content/page-conversation-panel.js）与配置中心
-// Conversation 入口（options/conversation.js）共用的对话事件处理逻辑。
+// Conversation 入口（options/conversation.js）共用的对话展示与事件处理逻辑。
 // 实现以 options/conversation.js 为准：两处入口只保留各自的事件列表来源、
 // DOM/状态与反馈载体，其余文本、标题、可见性、渲染、复制与下载全部走这里。
 (function attachConversationShared(root, factory) {
   'use strict';
   var api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  if (root) root.PageAutomationConversationShared = api;
+  if (root) root.PageAgentConversationShared = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
   var API_VERSION = 1;
   var rootRef = typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : null);
-  var eventView = rootRef && rootRef.PageAutomationConversationEventView;
+  var eventView = rootRef && rootRef.PageAgentConversationEventView;
 
   // ---- 基础工具（与 conversation 一致） ----
 
@@ -110,6 +110,43 @@
     var count = Math.max(0, Number(value) || 0);
     if (count >= 1000) return (Math.round(count / 100) / 10) + 'k';
     return String(count);
+  }
+
+  function contextSummaryStatus(data) {
+    var labels = { none: '尚未摘要', running: '正在压缩摘要…', completed: '已摘要', failed: '摘要失败', interrupted: '摘要已中断' };
+    return labels[data && data.summaryStatus] || '暂无记录';
+  }
+
+  // 两处上下文详情共用字段顺序、预算计算和文案，调用方只负责排版。
+  function contextUsageRows(data, readState) {
+    data = data || {};
+    readState = readState || {};
+    var rows = [['摘要状态', contextSummaryStatus(data)]];
+    var context = data.context;
+    var hasUsage = context && Number.isFinite(context.inputTokens) && context.inputTokens >= 0
+      && Number.isFinite(context.inputLimit) && context.inputLimit > 0;
+    if (readState.error || !hasUsage) {
+      rows.push(['上下文用量', readState.error ? '读取失败，请刷新重试'
+        : readState.loading ? '正在读取上下文…' : '首次模型响应完成后显示上下文用量']);
+      return rows;
+    }
+    function tokens(value) {
+      return Number.isFinite(value) && value >= 0 ? value.toLocaleString() + ' tokens' : '暂无记录';
+    }
+    var percent = context.inputTokens / context.inputLimit * 100;
+    var hasRatio = context.highWaterRatio > 0 && context.highWaterRatio < 1;
+    var threshold = hasRatio ? Math.floor(context.inputLimit * context.highWaterRatio) : 0;
+    rows.push(
+      ['最近输入', (context.estimated ? '约 ' : '') + tokens(context.inputTokens)
+        + ' / ' + tokens(context.inputLimit) + '（' + percent.toFixed(1) + '%）'],
+      ['模型窗口', tokens(context.contextWindow)],
+      ['预留预算', '输出 ' + tokens(context.outputReserve) + '；安全余量 ' + tokens(context.safetyReserve)],
+      ['摘要阈值', hasRatio ? tokens(threshold) + '（' + (context.highWaterRatio * 100).toFixed(0) + '%）' : '暂无记录'],
+      ['距离阈值', !hasRatio ? '暂无记录' : context.inputTokens > threshold
+        ? '已超过 ' + tokens(context.inputTokens - threshold) : '还可增加约 ' + tokens(threshold - context.inputTokens)],
+      ['记录时间', context.at ? new Date(context.at).toLocaleString() : '暂无记录']
+    );
+    return rows;
   }
 
   // ---- 事件语义文本（conversation eventCopyText 全量实现） ----
@@ -349,7 +386,7 @@
     var name = toolEventName(event);
     if (name === 'ASK_USER') return '请求用户输入';
     if (typeof event.operation === 'string' && event.operation.trim()) return event.operation.trim();
-    var listView = rootRef && rootRef.PageAutomationConversationListView;
+    var listView = rootRef && rootRef.PageAgentConversationListView;
     var args = toolEventArguments(event);
     var described = listView && typeof listView.describeOperation === 'function'
       ? listView.describeOperation(name || detail.method, args.uri || detail.canonicalUri)
@@ -539,7 +576,7 @@
     if (!event) return false;
     if (event.hidden === true || event.detail && event.detail.hidden === true) return false;
     if (event.kind === 'reasoning') {
-      var listView = rootRef && rootRef.PageAutomationConversationListView;
+      var listView = rootRef && rootRef.PageAgentConversationListView;
       if (listView && typeof listView.shouldDisplayReasoning === 'function'
           && !listView.shouldDisplayReasoning(eventText(event))) return false;
     }
@@ -739,6 +776,8 @@
     escapeHtml: escapeHtml,
     renderMarkdown: renderMarkdown,
     statusLabel: statusLabel,
+    contextSummaryStatus: contextSummaryStatus,
+    contextUsageRows: contextUsageRows,
     fmtTime: fmtTime,
     safeFileName: safeFileName,
     safeTimestamp: safeTimestamp,

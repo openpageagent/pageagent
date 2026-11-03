@@ -6,11 +6,11 @@
     deps = deps || {};
     var chrome = deps.chrome || globalThis.chrome;
     var tabRuntime = deps.tabRuntime;
-    var pageAutomation = deps.pageAutomation;
-    if (!pageAutomation || !pageAutomation.action || typeof pageAutomation.action.act !== 'function'
-      || !pageAutomation.perception || typeof pageAutomation.perception.perceive !== 'function'
-      || !pageAutomation.verification || typeof pageAutomation.verification.waitForPageLoad !== 'function') {
-      throw new Error('McpTabAccess requires PageAutomationRuntime');
+    var pageAgent = deps.pageAgent;
+    if (!pageAgent || !pageAgent.action || typeof pageAgent.action.act !== 'function'
+      || !pageAgent.perception || typeof pageAgent.perception.perceive !== 'function'
+      || !pageAgent.verification || typeof pageAgent.verification.waitForPageLoad !== 'function') {
+      throw new Error('McpTabAccess requires PageAgentRuntime');
     }
     var getConfig = deps.getConfig || (function () { return { pages: {} }; });
     var addLog = deps.addLog || (function () {});
@@ -38,7 +38,7 @@
 
     function executeLifecycleAction(tabId, kind, input, options) {
       options = options || {};
-      return pageAutomation.action.act({
+      return pageAgent.action.act({
         source: 'flow',
         owner: 'MCP',
         tabId: tabId,
@@ -87,7 +87,7 @@
         input.previousLoaderId = previousLoaderId;
         input.requireNewDocument = true;
       }
-      return pageAutomation.verification.waitForPageLoad({
+      return pageAgent.verification.waitForPageLoad({
         source: 'flow', tabId: tabId, params: input,
       });
     }

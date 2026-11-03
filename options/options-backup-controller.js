@@ -12,7 +12,7 @@
   }
 
   var configMigration = typeof module === 'object' && module.exports
-    ? require('../shared/config-migration.js') : root.PageAutomationConfigMigration;
+    ? require('../shared/config-migration.js') : root.PageAgentConfigMigration;
   var api = factory(root, configMigration);
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.OptionsBackupController = api;
@@ -35,13 +35,13 @@
     var BlobCtor = deps.Blob || root.Blob;
     var URLApi = deps.URL || root.URL;
     var download = deps.download;
-    var resourceClientApi = deps.resourceClientApi || root.PageAutomationResourceClient;
-    var lifecycleApi = deps.lifecycleApi || root.PageAutomationLifecycle;
+    var resourceClientApi = deps.resourceClientApi || root.PageAgentResourceClient;
+    var lifecycleApi = deps.lifecycleApi || root.PageAgentLifecycle;
     if (!lifecycleApi || typeof lifecycleApi.create !== 'function') {
-      throw new Error('PageAutomationLifecycle must load before OptionsBackupController');
+      throw new Error('PageAgentLifecycle must load before OptionsBackupController');
     }
     if (!resourceClientApi || typeof resourceClientApi.create !== 'function') {
-      throw new Error('PageAutomationResourceClient must load before OptionsBackupController');
+      throw new Error('PageAgentResourceClient must load before OptionsBackupController');
     }
     if (!chrome || !chrome.runtime) {
       throw new Error('OptionsBackupController requires chrome.runtime');
@@ -660,7 +660,7 @@
           })) {
         throw backupError('invalid-mail-settings', '邮件通知配置格式无效，须包含完整的 SMTP 账户字段');
       }
-      return safeClone(globalThis.PageAutomationMailSettings.validate(raw, true));
+      return safeClone(globalThis.PageAgentMailSettings.validate(raw, true));
     }
 
     function skillForBackup(skill) {
@@ -779,12 +779,12 @@
         var section = def.configSection;
         if (section === 'urlTriggers') {
           var triggers = objectFromArrayById(sourceConfig.urlTriggers || [], 'ut');
-          modules[def.id] = { label: def.label, source: 'automation_config.' + section, items: triggers.items, order: triggers.order };
+          modules[def.id] = { label: def.label, source: 'page_agent_config.' + section, items: triggers.items, order: triggers.order };
           return;
         }
         modules[def.id] = {
           label: def.label,
-          source: 'automation_config.' + section,
+          source: 'page_agent_config.' + section,
           items: safeClone(sourceConfig[section] || {}),
           order: Object.keys(sourceConfig[section] || {}),
         };
@@ -877,7 +877,7 @@
       if (source.mailSettings !== undefined && source.mailSettings !== null) {
         modules.mailSettings = {
           label: backupModuleLabel('mailSettings'),
-          source: globalThis.PageAutomationMailSettings.SETTINGS_KEY,
+          source: globalThis.PageAgentMailSettings.SETTINGS_KEY,
           items: { smtp: mailSettingsForBackup(source.mailSettings) },
           order: ['smtp'],
         };
@@ -901,7 +901,7 @@
         readSkillsForBackup(),
         readMcpServersForBackup(),
         readMcpConnectionsForBackup(),
-        readLocalStorageValue(globalThis.PageAutomationMailSettings.SETTINGS_KEY),
+        readLocalStorageValue(globalThis.PageAgentMailSettings.SETTINGS_KEY),
         readResourceCollection('/apps').then(function (apps) {
           var items = dictionary(), order = [];
           apps.forEach(function (app) { if (!app.__builtin) { items[app.appId] = app; order.push(app.appId); } });
@@ -1111,8 +1111,8 @@
         + '</div>'
         + '<div class="backup-module-list" id="backup-export-list">' + rows + '</div></section>';
       $('#drawer-actions').innerHTML =
-        '<button class="btn-secondary" data-action="cancel-drawer">取消</button>'
-        + '<button class="btn-primary" data-action="confirm-export-backup">导出备份</button>';
+        '<button class="btn-primary" data-action="confirm-export-backup">导出备份</button>'
+        + '<button class="btn-secondary" data-action="cancel-drawer">取消</button>';
       openDrawer();
     }
 
@@ -1320,8 +1320,8 @@
         $('#drawer-content').insertAdjacentHTML('beforeend', '<section class="drawer-section"><h4>应用生成范围</h4>' + scopes + '</section>');
       }
       $('#drawer-actions').innerHTML =
-        '<button class="btn-secondary" data-action="cancel-drawer">取消</button>'
-        + '<button class="btn-primary" data-action="confirm-import-backup">导入所选数据</button>';
+        '<button class="btn-primary" data-action="confirm-import-backup">导入所选数据</button>'
+        + '<button class="btn-secondary" data-action="cancel-drawer">取消</button>';
       openDrawer();
     }
 

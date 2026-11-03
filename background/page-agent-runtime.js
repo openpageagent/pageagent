@@ -1,5 +1,5 @@
 // Unified facade consumed by Flow nodes, Agent ARP and script page.* APIs.
-(function attachPageAutomationRuntime(root, factory) {
+(function attachPageAgentRuntime(root, factory) {
   'use strict';
   var commonJs = typeof module === 'object' && module.exports;
   var pageDataContract = commonJs ? require('../shared/page-data-contract.js') : root && root.PageDataContract;
@@ -7,15 +7,15 @@
   var pageVerificationContract = commonJs ? require('../shared/page-verification-contract.js') : root && root.PageVerificationContract;
   var api = factory(pageDataContract, pageActionContract, pageVerificationContract);
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else if (root) root.PageAutomationRuntime = api;
+  else if (root) root.PageAgentRuntime = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (pageDataContract, pageActionContract, pageVerificationContract) {
   'use strict';
   var API_VERSION = 1;
   if (!pageActionContract || !Array.isArray(pageActionContract.EDITABLE_FLOW_KINDS)) {
-    throw new Error('PageAutomationRuntime requires PageActionContract.EDITABLE_FLOW_KINDS');
+    throw new Error('PageAgentRuntime requires PageActionContract.EDITABLE_FLOW_KINDS');
   }
   if (!pageVerificationContract || !Array.isArray(pageVerificationContract.WAIT_CONDITION_TYPES)) {
-    throw new Error('PageAutomationRuntime requires PageVerificationContract.WAIT_CONDITION_TYPES');
+    throw new Error('PageAgentRuntime requires PageVerificationContract.WAIT_CONDITION_TYPES');
   }
   var EDITABLE_PAGE_ACTION_KINDS = pageActionContract.EDITABLE_FLOW_KINDS.slice();
   var WAIT_CONDITION_TYPES = pageVerificationContract.WAIT_CONDITION_TYPES.slice();
@@ -24,12 +24,12 @@
   var WAIT_POLL_INTERVAL_MIN_MS = Number(pageVerificationContract.WAIT_POLL_INTERVAL_MIN_MS) || 25;
   var WAIT_POLL_INTERVAL_MAX_MS = Number(pageVerificationContract.WAIT_POLL_INTERVAL_MAX_MS) || 2000;
 
-  function createPageAutomationRuntime(options) {
+  function createPageAgentRuntime(options) {
     options = options || {};
     var perception = options.pagePerceptionEngine;
     var action = options.pageActionEngine;
     var verification = options.pageVerificationEngine;
-    if (!perception || !action || !verification) throw new Error('PageAutomationRuntime requires all three engines');
+    if (!perception || !action || !verification) throw new Error('PageAgentRuntime requires all three engines');
     // Optional readiness barrier for the internal waitForReadiness command.
     var readiness = options.pageReadinessBarrier && typeof options.pageReadinessBarrier.waitForNavigation === 'function'
       ? options.pageReadinessBarrier : null;
@@ -958,7 +958,7 @@
     return Object.freeze({
       perception: perception, action: action, verification: verification,
       registerDiagnosticProvider: function (provider) {
-        if (!provider || provider.API_VERSION !== 1 || typeof provider.perceive !== 'function') throw new Error('PageAutomationRuntime diagnostic provider requires API_VERSION=1 and perceive()');
+        if (!provider || provider.API_VERSION !== 1 || typeof provider.perceive !== 'function') throw new Error('PageAgentRuntime diagnostic provider requires API_VERSION=1 and perceive()');
         return perception.registerEvidenceProvider('cdp-diagnostics', provider);
       },
       perceive: function (query) { return perception.perceive(query); },
@@ -968,5 +968,5 @@
       observe: perception.observe, captureScreenshot: perception.captureScreenshot,
     });
   }
-  return Object.freeze({ API_VERSION: API_VERSION, createPageAutomationRuntime: createPageAutomationRuntime });
+  return Object.freeze({ API_VERSION: API_VERSION, createPageAgentRuntime: createPageAgentRuntime });
 });

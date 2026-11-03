@@ -449,16 +449,38 @@
     };
   }
 
+  var APP_DEVELOPER_SOURCE_GUIDANCE = '开始前读取 /apps 或目标应用；当前上下文缺少完整生成指引或已知指引更新时，完整读取 /knowledge/builtin_app_generation_guide。同一对话复用已读指引，不因新一轮输入、继续或后台重启而重读。仅改元数据时按摘要 ETag 局部 PATCH 应用。修改源码先读取最新摘要与权限；复用上下文中仍有效的源码片段，只对缺失部分搜索、按行读取。局部修改优先 POST /apps/{appId}/draft/edits，携带最新 ETag，仅提交唯一匹配的 oldText/newText；保存后采用返回的新 ETag。核对回执与可用 diff，不例行重读已知源码；仅在版本冲突、证据缺失或相关调用关系不明时补读受影响片段。仅完整替换字段或文件时读齐该目标，不能以片段覆盖全文。';
+
+  var APP_DEVELOPER_PARAMETER_GUIDANCE = '应用必须声明 code.parameters，默认复用平台的空参数声明 mode=none，省略 input 或传 {} 均可正常打开。只按当前业务需求增加字段、示例与处理逻辑，不为接入机制额外添加 query 等示例字段或表单。简单赋值可用 form 映射到已有控件，需要联动时提供 applyParameters(input) 模块。保存前核对每个声明字段均有处理，不能把打开成功当作适配或业务成功。具体格式按应用 RouteContract 和按需读取的生成指引执行。';
+
   function buildTemplatePrompt(kind) {
     if (kind === 'default') {
       return '处理未限定专精流程的通用任务。以用户本次要求的交付物为目标，在已配置能力范围内直接回答或完成操作。';
     }
     if (kind === 'app-developer') {
       return [
-        '处理应用的创建、修改和修复，交付符合用户需求的 HTML、CSS、JavaScript、主题及功能声明。围绕本次需求做必要修改，优先复用已有应用和依赖。',
-        '开始前读取 /apps 或目标应用，再完整读取 /knowledge/builtin_app_generation_guide。仅改名称、别名、图标或描述时按摘要 ETag 局部 PATCH 应用；修改源码时先读摘要和权限，通过 /apps/{appId}/draft/{field} 独立读取字段，已发布版本用 /published/{field}。长文本加 q 按标准 grep 定位，省略 q 按行读取，用 startLine/startColumn 和 revision 续读。PATCH 是字段整体替换，须读齐待修改字段，不能以搜索片段覆盖全文。',
+        '你是 Page Agent 的应用开发工程师，必须以 YAGNI 工程师和外科手术式工程师的身份执行，并遵循第一性原理和奥卡姆剃刀原则。这些原则贯穿每轮需求分析、读取、编辑和交付。',
+        '',
+        '【开发原则】',
+        '- YAGNI：只实现用户当前确认的需求，不为假设中的未来需求添加功能、抽象、配置或依赖。',
+        '- 外科手术式修改：先定位问题与影响范围，再做足以完成目标的最小修改；保留无关行为，不顺手重构、改名、格式化或重写整个应用。',
+        '- 第一性原理：从用户目标、实际输入输出、当前源码和真实资源契约推导方案；证据不足时补读直接相关内容，不凭猜测修改，不用临时补丁掩盖已确认的根因。',
+        '- 奥卡姆剃刀：能够满足需求时，选择步骤、概念和依赖更少的方案，优先复用现有应用、SDK 和资源。',
+        '',
+        '【执行边界】',
+        '- 读取范围：以目标应用的当前草稿、权限、相关资源和对话中已确认的信息为依据；按需读取发布版本、直接依赖或页面事实，不无目的地追溯历史或遍历无关源码。',
+        '- 插件能力：按需使用已授权的 SDK、ARP、用户已选择或配置的 MCP 与 Skill；遵守应用生成指引和实际资源契约，不为开发便利自行扩展环境或权限。能力不足时说明具体缺口。',
+        '- 验证范围：默认只做静态检查，核对源码逻辑、接口契约、权限声明和改动差异；不编写测试代码、不执行测试，不主动运行应用或业务动作来验证功能，功能测试由用户完成。只有用户明确要求时才调整验证范围。',
+        '- 编辑方式：使用应用资源提供的编辑接口提交明确的局部修改，逐项核对编辑内容；禁止通过任何脚本批量替换源码。',
+        '',
+        '【应用开发流程】',
+        '处理应用的创建、修改和修复，交付符合用户需求的 HTML、CSS、JavaScript、主题及功能声明。',
+        '先明确用户要完成的业务链路、输入输出、可选步骤和完成条件；后续修改沿用已确认的目标与决定，用户反复强调的要求作为修复依据，不当作新增功能。只实现本次所需，避免添加无助于操作的说明、重复入口、预设和配置。',
+        APP_DEVELOPER_SOURCE_GUIDANCE,
+        APP_DEVELOPER_PARAMETER_GUIDANCE,
         '需要持久数据或调用流程、流程组、脚本时，使用 PageAgent SDK，核对能力范围、依赖和实际授权。只声明本次功能需要的能力与依赖。',
-        '按用户要求保存草稿或发布应用，以资源写入回执确认结果；说明已完成的功能、验证结果和待处理事项。',
+        '普通接口取数、参数加载和任务状态查询优先使用已有 SDK/ARP 直接能力；不为一次 HTTP 请求默认新建单步 Flow，也不为每次轮询创建 Run。仅有复用现有业务流程、后台任务或用户明确要求时使用 Flow。SDK 缺少能力时说明具体缺口；用户已明确要求的原生调用按 customBehavior 契约处理，不伪造接口或绕过授权。',
+        '按用户要求保存草稿或发布应用，以资源写入回执确认结果；逐项对照用户要求说明实现、静态检查和待用户验证的内容。保存成功或 diff 正确不等于功能已验证，不宣称未实际验证的交互或业务链路已经可用。',
       ].join('\n');
     }
     if (kind === 'network-writer') {
@@ -516,6 +538,39 @@
       ].join('\n');
     }
     throw new TypeError('Unknown assistant template kind: ' + kind);
+  }
+
+  function upgradeAppDeveloperPrompt(prompt) {
+    // Only replace exact builtin defaults; user-edited prompts remain intact.
+    var previousSourceGuidance = [
+      '开始前读取 /apps 或目标应用；修改已有应用时读取最新草稿和权限，再完整读取 /knowledge/builtin_app_generation_guide，按当前应用契约开发。',
+      '开始前读取 /apps 或目标应用，再完整读取 /knowledge/builtin_app_generation_guide。仅改名称、别名、图标或描述时按摘要 ETag 局部 PATCH 应用；修改源码时先读摘要和权限，通过 /apps/{appId}/draft/{field} 独立读取字段，已发布版本用 /published/{field}。长文本加 q 按标准 grep 定位，省略 q 按行读取，用 startLine/startColumn 和 revision 续读。PATCH 是字段整体替换，须读齐待修改字段，不能以搜索片段覆盖全文。',
+      '开始前读取 /apps 或目标应用，再按当前契约完整读取 /knowledge/builtin_app_generation_guide。仅改元数据时按摘要 ETag 局部 PATCH 应用。修改源码先读取最新摘要与权限；复用上下文中仍有效的源码片段，只对缺失部分搜索、按行读取。局部修改优先 POST /apps/{appId}/draft/edits，携带最新 ETag，仅提交唯一匹配的 oldText/newText；保存后采用返回的新 ETag。核对回执与可用 diff，不例行重读已知源码；仅在版本冲突、证据缺失或相关调用关系不明时补读受影响片段。仅完整替换字段或文件时读齐该目标，不能以片段覆盖全文。',
+      APP_DEVELOPER_SOURCE_GUIDANCE,
+    ];
+    // Retain the former wording only for exact migration, never as active guidance.
+    var previousPrompt = [
+      '处理应用的创建、修改和修复，交付符合用户需求的 HTML、CSS、JavaScript、主题及功能声明。围绕本次需求做必要修改，优先复用已有应用和依赖。',
+      '以 YAGNI 工程师和外科手术式工程师 身份来执行，执行时必须遵从第一性原理和奥卡姆剃刀原则。非必要不读历史代码，只看当前工作区，不添加 mcp ，不使用 skill。不编译，不看 m2，不解压 jar 包。不写测试代码。不测试，静态检查即可，我来测试。编辑代码时，不通过任何脚本形式批量替换。',
+      '先明确用户要完成的业务链路、输入输出、可选步骤和完成条件；后续修改沿用已确认的目标与决定，用户反复强调的要求作为修复依据，不当作新增功能。只实现本次所需，避免添加无助于操作的说明、重复入口、预设和配置。',
+      APP_DEVELOPER_SOURCE_GUIDANCE,
+      '需要持久数据或调用流程、流程组、脚本时，使用 PageAgent SDK，核对能力范围、依赖和实际授权。只声明本次功能需要的能力与依赖。',
+      '普通接口取数、参数加载和任务状态查询优先使用已有 SDK/ARP 直接能力；不为一次 HTTP 请求默认新建单步 Flow，也不为每次轮询创建 Run。仅有复用现有业务流程、后台任务或用户明确要求时使用 Flow。SDK 缺少能力时说明具体缺口；用户已明确要求的原生调用按 customBehavior 契约处理，不伪造接口或绕过授权。',
+      '按用户要求保存草稿或发布应用，以资源写入回执确认结果；逐项对照用户要求说明实现、静态检查和待用户验证的内容。保存成功或 diff 正确不等于功能已验证，不宣称未实际验证的交互或业务链路已经可用。',
+    ].join('\n');
+    var currentPrompt = buildTemplatePrompt('app-developer');
+    if (prompt === currentPrompt.replace('\n' + APP_DEVELOPER_PARAMETER_GUIDANCE, '')) return currentPrompt;
+    var previousParameterGuidance = '应用必须声明 code.parameters，明确支持的参数、示例与实际适配过程；优先使用平台默认表单映射，复杂交互提供 applyParameters(input) 模块，无参数需求时明确声明不接收。保存前核对每个声明字段均有处理，不能把打开成功当作适配或业务成功。具体格式按应用 RouteContract 和按需读取的生成指引执行。';
+    if (prompt === currentPrompt.replace(APP_DEVELOPER_PARAMETER_GUIDANCE, previousParameterGuidance)) return currentPrompt;
+    var isPreviousDefault = previousSourceGuidance.some(function (sourceGuidance) {
+      return prompt === [
+        '处理应用的创建、修改和修复，交付符合用户需求的 HTML、CSS、JavaScript、主题及功能声明。围绕本次需求做必要修改，优先复用已有应用和依赖。',
+        sourceGuidance,
+        '需要持久数据或调用流程、流程组、脚本时，使用 PageAgent SDK，核对能力范围、依赖和实际授权。只声明本次功能需要的能力与依赖。',
+        '按用户要求保存草稿或发布应用，以资源写入回执确认结果；说明已完成的功能、验证结果和待处理事项。',
+      ].join('\n') || prompt === previousPrompt.replace(APP_DEVELOPER_SOURCE_GUIDANCE, sourceGuidance);
+    });
+    return isPreviousDefault ? currentPrompt : prompt;
   }
 
 
@@ -806,5 +861,6 @@
     safeShallowMerge: safeShallowMerge,
     sameValue: sameValue,
     buildTemplatePrompt: buildTemplatePrompt,
+    upgradeAppDeveloperPrompt: upgradeAppDeveloperPrompt,
   };
 });

@@ -44,6 +44,7 @@
       includeEtag: value.includeEtag === true,
       includeLinks: value.includeLinks === true,
       includeIncluded: value.includeIncluded === true,
+      appSearchVersion: value.appSearchVersion === 1 ? 1 : 0,
     };
   }
   function compactRepresentation(value) {
@@ -199,6 +200,37 @@
     else if (descriptor.type === 'field') result = isRecord(data) && descriptor.field ? clone(data[descriptor.field]) : undefined;
     else if (primary && /(?:Interaction|PageWait)$/.test(text(primary.type))) result = compactInteractionData(data);
     else result = clone(data);
+    if (descriptor.appSearchVersion === 1 && descriptor.type === 'data' && primary && /^(?:AppCodeField|AppSourceFile)$/.test(text(primary.type))
+        && isRecord(result) && result.mode === 'grep' && Array.isArray(result.matches)) {
+      // The API keeps its compatibility fields; the model receives each line
+      // once, with match positions and revision information unchanged.
+      var compactMatches = [];
+      var remainingChars = 12000;
+      var projectionTruncated = false;
+      for (var match of result.matches) {
+        if (isRecord(match) && Array.isArray(match.lines)) {
+          delete match.content;
+          delete match.before;
+          delete match.after;
+        }
+        var size = JSON.stringify(match).length;
+        if (size > remainingChars && isRecord(match) && Array.isArray(match.lines) && match.lines.length > 1) {
+          match.lines = match.lines.filter(function (line) { return line.line === match.line; });
+          match.contextTruncated = true;
+          projectionTruncated = true;
+          size = JSON.stringify(match).length;
+        }
+        if (size > remainingChars) { projectionTruncated = true; break; }
+        compactMatches.push(match);
+        remainingChars -= size;
+      }
+      result.matches = compactMatches;
+      if (projectionTruncated) {
+        result.truncated = true;
+        result.returnedMatches = compactMatches.length;
+        result.hint = '搜索输出已限制大小；请缩小 q，或按匹配行号读取所需源码和上下文。';
+      }
+    }
 
     var metadata = {};
     if (code === 202) metadata.accepted = true;

@@ -14,6 +14,7 @@
   var REASONING_EFFORTS = Object.freeze({
     auto: true, none: true, minimal: true, low: true, medium: true, high: true, xhigh: true, max: true,
   });
+  var SERVICE_TIERS = Object.freeze({ auto: true, priority: true });
   var CONTEXT_COMPRESSION = Object.freeze({ auto: true, off: true });
   var TOKENS_PER_K = 1000;
   var activePanel = null;
@@ -70,7 +71,7 @@
         || typeof resourceClient.authorizedPost !== 'function'
         || typeof resourceClient.authorizedPatch !== 'function'
         || typeof resourceClient.authorizedDelete !== 'function') {
-      throw new Error('OptionsModelSettingsPanel requires PageAutomationResourceClient');
+      throw new Error('OptionsModelSettingsPanel requires PageAgentResourceClient');
     }
 
     var modelServices = [];
@@ -290,6 +291,7 @@
         visionModel: text($('#model-vision-model').value),
         summaryModel: text($('#model-summary-model').value),
         reasoningEffort: strictValue($('#model-reasoning-effort').value, REASONING_EFFORTS, '思考级别'),
+        serviceTier: strictValue($('#model-service-tier').value, SERVICE_TIERS, '服务等级'),
         maxRetries: parseMaxRetriesInput($('#model-max-retries').value),
       };
       if (!patch.name) throw new Error('服务名称不能为空');
@@ -311,6 +313,7 @@
       if (reasoningControl) {
         reasoningControl.disabled = loading || mutating || !hasService;
       }
+      $('#model-service-tier').disabled = loading || mutating || !hasService || $('#model-protocol').value === 'anthropic';
       ['#model-max-context-tokens', '#model-auto-compact-token-limit', '#model-context-compression'].forEach(function (selector) {
         var element = $(selector);
         if (element) element.disabled = loading || mutating || !agentSettings;
@@ -365,6 +368,7 @@
       $('#model-vision-model').value = service.visionModel || '';
       $('#model-summary-model').value = service.summaryModel || '';
       $('#model-reasoning-effort').value = REASONING_EFFORTS[service.reasoningEffort] ? service.reasoningEffort : '';
+      $('#model-service-tier').value = SERVICE_TIERS[service.serviceTier] ? service.serviceTier : 'auto';
       $('#model-max-retries').value = service.maxRetries === undefined || service.maxRetries === null
         ? '' : String(Math.max(0, Math.floor(Number(service.maxRetries) || 0)));
       $('#model-protocol').value = PROTOCOLS[service.protocol] ? service.protocol : 'chat_completions';
@@ -513,6 +517,7 @@
         protocol: protocol,
         userAgent: text(source.userAgent),
         reasoningEffort: REASONING_EFFORTS[source.reasoningEffort] ? source.reasoningEffort : 'auto',
+        serviceTier: SERVICE_TIERS[source.serviceTier] ? source.serviceTier : 'auto',
       };
     }
 
@@ -590,6 +595,7 @@
     ['input', 'change'].forEach(function (eventName) {
       $('#model-service-editor').addEventListener(eventName, function (event) {
         if (!event.target.matches('input, select')) return;
+        if (event.target.id === 'model-protocol') setControlsDisabled(!!currentService());
         modelEditorDirty = true;
         retireModelTest();
         $('#model-test-result').textContent = '';

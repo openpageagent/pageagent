@@ -563,9 +563,9 @@ export function createToolViews(container, { request, permitted, message, create
       });
     };
     const maskButton = button('设置掩码', () => maskDialog.showModal()), maskActions = element('div', 'app-actions');
-    maskActions.append(button('取消', () => maskDialog.close()), button('确定', () => schedule(async call => {
+    maskActions.append(button('确定', () => schedule(async call => {
       const value = await call('ipcalc', 'ipv4', address.value + '/' + prefix.value, { maskHosts: Number(hosts.value) }); prefix.value = value.prefix; maskDialog.close(); update();
-    }, 0)));
+    }, 0)), button('取消', () => maskDialog.close()));
     maskDialog.append(label('可用地址数', hosts), maskActions);
     subnetOptions.append(label('数量（最多 1000）', limit), random.label); subnetDialog.append(button('关闭', () => subnetDialog.close()), subnetOptions, subnet.panel);
     function render() {
@@ -651,8 +651,8 @@ export function createToolViews(container, { request, permitted, message, create
     actions.append(button('替换', () => replace.showModal()));
     actions.append(button('转义', () => escaping.showModal()));
     for (const [key, title] of [['backslash', '反斜杠'], ['singleQuote', '单引号'], ['doubleQuote', '双引号'], ['newLine', '换行'], ['carriageReturn', '回车'], ['tab', 'Tab'], ['verticalTab', '垂直 Tab'], ['backspace', '退格'], ['formFeed', '换页']]) { const choice = checkbox(title, true); escapeChoices.set(key, choice.control); escapeOptions.append(choice.label); }
-    escapeActions.append(button('关闭', () => escaping.close()));
     for (const [value, title] of [['escape', '添加转义'], ['unescape', '移除转义']]) escapeActions.append(button(title, () => { run('transform', { transformation: value, escapeCharacters: JSON.stringify([...escapeChoices].filter(([, control]) => control.checked).map(([key]) => key)) }); escaping.close(); }));
+    escapeActions.append(button('关闭', () => escaping.close()));
     escaping.append(escapeOptions, escapeActions);
     actions.append(button('行去重', () => run('dedupe')));
     group('命名转换', [['camel', '小驼峰'], ['pascal', '大驼峰'], ['snake', '下划线'], ['kebab', '连字符'], ['constant', '常量名']], value => run(value, {}, 'variableConversion'));
@@ -661,7 +661,7 @@ export function createToolViews(container, { request, permitted, message, create
     group('过滤', [['trim', '去首尾空白'], ['removeEmpty', '移除空行'], ['removeBreaks', '移除所有换行']], value => run(value === 'removeBreaks' ? 'transform' : value, value === 'removeBreaks' ? { transformation: value } : {}));
     const pair = element('div', 'json-editors'), replaceActions = element('div', 'app-actions'), hint = element('p', 'section-desc'); hint.textContent = '可输入多行，按行进行批量替换。';
     pair.append(search.panel, replacement.panel); search.panel.append(regular.label);
-    replaceActions.append(button('取消', () => replace.close()), button('替换', () => { run('transform', { transformation: 'replace', search: search.control.value, replacement: replacement.control.value, regular: regular.control.checked }); replace.close(); })); replace.append(pair, hint, replaceActions);
+    replaceActions.append(button('替换', () => { run('transform', { transformation: 'replace', search: search.control.value, replacement: replacement.control.value, regular: regular.control.checked }); replace.close(); }), button('取消', () => replace.close())); replace.append(pair, hint, replaceActions);
     const statisticsRow = element('div', 'app-actions text-statistics'); statisticsRow.append(stats); source.panel.append(statisticsRow);
     container.append(source.panel, actions, replace, escaping, statisticsDialog);
     refresh = () => schedule(statistics);

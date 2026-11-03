@@ -12,6 +12,12 @@
 
 协议决定请求体、流事件、工具调用、历史消息和响应结构。Base URL、模型名和 API Key 不替代协议选择。
 
+## Fast（优先处理）
+
+在「模型配置」中将服务的「服务等级」设为「Fast（优先处理）」并保存；默认等级沿用服务端设置，与「思考级别」独立。
+
+Fast 适用于 OpenAI Responses 和 Chat Completions 的文本、视觉及摘要请求，Anthropic Messages 不支持。实际可用性取决于模型、账户及服务商或代理，可能增加费用或额度消耗。
+
 ## Provider 与 compat
 
 ```text

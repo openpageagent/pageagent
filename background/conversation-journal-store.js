@@ -26,6 +26,22 @@
   var DEFAULT_PAGE_SIZE = 100;
   var MAX_PAGE_SIZE = 500;
   var DEFAULT_PAYLOAD_THRESHOLD = 64 * 1024;
+  var SNAPSHOT_ENCODING = 'request-snapshot/1';
+  function snapshotPartId(conversationId, hash) { return conversationId + ':snapshot:' + hash; }
+  function snapshotPreview(payload) {
+    var preview = {};
+    ['source', 'logicalRequestId', 'purpose', 'provider', 'model', 'attempt', 'startedAt',
+      'maxRetries', 'maxAttempts'].forEach(function (key) {
+      if (hasOwn(payload, key)) preview[key] = clone(payload[key]);
+    });
+    if (isRecord(payload.request)) {
+      preview.request = {};
+      ['purpose', 'logicalRequestId', 'modelRequestId', 'serviceId', 'model', 'maxOutputTokens', 'promptCacheKey'].forEach(function (key) {
+        if (hasOwn(payload.request, key)) preview.request[key] = clone(payload.request[key]);
+      });
+    }
+    return preview;
+  }
   var TERMINAL_STATES = Object.freeze({
     completed: true, failed: true, cancelled: true, truncated: true, blocked: true,
   });
@@ -412,9 +428,14 @@
         else values = values.slice(-limit);
         return values;
       },
-      countEvents: async function (conversationId) {
+      countEvents: async function (conversationId, filter, cursor) {
         var count = 0;
-        state.journalEvents.forEach(function (event) { if (event.conversationId === conversationId) count += 1; });
+        state.journalEvents.forEach(function (event) {
+          if (event.conversationId !== conversationId || !eventMatches(event, filter)) return;
+          if (hasOwn(cursor, 'beforeSequence') && event.sequence >= cursor.beforeSequence) return;
+          if (hasOwn(cursor, 'afterSequence') && event.sequence <= cursor.afterSequence) return;
+          count += 1;
+        });
         return count;
       },
       putStream: async function (buffer) { state.streamBuffers.set(streamKey(buffer.conversationId, buffer.generationId, buffer.modelRequestId), clone(buffer)); return clone(buffer); },
@@ -429,6 +450,7 @@
       deleteStream: async function (conversationId, generationId, modelRequestId) { return state.streamBuffers.delete(streamKey(conversationId, generationId, modelRequestId)); },
       putPayload: async function (payload) { state.payloadBlobs.set(payload.payloadId, clone(payload)); return clone(payload); },
       getPayload: async function (payloadId) { return clone(state.payloadBlobs.get(payloadId) || null); },
+      missingPayloadIds: async function (ids) { return ids.filter(function (id) { return !state.payloadBlobs.has(id); }); },
       listCheckpoints: async function (conversationId) {
         var values = [];
         state.summaryCheckpoints.forEach(function (checkpoint) { if (checkpoint.conversationId === conversationId) values.push(clone(checkpoint)); });
@@ -503,6 +525,22 @@
         lowerOpen === true,
         upperOpen === true
       );
+    }
+    function eventRanges(conversationId, cursor, filter) {
+      var prefixes = filter && filter.types && filter.types.length
+        ? Array.from(new Set(filter.types)).filter(function (type) { return typeof type === 'string'; })
+          .map(function (type) { return [conversationId, type]; })
+        : [[conversationId]];
+      var after = hasOwn(cursor, 'afterSequence');
+      var before = hasOwn(cursor, 'beforeSequence');
+      return prefixes.map(function (prefix) {
+        return idbKeyRange.bound(
+          prefix.concat(after ? cursor.afterSequence : 0),
+          prefix.concat(before ? cursor.beforeSequence : Number.MAX_SAFE_INTEGER),
+          after,
+          before
+        );
+      });
     }
     return {
       kind: 'indexeddb',
@@ -594,26 +632,35 @@
         var done = transactionDone(tx);
         var store = tx.objectStore('journal_events');
         var direction = hasOwn(cursor, 'beforeSequence') || (!hasOwn(cursor, 'afterSequence') && !hasOwn(cursor, 'beforeSequence')) ? 'prev' : 'next';
-        var range;
-        if (hasOwn(cursor, 'afterSequence')) range = rangeForConversation(conversationId, cursor.afterSequence, undefined, true, false);
-        else if (hasOwn(cursor, 'beforeSequence')) range = rangeForConversation(conversationId, 0, cursor.beforeSequence, false, true);
-        else range = rangeForConversation(conversationId);
-        var values = [];
-        await new Promise(function (resolve, reject) {
-          var request = store.openCursor(range, direction);
-          request.onerror = function () { reject(request.error); };
-          request.onsuccess = function () {
-            var item = request.result;
-            if (!item || values.length >= limit) { resolve(); return; }
-            if (eventMatches(item.value, filter)) values.push(clone(item.value));
-            item.continue();
-          };
-        });
+        var source = filter && filter.types && filter.types.length ? store.index('by_type') : store;
+        var pages = await Promise.all(eventRanges(conversationId, cursor, filter).map(function (range) {
+          return new Promise(function (resolve, reject) {
+            var values = [];
+            var request = source.openCursor(range, direction);
+            request.onerror = function () { reject(request.error); };
+            request.onsuccess = function () {
+              var item = request.result;
+              if (!item) { resolve(values); return; }
+              if (eventMatches(item.value, filter)) values.push(clone(item.value));
+              if (values.length >= limit) { resolve(values); return; }
+              item.continue();
+            };
+          });
+        }));
         await done;
-        if (direction === 'prev') values.reverse();
-        return values.slice(0, limit);
+        var values = [].concat.apply([], pages).sort(function (a, b) { return a.sequence - b.sequence; });
+        return direction === 'prev' ? values.slice(-limit) : values.slice(0, limit);
       },
-      countEvents: async function (conversationId) { return one('journal_events', 'readonly', function (store) { return requestPromise(store.count(rangeForConversation(conversationId))); }); },
+      countEvents: async function (conversationId, filter, cursor) {
+        return one('journal_events', 'readonly', function (store) {
+          var source = filter && filter.types && filter.types.length ? store.index('by_type') : store;
+          return Promise.all(eventRanges(conversationId, cursor, filter).map(function (range) {
+            return requestPromise(source.count(range));
+          })).then(function (counts) {
+            return counts.reduce(function (total, count) { return total + count; }, 0);
+          });
+        });
+      },
       putStream: async function (buffer) { return one('stream_buffers', 'readwrite', async function (store) { await requestPromise(store.put(buffer)); return clone(buffer); }); },
       getStream: async function (conversationId, generationId, modelRequestId) { return one('stream_buffers', 'readonly', function (store) { return requestPromise(store.get([conversationId, generationId, modelRequestId])); }).then(function (value) { return value || null; }); },
       listStreams: async function (conversationId, generationId) {
@@ -626,6 +673,12 @@
       deleteStream: async function (conversationId, generationId, modelRequestId) { return one('stream_buffers', 'readwrite', async function (store) { await requestPromise(store.delete([conversationId, generationId, modelRequestId])); return true; }); },
       putPayload: async function (payload) { return one('payload_blobs', 'readwrite', async function (store) { await requestPromise(store.put(payload)); return clone(payload); }); },
       getPayload: async function (payloadId) { return one('payload_blobs', 'readonly', function (store) { return requestPromise(store.get(payloadId)); }).then(function (value) { return value || null; }); },
+      missingPayloadIds: async function (ids) {
+        return one('payload_blobs', 'readonly', async function (store) {
+          var keys = await Promise.all(ids.map(function (id) { return requestPromise(store.getKey(id)); }));
+          return ids.filter(function (_, index) { return keys[index] === undefined; });
+        });
+      },
       listCheckpoints: async function (conversationId) { return one('summary_checkpoints', 'readonly', function (store) { return requestPromise(store.getAll()).then(function (values) { return values.filter(function (item) { return item.conversationId === conversationId; }); }); }); },
       listMetadata: async function () { return one('conversation_meta', 'readonly', function (store) { return requestPromise(store.getAll()); }); },
       clearConversation: async function (conversationId) {
@@ -743,20 +796,101 @@
         ref: { payloadId: payloadId, sha256: hash, byteLength: size, encoding: 'json' },
       };
     }
-    async function prepareEvents(rawEvents, conversationId, defaults) {
+    // Snapshot bodies share immutable message/system/tool components inside
+    // the existing payload store. References are hashes scoped to a conversation.
+    async function prepareSnapshot(payload, conversationId, generationId, parts) {
+      var skeleton = clone(payload);
+      var fields = [];
+      var paths = [['system'], ['messages'], ['tools'], ['runtimeContext'], ['contextAppendMessages'],
+        ['promptMessages'], ['promptState'], ['trace'], ['request', 'system'], ['request', 'messages'],
+        ['request', 'tools'], ['request', 'contextTrace']];
+      for (var path of paths) {
+        var parent = path.length === 1 ? skeleton : skeleton[path[0]];
+        var key = path[path.length - 1];
+        if (!isRecord(parent) || !hasOwn(parent, key) || parent[key] === undefined) continue;
+        var array = key === 'messages' || key === 'promptMessages' || key === 'contextAppendMessages';
+        array = array && Array.isArray(parent[key]);
+        var values = array ? parent[key] : [parent[key]];
+        var hashes = [];
+        for (var part of values) {
+          var serialized = stableStringify(part);
+          var hash = await sha256(serialized, cryptoApi);
+          hashes.push(hash);
+          var partId = snapshotPartId(conversationId, hash);
+          if (!parts.has(partId)) {
+            parts.set(partId, { schemaVersion: 1, payloadId: partId, conversationId: conversationId,
+              generationId: '', sha256: hash, byteLength: byteLength(serialized), encoding: 'json',
+              value: clone(part), createdAt: Number(clock()) });
+          }
+        }
+        fields.push({ path: path, array: array, hashes: hashes });
+        delete parent[key];
+      }
+      var prepared = await preparePayload({ payload: skeleton, fields: fields }, conversationId, generationId);
+      prepared.record.encoding = prepared.ref.encoding = SNAPSHOT_ENCODING;
+      return prepared;
+    }
+    async function resolveSnapshot(record, readPart, view) {
+      if (record.encoding !== SNAPSHOT_ENCODING) return record.value;
+      var snapshot = record.value;
+      if (!isRecord(snapshot) || !isRecord(snapshot.payload) || !Array.isArray(snapshot.fields)) {
+        throw journalError('INVALID_IMPORT', 'Invalid request snapshot');
+      }
+      var payload = clone(snapshot.payload);
+      var seenFields = new Set();
+      for (var field of snapshot.fields) {
+        if (!isRecord(field) || !Array.isArray(field.path) || !Array.isArray(field.hashes)
+            || typeof field.array !== 'boolean' || field.path.length < 1 || field.path.length > 2
+            || field.path.some(function (key) { return typeof key !== 'string' || key.indexOf('.') !== -1; })
+            || !/^(?:system|messages|tools|runtimeContext|contextAppendMessages|promptMessages|promptState|trace|request\.(?:system|messages|tools|contextTrace))$/.test(field.path.join('.'))
+            || (!field.array && field.hashes.length !== 1) || seenFields.has(field.path.join('.'))) {
+          throw journalError('INVALID_IMPORT', 'Invalid request snapshot field');
+        }
+        seenFields.add(field.path.join('.'));
+        if (view === 'runtime' && field.path.join('.') !== 'promptMessages' && field.path.join('.') !== 'promptState') continue;
+        var values = [];
+        for (var hash of field.hashes) {
+          if (!/^sha256:[a-f0-9]{64}$/.test(hash)) throw journalError('INVALID_IMPORT', 'Invalid snapshot component hash');
+          var part = await readPart(snapshotPartId(record.conversationId, hash));
+          if (!part || part.conversationId !== record.conversationId || part.encoding !== 'json' || part.sha256 !== hash) {
+            throw journalError('PAYLOAD_MISSING', 'Request snapshot component is missing or invalid');
+          }
+          if (view !== 'validate') values.push(clone(part.value));
+        }
+        var parent = field.path.length === 1 ? payload : payload.request;
+        if (!isRecord(parent)) throw journalError('INVALID_IMPORT', 'Invalid request snapshot parent');
+        if (view !== 'validate') parent[field.path[field.path.length - 1]] = field.array ? values : values[0];
+      }
+      return payload;
+    }
+    function snapshotDependencies(record) {
+      if (record.encoding !== SNAPSHOT_ENCODING) return [];
+      return record.value.fields.reduce(function (ids, field) {
+        return ids.concat(field.hashes.map(function (hash) { return snapshotPartId(record.conversationId, hash); }));
+      }, []);
+    }
+    async function prepareEvents(rawEvents, conversationId, defaults, includeAllParts) {
       var payloads = [];
+      var parts = new Map();
       var events = [];
       for (var index = 0; index < rawEvents.length; index += 1) {
         var event = normalizeEvent(rawEvents[index], conversationId, defaults || {}, clock, idGenerator);
-        if (!event.payloadRef && byteLength(event.payload) > payloadThreshold) {
-          var prepared = await preparePayload(event.payload, conversationId, event.generationId);
+        var snapshot = event.type === 'context_injected' || event.type === 'model_request_started';
+        if (!event.payloadRef && (snapshot || byteLength(event.payload) > payloadThreshold)) {
+          var prepared = snapshot
+            ? await prepareSnapshot(event.payload, conversationId, event.generationId, parts)
+            : await preparePayload(event.payload, conversationId, event.generationId);
           payloads.push(prepared.record);
           event.payloadRef = prepared.ref;
-          event.payload = { externalized: true };
+          event.payload = Object.assign(snapshot ? snapshotPreview(event.payload) : {}, { externalized: true });
         }
         events.push(event);
       }
-      return { events: events, payloads: payloads };
+      var partIds = Array.from(parts.keys());
+      if (!includeAllParts && partIds.length && typeof backend.missingPayloadIds === 'function') {
+        partIds = await backend.missingPayloadIds(partIds);
+      }
+      return { events: events, payloads: payloads.concat(partIds.map(function (id) { return parts.get(id); })) };
     }
 
     async function transaction(conversationId, mode, callback) {
@@ -886,19 +1020,27 @@
         types: Array.isArray(cursor.types) ? cursor.types.slice() : [], q: text(cursor.q),
       };
       var events = await backend.queryEvents(conversationId, normalizedCursor, limit, filter);
-      var allFiltered = null;
-      var filtered = filter.branchId || filter.generationId || filter.actorId || filter.types.length || filter.q;
-      var total = filtered
-        ? ((allFiltered = await backend.queryEvents(conversationId, {}, Number.MAX_SAFE_INTEGER, filter)).length)
-        : await backend.countEvents(conversationId);
       var first = events[0] && events[0].sequence || 0;
       var last = events[events.length - 1] && events[events.length - 1].sequence || 0;
+      var allFiltered = null;
+      var filtered = filter.branchId || filter.generationId || filter.actorId || filter.types.length || filter.q;
+      // Status reads request one terminal event. Count index keys instead of
+      // loading the entire conversation again just to compute page metadata.
+      var typeOnly = filter.types.length && !filter.branchId && !filter.generationId && !filter.actorId && !filter.q;
+      var counts = typeOnly ? await Promise.all([
+        backend.countEvents(conversationId, filter),
+        first ? backend.countEvents(conversationId, filter, { beforeSequence: first }) : 0,
+        last ? backend.countEvents(conversationId, filter, { afterSequence: last }) : 0,
+      ]) : null;
+      var total = counts ? counts[0] : filtered
+        ? ((allFiltered = await backend.queryEvents(conversationId, {}, Number.MAX_SAFE_INTEGER, filter)).length)
+        : await backend.countEvents(conversationId);
       return {
         events: events,
         total: total,
         limit: limit,
-        hasMoreBefore: filtered ? !!(first && allFiltered && allFiltered[0] && allFiltered[0].sequence < first) : first > 1,
-        hasMoreAfter: filtered ? !!(last && allFiltered && allFiltered[allFiltered.length - 1] && allFiltered[allFiltered.length - 1].sequence > last) : last > 0 && last < total,
+        hasMoreBefore: counts ? counts[1] > 0 : filtered ? !!(first && allFiltered && allFiltered[0] && allFiltered[0].sequence < first) : first > 1,
+        hasMoreAfter: counts ? counts[2] > 0 : filtered ? !!(last && allFiltered && allFiltered[allFiltered.length - 1] && allFiltered[allFiltered.length - 1].sequence > last) : last > 0 && last < total,
         cursors: { beforeSequence: first || null, afterSequence: last || null },
         filter: filter,
       };
@@ -1047,13 +1189,18 @@
       await backend.putPayload(prepared.record);
       return prepared.ref;
     }
-    async function getPayloadBlob(payloadId, expectedHash) {
+    async function getPayloadBlob(payloadId, expectedHash, readOptions) {
       var value = await backend.getPayload(requiredId(payloadId, 'payloadId'));
       if (!value) return null;
       if (!await getMetadata(value.conversationId)) return null;
       if (expectedHash && value.sha256 !== expectedHash) throw journalError('PAYLOAD_HASH_MISMATCH', 'Payload hash does not match its reference');
       var actual = await sha256(stableStringify(value.value), cryptoApi);
       if (actual !== value.sha256) throw journalError('PAYLOAD_HASH_MISMATCH', 'Stored payload failed SHA-256 verification');
+      if (value.encoding === SNAPSHOT_ENCODING) {
+        value.value = await resolveSnapshot(value, async function (id) {
+          return getPayloadBlob(id);
+        }, readOptions && readOptions.view);
+      }
       return clone(value);
     }
     async function listActiveConversations() {
@@ -1092,6 +1239,7 @@
       var events = await getAllEvents(conversationId);
       var includeReasoning = exportOptions.includeReasoning !== false;
       var sanitizedPayloads = Object.create(null);
+      var sanitizedParts = new Map();
       if (!includeReasoning) {
         var sanitizedEvents = [];
         for (var eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
@@ -1101,38 +1249,44 @@
           var referencedPayloadId = eventForExport.payloadRef && eventForExport.payloadRef.payloadId;
           if (referencedPayloadId) {
             referencedPayload = await backend.getPayload(referencedPayloadId);
-            if (referencedPayload) eventForExport.payload = clone(referencedPayload.value);
+            if (referencedPayload) eventForExport.payload = await resolveSnapshot(referencedPayload, function (id) { return getPayloadBlob(id); });
           }
           eventForExport = exportEventWithoutReasoning(eventForExport);
           if (!eventForExport) continue;
           if (referencedPayload) {
             if (exportOptions.includePayloads === true) {
-              var sanitizedPayload = clone(referencedPayload);
-              sanitizedPayload.value = clone(eventForExport.payload);
-              var sanitizedSerialized = stableStringify(sanitizedPayload.value);
-              sanitizedPayload.sha256 = await sha256(sanitizedSerialized, cryptoApi);
-              sanitizedPayload.byteLength = byteLength(sanitizedSerialized);
+              var sanitized = referencedPayload.encoding === SNAPSHOT_ENCODING
+                ? await prepareSnapshot(eventForExport.payload, conversationId, eventForExport.generationId, sanitizedParts)
+                : await preparePayload(eventForExport.payload, conversationId, eventForExport.generationId);
+              var sanitizedPayload = sanitized.record;
+              sanitizedPayload.payloadId = referencedPayloadId;
               eventForExport.payloadRef = Object.assign({}, eventForExport.payloadRef, {
                 sha256: sanitizedPayload.sha256,
                 byteLength: sanitizedPayload.byteLength,
+                encoding: sanitizedPayload.encoding,
               });
               sanitizedPayloads[referencedPayloadId] = sanitizedPayload;
             }
-            eventForExport.payload = { externalized: true };
+            eventForExport.payload = Object.assign(referencedPayload.encoding === SNAPSHOT_ENCODING
+              ? snapshotPreview(eventForExport.payload) : {}, { externalized: true });
           }
           sanitizedEvents.push(eventForExport);
         }
         events = sanitizedEvents;
       }
       var checkpoints = await backend.listCheckpoints(conversationId);
-      if (!includeReasoning) checkpoints = checkpoints.map(scrubReasoning);
+      if (!includeReasoning) checkpoints = checkpoints.map(function (checkpoint) { return scrubReasoning(checkpoint); });
       var payloads = [];
       if (exportOptions.includePayloads === true) {
         var ids = {};
         events.forEach(function (event) { if (event.payloadRef && event.payloadRef.payloadId) ids[event.payloadRef.payloadId] = true; });
-        for (var payloadId of Object.keys(ids)) {
-          var payload = sanitizedPayloads[payloadId] || await backend.getPayload(payloadId);
-          if (payload) payloads.push(payload);
+        var queue = Object.keys(ids);
+        for (var queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
+          var payloadId = queue[queueIndex];
+          var payload = sanitizedPayloads[payloadId] || sanitizedParts.get(payloadId) || await backend.getPayload(payloadId);
+          if (!payload) throw journalError('PAYLOAD_MISSING', 'Export payload is missing: ' + payloadId);
+          payloads.push(payload);
+          snapshotDependencies(payload).forEach(function (id) { if (!ids[id]) { ids[id] = true; queue.push(id); } });
         }
       }
       return {
@@ -1236,6 +1390,11 @@
         if (payload.sha256 !== actualHash) throw journalError('PAYLOAD_HASH_MISMATCH', 'Imported payload failed SHA-256 verification');
         payloadById[payload.payloadId] = payload;
       }
+      for (var importedPayload of payloads) {
+        if (importedPayload.encoding === SNAPSHOT_ENCODING) {
+          await resolveSnapshot(importedPayload, async function (id) { return payloadById[id]; }, 'validate');
+        }
+      }
       // Every externalized event must resolve to a payload in the portable
       // backup. Check this even when the payload list is empty so an import
       // can never publish a Journal with dangling references.
@@ -1255,7 +1414,7 @@
         var copy = clone(event);
         delete copy.sequence;
         return copy;
-      }), conversationId, data.conversation.activeGeneration || {});
+      }), conversationId, data.conversation.activeGeneration || {}, true);
       await withLock(conversationId, async function () {
         var existing = await backend.getMetadata(conversationId);
         if (existing && !metadataBelongsToRuntime(existing)) {
@@ -1337,11 +1496,17 @@
       });
       var payloads = [];
       var payloadMap = Object.create(null);
-      for (var payloadId of Object.keys(payloadIds)) {
+      var forkPayloadQueue = Object.keys(payloadIds);
+      for (var forkPayloadIndex = 0; forkPayloadIndex < forkPayloadQueue.length; forkPayloadIndex += 1) {
+        var payloadId = forkPayloadQueue[forkPayloadIndex];
         var payload = await backend.getPayload(payloadId);
         if (!payload) throw journalError('INVALID_FORK_BOUNDARY', 'Fork source payload is missing: ' + payloadId);
+        snapshotDependencies(payload).forEach(function (id) {
+          if (!payloadIds[id]) { payloadIds[id] = true; forkPayloadQueue.push(id); }
+        });
         var copiedPayload = clone(payload);
-        var copiedId = idGenerator('payload');
+        var copiedId = payloadId === snapshotPartId(sourceConversationId, payload.sha256)
+          ? snapshotPartId(targetConversationId, payload.sha256) : idGenerator('payload');
         payloadMap[payloadId] = copiedId;
         copiedPayload.payloadId = copiedId;
         copiedPayload.conversationId = targetConversationId;

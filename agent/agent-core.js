@@ -613,6 +613,11 @@
         var descriptor = clone(resolved && resolved.methodContract && resolved.methodContract.modelProjection
           || { type: 'data' });
         if (resolved && resolved.route) {
+          if (method === 'GET' && /^(?:AppCodeField|AppSourceFile)$/.test(text(resolved.route.resourceType))) {
+            // Persist the projection version with new tool results so replay
+            // of older results preserves the verified prompt prefix.
+            descriptor.appSearchVersion = 1;
+          }
           descriptor.includeEtag = Object.keys(resolved.route.methods || {}).some(function (candidateMethod) {
             if (candidateMethod === 'GET') return false;
             var contract = resolved.route.methods[candidateMethod];

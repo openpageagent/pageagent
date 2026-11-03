@@ -20,7 +20,9 @@
     var deleteObjectPath = deps.deleteObjectPath;
     var storageGet = deps.storageGet;
     var storageSet = deps.storageSet;
-    var checkpointsKey = deps.checkpointsKey || 'automation_checkpoints';
+    var checkpointsKey = deps.checkpointsKey || 'page_agent_checkpoints';
+    var legacyCheckpointsKey = checkpointsKey === 'page_agent_checkpoints' ? 'automation_checkpoints'
+      : checkpointsKey === 'page_agent_checkpoints_incognito' ? 'automation_checkpoints_incognito' : '';
     var clearDebugTrace = deps.clearDebugTrace || function () { return 0; };
     var compactEphemeralRunState = deps.compactEphemeralRunState || function () { return {}; };
     var CHECKPOINTS_KEY = checkpointsKey;
@@ -810,9 +812,15 @@
       return scope + ':' + name;
     }
 
+    function getCheckpoints() {
+      return storageGet(CHECKPOINTS_KEY).then(function (map) {
+        return map === undefined && legacyCheckpointsKey ? storageGet(legacyCheckpointsKey) : map;
+      });
+    }
+
     function execCheckpointGet(params, state, execution) {
       ensureNotAborted(execution);
-      return abortable(storageGet(CHECKPOINTS_KEY), execution).then(function (map) {
+      return abortable(getCheckpoints(), execution).then(function (map) {
         ensureNotAborted(execution);
         map = map || {};
         var key = checkpointKey(params, state);
@@ -826,7 +834,7 @@
     function execCheckpointSet(params, state, execution) {
       ensureNotAborted(execution);
       var dispatched = false;
-      return abortable(storageGet(CHECKPOINTS_KEY), execution).then(function (map) {
+      return abortable(getCheckpoints(), execution).then(function (map) {
         ensureNotAborted(execution);
         map = map || {};
         var key = checkpointKey(params, state);

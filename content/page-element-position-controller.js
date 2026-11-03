@@ -4,7 +4,7 @@
   var api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) {
-    root.PageAutomationPageElementPositionController = api;
+    root.PageAgentPageElementPositionController = api;
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
@@ -194,7 +194,7 @@
     var boundaryElement = options.boundaryElement || host;
     var dragClassTarget = options.dragClassTarget || handle;
     var storage = options.storage;
-    var storageKey = String(options.storageKey || 'pageAutomationFreePosition');
+    var storageKey = String(options.storageKey || 'pageAgentFreePosition');
     var edgeGap = Math.max(0, finiteNumber(options.edgeGap, PAGE_EDGE_GAP));
     var defaultPosition = normalizedRatioPosition(options.defaultPosition) || { leftRatio: 0.5, topRatio: 1 };
     var interactiveSelector = String(options.interactiveSelector || 'button,select,textarea,input');
@@ -292,7 +292,14 @@
     function loadPosition() {
       var stored = null;
       if (storage && typeof storage.getItem === 'function') {
-        try { stored = normalizedFreePosition(JSON.parse(storage.getItem(storageKey) || 'null')); } catch (_) {}
+        try {
+          stored = normalizedFreePosition(JSON.parse(storage.getItem(storageKey) || 'null'));
+          // 旧项目名下的位置只用于回退；后续写入统一使用新键。
+          if (!stored && storageKey === 'pageAgentFreePosition') {
+            stored = normalizedFreePosition(JSON.parse(storage.getItem('pageAutomationFreePosition') || 'null'));
+            if (stored) storage.setItem(storageKey, JSON.stringify(stored));
+          }
+        } catch (_) {}
       }
       currentPosition = stored || currentPosition || defaultPosition;
       applyRememberedPosition();
@@ -403,7 +410,8 @@
     var win = options.window;
     var documentRef = options.document || win && win.document;
     var storage = options.storage;
-    var storageKey = String(options.storageKey || 'pageAutomationFloatingStatusPosition');
+    var storageKey = String(options.storageKey || 'pageAgentFloatingStatusPosition');
+    var legacyStorageKey = storageKey === 'pageAgentFloatingStatusPosition' ? 'pageAutomationFloatingStatusPosition' : '';
     var host = options.host;
     var button = options.button;
     var dockWidth = Math.max(1, finiteNumber(options.dockWidth, 56));
@@ -599,10 +607,14 @@
         return;
       }
       try {
-        storage.get(storageKey, function (result) {
+        storage.get(legacyStorageKey ? [storageKey, legacyStorageKey] : storageKey, function (result) {
           if (destroyed) return;
           storageNeedsMigration = false;
           currentPosition = positionFromStorage(result && result[storageKey]);
+          if (!currentPosition && legacyStorageKey) {
+            currentPosition = positionFromStorage(result && result[legacyStorageKey]);
+            if (currentPosition) storageNeedsMigration = true;
+          }
           if (!currentPosition) {
             currentSide = 'right';
             currentPosition = defaultPosition();

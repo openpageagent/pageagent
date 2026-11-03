@@ -3,7 +3,7 @@
   var commonJs = typeof module === 'object' && module.exports;
   var support = commonJs ? require('../resource-module-support') : root.ResourceModuleSupport;
   var adapter = commonJs ? require('../resource-module-adapter') : root.ResourceModuleAdapter;
-  var contract = commonJs ? require('../../shared/recording-contract') : root.PageAutomationRecordingContract;
+  var contract = commonJs ? require('../../shared/recording-contract') : root.PageAgentRecordingContract;
   if (!support || !adapter || !contract) throw new Error('RecordingResource dependencies are incomplete');
   var api = factory(support, adapter, contract);
   if (commonJs) module.exports = api;

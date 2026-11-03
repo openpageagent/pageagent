@@ -13,10 +13,10 @@
     return;
   }
 
-  var lifecycleApi = root && root.PageAutomationLifecycle;
+  var lifecycleApi = root && root.PageAgentLifecycle;
   if (commonJs && !lifecycleApi) lifecycleApi = require('../ui/lifecycle.js');
   if (!lifecycleApi || typeof lifecycleApi.create !== 'function') {
-    throw new Error('PageAutomationLifecycle must load before OptionsFlowGroupController');
+    throw new Error('PageAgentLifecycle must load before OptionsFlowGroupController');
   }
   var sortLayoutApi = root && root.PageAgentSortLayout;
   if (commonJs && !sortLayoutApi) sortLayoutApi = require('../builtin-apps/shared/sort-layout.js');
@@ -117,7 +117,7 @@
     options = options || {};
     var lifecycleFactory = options.lifecycleApi || LifecycleApi;
     if (!lifecycleFactory || typeof lifecycleFactory.create !== 'function') {
-      throw new Error('PageAutomationLifecycle must load before OptionsFlowGroupController');
+      throw new Error('PageAgentLifecycle must load before OptionsFlowGroupController');
     }
 
     var window = options.window || (typeof globalThis !== 'undefined' ? globalThis : {});
@@ -129,7 +129,7 @@
         || typeof resourceClient.authorizedPost !== 'function'
         || typeof resourceClient.authorizedPatch !== 'function'
         || typeof resourceClient.authorizedDelete !== 'function') {
-      throw new Error('OptionsFlowGroupController requires PageAutomationResourceClient');
+      throw new Error('OptionsFlowGroupController requires PageAgentResourceClient');
     }
     var getConfig = requireFunction(options.getConfig, 'getConfig');
     var applyFlowGroupEnvelope = requireFunction(options.applyFlowGroupEnvelope, 'applyFlowGroupEnvelope');
@@ -519,8 +519,8 @@
             + '<button class="btn-secondary" data-action="copy-flowGroup" data-id="' + esc(group.id) + '">复制为用户流程组</button>'
             + '<button class="btn-secondary" data-action="cancel-flowGroup">关闭</button>'
           : '<button class="btn-primary" data-action="save-flowGroup">保存流程组</button>'
-            + (persisted ? '<button class="btn-secondary" data-action="run-flowGroup" data-id="' + esc(group.id) + '">运行流程组</button>' : '')
-            + '<button class="btn-secondary" data-action="cancel-flowGroup">取消</button>')
+            + '<button class="btn-secondary" data-action="cancel-flowGroup">取消</button>'
+            + (persisted ? '<button class="btn-secondary" data-action="run-flowGroup" data-id="' + esc(group.id) + '">运行流程组</button>' : ''))
         + '<span class="spacer"></span>'
         + (readonly
           ? '<button class="btn-danger" disabled title="内置流程组不能删除">删除</button>'

@@ -4,7 +4,7 @@
 })(globalThis, function () {
 
   var RUNTIME_SHARED_FIELDS = [
-    'automationWindowId', 'tabRegistry', 'sourceLastUrls', 'flowStartTime',
+    'agentWindowId', 'tabRegistry', 'sourceLastUrls', 'flowStartTime',
   ];
 
   var DEFAULT_STATE = {
@@ -14,7 +14,7 @@
     nodeStatuses: {},
     deepLog: [],
     sharedState: {
-      automationWindowId: null,
+      agentWindowId: null,
       tabRegistry: {},
       sourceLastUrls: {},
       flowStartTime: null,

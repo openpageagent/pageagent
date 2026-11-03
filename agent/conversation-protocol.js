@@ -532,7 +532,7 @@
     }
 
     function normalizeEvents(input) {
-      strictObject(input, 'getEvents', ['conversationId', 'cursor', 'limit', 'includePayloads', 'branchId', 'generationId', 'types', 'q', 'actorId'], ['conversationId']);
+      strictObject(input, 'getEvents', ['conversationId', 'cursor', 'limit', 'includePayloads', 'view', 'branchId', 'generationId', 'types', 'q', 'actorId'], ['conversationId']);
       var cursor = input.cursor === undefined || input.cursor === null ? {} : input.cursor;
       strictObject(cursor, 'getEvents.cursor', ['beforeSequence', 'afterSequence'], []);
       if (hasOwn(cursor, 'beforeSequence') && hasOwn(cursor, 'afterSequence')) {
@@ -545,11 +545,16 @@
       if (hasOwn(input, 'includePayloads') && typeof input.includePayloads !== 'boolean') {
         throw protocolError('INVALID_COMMAND', 'getEvents.includePayloads must be boolean');
       }
+      var view = input.view === undefined ? 'full' : input.view;
+      if (['full', 'conversation', 'trajectory'].indexOf(view) === -1) {
+        throw protocolError('INVALID_COMMAND', 'getEvents.view must be full, conversation or trajectory');
+      }
       return {
         conversationId: requiredString(input.conversationId, 'getEvents.conversationId', 256),
         cursor: normalizedCursor,
         limit: input.limit === undefined ? 100 : integer(input.limit, 'getEvents.limit', 1, 500),
         includePayloads: includePayloads,
+        view: view,
         branchId: optionalString(input.branchId, 'getEvents.branchId', 256),
         generationId: optionalString(input.generationId, 'getEvents.generationId', 256),
         types: input.types === undefined ? [] : (Array.isArray(input.types) ? input.types.map(function (value) { return requiredString(value, 'getEvents.types[]', 128); }) : (function () { throw protocolError('INVALID_COMMAND', 'getEvents.types must be an array'); })()),

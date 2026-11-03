@@ -605,8 +605,8 @@
           var serializedBody = JSON.stringify(request.body || {});
           var trace = await beginTrace(Object.assign({ method: 'POST', rawBody: serializedBody }, request), attempt);
           try {
-            var requestFetch = root && root.PageAutomationUserAgent
-              ? function (url, init) { return root.PageAutomationUserAgent.fetchModel(url, init, fetchImpl); }
+            var requestFetch = root && root.PageAgentUserAgent
+              ? function (url, init) { return root.PageAgentUserAgent.fetchModel(url, init, fetchImpl); }
               : fetchImpl;
             response = await requestFetch(request.url, {
               method: 'POST',

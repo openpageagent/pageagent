@@ -2645,11 +2645,16 @@
     }).catch(function (error) {
       var performed = error instanceof ArpError
         ? error.performed
-        : (executionStarted ? 'unknown' : 'no');
+        : (executionStarted && unsafe ? 'unknown' : 'no');
       var normalizedError = error;
       if (!(error instanceof ArpError)) {
         var cause = boundedErrorCause(error);
-        normalizedError = arpError('INTERNAL_ERROR', cause.message, {
+        // Domain services may throw ordinary Errors with an ARP code. Keep
+        // that code without inferring that a failed write had no effects.
+        var code = error && typeof error.code === 'string'
+          && Object.prototype.hasOwnProperty.call(ERROR_STATUS, error.code)
+          ? error.code : 'INTERNAL_ERROR';
+        normalizedError = arpError(code, cause.message, {
           performed: performed,
           stage: executionStarted ? 'adapter' : 'pipeline',
           details: { cause: cause },

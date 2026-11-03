@@ -32,6 +32,10 @@
 
 别名保存后立即生效，留空恢复 ID 地址；旧别名失效，原 ID 链接始终可用。ARP 和 SDK 使用稳定的 `appId`。
 
+应用草稿和发布页支持浮动对话入口，由全局浮动入口开关控制。面板显示当前应用及草稿／发布状态，对话修改保存到草稿，需另行发布；复制应用后，对话继续编辑副本。
+
+页面工具截图时会临时隐藏对话面板和应用顶部提示条。
+
 ## 草稿、发布与数据
 
 新建应用生成基础页面草稿。代码编辑器包含 HTML、CSS、JavaScript、主题及「功能与依赖」页签，并提供主题图片和字体上传。
@@ -87,6 +91,7 @@
 | `javascript` | ES module 入口 |
 | `files`（可选） | 应用自有 JS/CSS 原文，文件名到完整源码的映射 |
 | `description` | 功能说明 |
+| `parameters` | 启动参数声明：字段、示例及处理方式，默认无参数 |
 | `capabilities` | 使用的数据与动作能力 |
 | `actions` | 具名动作及输入、输出、目标声明 |
 | `dependencies` | 依赖 URI 和内容指纹 |
@@ -156,7 +161,7 @@ HTML/CSS 用 `app-asset:assets/{文件名}` 引用，JavaScript 用 `PageAgent.a
 
 `apps.open` 提供 `input` 时新建标签页，省略时可复用已有页。
 
-参数为普通 JSON，保存在 URL 的 `#page-agent-input=...` 中，编码后最多 16 KiB；目标页面负责校验，参数不授予权限。
+参数为普通 JSON，须符合应用的启动参数声明，保存在 URL 的 `#page-agent-input=...` 中，编码后最多 16 KiB；参数不授予权限。
 
 SDK 通知数据、Run、权限、源码及连接变化。
 
@@ -164,11 +169,26 @@ SDK 通知数据、Run、权限、源码及连接变化。
 
 跨应用 Run 不转发目标应用的 `onChange` 事件，需查询状态。
 
+### 启动参数
+
+在「启动参数」页签编辑 `code.parameters`，查看字段说明和调用示例；内置原版通过「查看源码与参数」只读查看。
+
+按需选择 `mode`：
+
+- `none`（默认）：无参数，可省略 `input` 或传 `{}`，非空参数会被拒绝。旧应用和旧备份缺少声明或值为 `null` 时也使用此默认值，无需手动补齐。
+- `form`：通过 `bindings` 将标量字段映射到控件 ID，支持 input、checkbox、textarea、select 和 page-code-editor。省略字段保留原值，不触发输入事件或提交；需要联动时使用 `module`。
+- `module`：通过 `module: "app.js"` 指定 `code.files` 中的 JS 文件，导出 `async function applyParameters(input)`，处理失败时抛错。`javascript` 入口须等待页面初始化完成后返回，由平台调用模块一次，无需在入口重复处理参数。
+
+`schema` 为禁止额外字段的对象，每个字段需有说明，`example` 须符合 schema。嵌套字段的「父级内必填」表示传入所属对象时必须提供该字段。
+
+默认声明、完整 schema 和模块示例见 `GET /apps/capabilities`；正式调用参数见 `GET /apps/{appId}` 的 `slots.published.parameters`。
+草稿声明通过 `GET /apps/{appId}/draft/parameters` 读取，通过 `PATCH /apps/{appId}/draft` 的 `code.parameters` 整体替换。
+
 ### 内置开发工具联动
 
 开发者工具箱（`app_developer_tools`）和 Developer Utils（`app_developer_utils`）支持打开指定工具并填入内容。对话通过 `POST /apps/{appId}/open` 调用，应用通过 `PageAgent.apps.open` 调用。
 
-`GET /apps/{appId}` 返回的 `slots.published.customBehavior` 包含工具 ID 和支持的操作。
+`GET /apps/{appId}` 返回的 `slots.published.parameters` 包含参数 schema、工具 ID 说明和调用示例。
 
 启动参数为 `{ toolId: string, input: string, operation?: string }`：
 
@@ -192,6 +212,8 @@ SDK 通知数据、Run、权限、源码及连接变化。
 ```
 
 开发者工具箱中的 Base64 工具 ID 为 `base64`；工具 ID 和操作以目标应用说明为准。
+
+GitLab 批量操作（`app_gitlab_tools`）支持 `{ projectId, site?, commit?, operation?, branches?, removeSource? }`。`projectId` 为数字项目 ID，`operation` 为 `merge` 或 `cherry-pick`。参数用于预填页面，用户保存并连接、确认项目后，点击执行才写入 GitLab。启动参数不接收凭据，更换站点会清除旧令牌。
 
 ## 动作与依赖
 
@@ -250,6 +272,7 @@ ARP 路径返回资源表示；浏览器访问地址加载应用页面。完整�
 | `GET /apps/{appId}/{slot}/files` | 列出源码文件名、长度、行数和读取 URI |
 | `GET /apps/{appId}/{slot}/files/{fileName}` | 按行读取或搜索单个 JS/CSS 文件，沿用源码字段的分页、grep 和 revision 参数 |
 | `PUT`、`DELETE /apps/{appId}/draft/files/{fileName}` | 带应用 ETag 新增、完整替换或删除一个源码文件；PUT 的 body 为 `{source: "完整源码"}` |
+| `POST /apps/{appId}/draft/edits` | 按原文片段修改草稿字段或已有源码文件 |
 | `PUT /apps/{appId}/draft`、`PATCH /apps/{appId}/draft` | 保存完整草稿或指定 `code` 字段 |
 | `POST /apps/{appId}/publish`、`POST /apps/{appId}/copy` | 本地发布、创建副本 |
 | `PUT /apps/{appId}/assets/{assetName}` | 上传 Base64 与 MIME 表示的草稿资源 |
@@ -265,9 +288,36 @@ ARP 路径返回资源表示；浏览器访问地址加载应用页面。完整�
 
 资源权限为 `apps.read/write/execute/delete`，数据与动作还检查应用自身授权。
 
-PATCH 修改 CSS：`patch: {"code":{"css":"完整的新 CSS"}}`。
+局部修改使用 `POST /apps/{appId}/draft/edits`，无需提交全文。例如修改一处 CSS：
+
+```json
+{
+  "uri": "/apps/{appId}/draft/edits",
+  "body": {
+    "edits": [
+      {
+        "field": "css",
+        "oldText": ".button { color: red; }",
+        "newText": ".button { color: blue; }"
+      }
+    ]
+  },
+  "preconditions": { "ifMatch": "\"当前应用 revision\"" },
+  "idempotencyKey": "本次编辑的唯一键"
+}
+```
+
+`field` 支持 `html`、`css`、`javascript`、`themeCss`、`description`；修改已有源码文件时，使用 `field: "files"` 并指定 `fileName`。
+
+- `oldText` 为非空原文片段，区分大小写与缩进，须唯一匹配；重复时补充上下文。
+- `newText` 为替换内容；插入时保留原文锚点并加入内容，删除时设为空字符串。
+- 每次支持 1–50 项，按顺序应用；任一项失败，整次不保存。后续修改使用成功回执中的最新 ETag。
+
+`body.includeDiff` 可省略（小规模编辑自动返回差异）、设为 `true`（请求差异）或 `false`（关闭）。差异可能跳过、不可用或截断，不影响已成功的保存；需要核对时重新读取相关源码，不要为补取差异重复提交编辑。差异仅用于文本核对，不代表功能验证通过。
+
+完整替换 CSS 使用 `PATCH /apps/{appId}/draft`：`patch: {"code":{"css":"完整的新 CSS"}}`。
 字符串和数组整体替换，空字符串或空数组清空，省略保留，不接受 `null`。
-`code.files` 映射同样整体替换；只改一个文件时使用单文件 PUT，避免覆盖其他文件。
+`code.files` 映射同样整体替换；局部修改用片段编辑，新建或完整替换一个文件用单文件 PUT，避免覆盖其他文件。
 
 元数据的 `slug` 支持空字符串或 `null` 清除别名。
 
@@ -287,7 +337,7 @@ GET /apps/{appId}/draft/css?startLine=1&limit=50
 
 数组字段直接返回 `value`。
 
-PATCH 替换前需读齐目标字段，片段不能覆盖全文。
+PATCH 整体替换字段或 PUT 完整替换文件前需读齐目标；片段编辑只需读取待修改内容及唯一匹配所需的上下文。
 
 ## 对话调整
 
@@ -301,6 +351,8 @@ Agent 写入前先读取 `/apps` 或目标应用，再完整读取 `/knowledge/b
 
 应用目录的「对话调整」使用应用开发助手，优先复用该助手下与当前应用关联、未归档的最近话题；没有可用话题时新建。
 助手已删除时重新创建，已有助手保留用户配置。
+
+应用开发助手默认仅做必要修改和静态检查，功能测试由用户完成；可明确要求调整验证范围。
 
 入口填入修改提示，由用户补充需求后发送。
 

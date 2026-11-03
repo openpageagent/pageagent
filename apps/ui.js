@@ -1,7 +1,7 @@
 (function (root) {
   'use strict';
   var C = root.AppContract, files = new Map(), modules = new Map(), owners = new WeakMap(), floatingOwners = new WeakMap(), disposed = false;
-  var lifetime = root.PageAutomationLifecycle.create();
+  var lifetime = root.PageAgentLifecycle.create();
   var defaults = { bg: '#ffffff', 'bg-secondary': '#f9fafb', 'bg-muted': '#eaeef0', text: '#262626', 'text-secondary': '#728e9b', value: '#775351', border: '#d0dbe0', 'border-strong': '#aabbc3', 'border-link': '#ccdadb', 'table-header': '#728e9b', accent: '#004849', 'accent-soft': 'rgba(0,72,73,.08)', danger: '#ba554a', success: '#3da67a', transmitting: '#44a3cf', warn: '#cf9f5d', 'control-radius': '4px', 'control-border': '#ccdadb', 'control-bg': '#f9fafb', 'control-bg-hover': '#e3e8eb' };
   function invalid(message) { throw C.error('UI_INVALID_ARGUMENT', message); }
   function alive() { if (disposed) throw C.error('UI_UNAVAILABLE', '应用 UI 已卸载'); }
@@ -51,7 +51,7 @@
     files.set(path, promise); return promise;
   }
   function markdownModule() {
-    var view = root.PageAutomationConversationEventView;
+    var view = root.PageAgentConversationEventView;
     if (!view || !root.marked || !root.DOMPurify) throw new Error('Markdown 依赖未完成初始化');
     return Object.freeze({ create: function (container, options) {
       var mount = surface(container, view.STYLE_TEXT);
@@ -66,8 +66,8 @@
     } });
   }
   function messageModule() {
-    var view = root.PageAutomationConversationEventView;
-    if (!view || !root.marked || !root.DOMPurify || !root.PageAutomationConversationListView) throw new Error('消息列表依赖未完成初始化');
+    var view = root.PageAgentConversationEventView;
+    if (!view || !root.marked || !root.DOMPurify || !root.PageAgentConversationListView) throw new Error('消息列表依赖未完成初始化');
     var titles = { user: '用户', assistant: '助手', system: '系统', tool: '工具', error: '错误' };
     function normalize(items) {
       if (!Array.isArray(items)) invalid('messages 必须为数组');
@@ -88,7 +88,7 @@
       var mount = surface(container, view.STYLE_TEXT + ':host{height:var(--message-list-height,360px)}.conversation-event-stream{height:100%;overflow:auto}');
       mount.content.className = 'conversation-event-stream';
       mount.content.setAttribute('role', 'log'); mount.content.setAttribute('aria-label', '消息');
-      var list = root.PageAutomationConversationListView.createVirtualList({
+      var list = root.PageAgentConversationListView.createVirtualList({
         container: mount.content, virtualize: options.virtualize !== false,
         renderItem: function (message, index) {
           var html = view.renderMarkdown(message.text, { localImages: true });
@@ -144,7 +144,7 @@
       var restoreHandle = rememberStyle(handle, ['touch-action', 'cursor']), tabIndex = handle.getAttribute('tabindex');
       panel.style.position = 'fixed'; handle.style.touchAction = 'none'; handle.style.cursor = 'move';
       if (handle.tabIndex < 0) handle.tabIndex = 0;
-      var controller = root.PageAutomationPageElementPositionController.createFree({
+      var controller = root.PageAgentPageElementPositionController.createFree({
         window: root, document: document, host: panel, handle: handle, defaultPosition: position,
         interactiveSelector: 'button,select,textarea,input,a,[contenteditable]',
         onPositionChange: options.onPositionChange

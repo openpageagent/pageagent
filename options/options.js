@@ -16,17 +16,17 @@
       || typeof globalThis.OptionsUrlTriggerController.create !== 'function') {
     throw new Error('OptionsUrlTriggerController must load before options.js');
   }
-  if (!globalThis.PageAutomationLifecycle
-      || typeof globalThis.PageAutomationLifecycle.create !== 'function') {
-    throw new Error('PageAutomationLifecycle must load before options.js');
+  if (!globalThis.PageAgentLifecycle
+      || typeof globalThis.PageAgentLifecycle.create !== 'function') {
+    throw new Error('PageAgentLifecycle must load before options.js');
   }
-  if (!globalThis.PageAutomationSystemSettings
-      || typeof globalThis.PageAutomationSystemSettings.load !== 'function') {
-    throw new Error('PageAutomationSystemSettings must load before options.js');
+  if (!globalThis.PageAgentSystemSettings
+      || typeof globalThis.PageAgentSystemSettings.load !== 'function') {
+    throw new Error('PageAgentSystemSettings must load before options.js');
   }
-  if (!globalThis.PageAutomationResourceClient
-      || typeof globalThis.PageAutomationResourceClient.create !== 'function') {
-    throw new Error('PageAutomationResourceClient must load before options.js');
+  if (!globalThis.PageAgentResourceClient
+      || typeof globalThis.PageAgentResourceClient.create !== 'function') {
+    throw new Error('PageAgentResourceClient must load before options.js');
   }
 
   var $ = function (sel) { return document.querySelector(sel); };
@@ -57,7 +57,7 @@
   var pendingFlowConfigRefresh = false;
   var pendingSyncRefresh = false;
   var syncConfigRefreshTimer = 0;
-  var systemSettings = globalThis.PageAutomationSystemSettings.normalize();
+  var systemSettings = globalThis.PageAgentSystemSettings.normalize();
   var systemSettingsSaving = false;
   var hasAppFavorites = false;
   var systemProxyDirty = false;
@@ -84,12 +84,12 @@
   var scheduleController = null;
   var backupController = null;
   var appController = null;
-  var lifecycle = globalThis.PageAutomationLifecycle.create(window);
-  var syncEventStream = globalThis.PageAutomationSyncEventStream
-    && globalThis.PageAutomationSyncEventStream.create
-    ? globalThis.PageAutomationSyncEventStream.create({ runtime: chrome.runtime })
+  var lifecycle = globalThis.PageAgentLifecycle.create(window);
+  var syncEventStream = globalThis.PageAgentSyncEventStream
+    && globalThis.PageAgentSyncEventStream.create
+    ? globalThis.PageAgentSyncEventStream.create({ runtime: chrome.runtime })
     : null;
-  var resourceClient = globalThis.PageAutomationResourceClient.create();
+  var resourceClient = globalThis.PageAgentResourceClient.create();
   var tornDown = false;
   var RUN_TAB_MODE_OPTIONS = [
     { value: 'reuseOpenTab', label: '复用已打开标签' },
@@ -123,9 +123,10 @@
       dialog.innerHTML = '<form><header class="conversation-confirm-header"><h3 id="settings-confirm-title">' + esc(options.title || '确认操作') + '</h3></header>'
         + '<div class="conversation-confirm-body"><p id="settings-confirm-message" class="settings-dialog-message">' + esc(options.message) + '</p>'
         + (inputMode ? '<div class="setting-item"><input type="text" aria-label="' + esc(options.message) + '"></div>' : '') + '</div>'
-        + '<footer class="conversation-confirm-actions"><button type="button" class="btn-secondary">' + esc(options.cancelText || '取消') + '</button>'
+        + '<footer class="conversation-confirm-actions"><button type="submit" class="' + (inputMode ? 'btn-primary' : 'btn-danger') + '">' + esc(options.okText || '确认') + '</button>'
+        + '<button type="button" class="btn-secondary" data-settings-cancel>' + esc(options.cancelText || '取消') + '</button>'
         + (options.secondaryText ? '<button type="button" class="btn-secondary" data-settings-secondary>' + esc(options.secondaryText) + '</button>' : '')
-        + '<button type="submit" class="' + (inputMode ? 'btn-primary' : 'btn-danger') + '">' + esc(options.okText || '确认') + '</button></footer></form>';
+        + '</footer></form>';
       function finish(value) {
         if (settled) return;
         settled = true; settingsConfirmDialog = null; dialog.close(); dialog.remove();
@@ -133,13 +134,13 @@
         resolve(value);
       }
       settingsConfirmDialog = { cancel: function () { finish(canceled); } };
-      dialog.querySelector('button[type="button"]').onclick = function () { finish(canceled); };
+      dialog.querySelector('[data-settings-cancel]').onclick = function () { finish(canceled); };
       if (options.secondaryText) dialog.querySelector('[data-settings-secondary]').onclick = function () { finish(false); };
       dialog.addEventListener('cancel', function (event) { event.preventDefault(); finish(canceled); });
       dialog.querySelector('form').onsubmit = function (event) { event.preventDefault(); finish(inputMode ? dialog.querySelector('input').value : true); };
       if (inputMode) dialog.querySelector('input').value = options.defaultValue || '';
       document.body.append(dialog); dialog.showModal();
-      var focusTarget = dialog.querySelector(inputMode ? 'input' : 'button[type="button"]');
+      var focusTarget = dialog.querySelector(inputMode ? 'input' : '[data-settings-cancel]');
       focusTarget.focus();
       if (inputMode) focusTarget.select();
     });
@@ -387,7 +388,7 @@
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
       return Promise.reject(new TypeError(section + ' 资源必须是对象'));
     }
-    var item = PageAutomationConfigMigration.cleanItem(section, clonePlain(input));
+    var item = PageAgentConfigMigration.cleanItem(section, clonePlain(input));
     var id = String(item.id || '');
     function createResource() {
       return resourceClient.authorizedPost(spec.collectionUri, item, {
@@ -488,7 +489,7 @@
   }
 
   function createFlowResource(item) {
-    item = PageAutomationConfigMigration.cleanItem('flows', clonePlain(item || {}));
+    item = PageAgentConfigMigration.cleanItem('flows', clonePlain(item || {}));
     var nodes = (Array.isArray(item.nodes) ? item.nodes : []).map(function (node) {
       return clonePlain(node || {});
     });
@@ -526,7 +527,7 @@
   }
 
   function createFlowGroupResource(item) {
-    item = PageAutomationConfigMigration.cleanItem('flowGroups', clonePlain(item || {}));
+    item = PageAgentConfigMigration.cleanItem('flowGroups', clonePlain(item || {}));
     return resourceClient.authorizedPost('/flow-groups', item, {
       criteria: { relation: 'flow-groups' },
     }).then(function (envelope) {
@@ -638,7 +639,7 @@
         + '<div class="conversation-confirm-body"><p>入参 JSON 可留空。可使用 {"input": {...}}，也可以直接填写入参对象。</p>'
         + '<page-code-editor language="json" rows="10" aria-label="运行入参">' + esc(initial) + '</page-code-editor>'
         + '<p class="code-input-error" role="alert" hidden></p></div>'
-        + '<footer class="conversation-confirm-actions"><button type="button" class="btn-secondary">取消</button><button type="submit" class="btn-primary">运行</button></footer></form>';
+        + '<footer class="conversation-confirm-actions"><button type="submit" class="btn-primary">运行</button><button type="button" class="btn-secondary">取消</button></footer></form>';
       function finish(value) {
         if (settled) return;
         settled = true; runtimeInputDialog = null; dialog.close(); dialog.remove();
@@ -1313,7 +1314,7 @@
       });
       return item;
     }
-    var flow = remapImportedFlow(PageAutomationConfigMigration.cleanItem('flows', stripRuntimeMetadata(bundle.flow)));
+    var flow = remapImportedFlow(PageAgentConfigMigration.cleanItem('flows', stripRuntimeMetadata(bundle.flow)));
     if (config.flows[flow.id]) {
       flow = JSON.parse(JSON.stringify(flow));
       flow.id = '';
@@ -1381,7 +1382,7 @@
 
     Object.keys(bundle.flows || {}).forEach(function (id) {
       if (isBuiltinConfigImport('flows', id, bundle.flows[id])) return;
-      var flow = PageAutomationConfigMigration.cleanItem('flows', stripRuntimeMetadata(bundle.flows[id]));
+      var flow = PageAgentConfigMigration.cleanItem('flows', stripRuntimeMetadata(bundle.flows[id]));
       flow.id = flow.id || id;
       if (config.flows[id]) {
         flow.id = genUniqueConfigId('fl', 'flows', reservedFlows);
@@ -1399,7 +1400,7 @@
       ops.push(['flows', flow]);
     });
 
-    var group = PageAutomationConfigMigration.cleanItem('flowGroups', stripRuntimeMetadata(bundle.flowGroup));
+    var group = PageAgentConfigMigration.cleanItem('flowGroups', stripRuntimeMetadata(bundle.flowGroup));
     group.steps = (group.steps || []).map(function (step) {
       var copy = stripRuntimeMetadata(step);
       var sourceFlowId = normalizeUserFlowId(copy.flowId);
@@ -1554,7 +1555,7 @@
   }
 
   function loadSystemSettings() {
-    return globalThis.PageAutomationSystemSettings.load(chrome.storage.local, chrome.runtime).then(function (settings) {
+    return globalThis.PageAgentSystemSettings.load(chrome.storage.local, chrome.runtime).then(function (settings) {
       systemSettings = settings;
       renderSystemSettings();
       return settings;
@@ -1582,7 +1583,7 @@
     var configuredUserAgent = userAgent ? userAgent.value : previous.userAgent;
     systemSettingsSaving = true;
     setSystemSettingsControlsDisabled(true);
-    var next = globalThis.PageAutomationSystemSettings.normalize(Object.assign({}, previous, {
+    var next = globalThis.PageAgentSystemSettings.normalize(Object.assign({}, previous, {
       floatingEntryDisabled: floatingEntryDisabled,
       sidebarAppsFavoritesOnly: sidebarFavorites ? sidebarFavorites.checked : previous.sidebarAppsFavoritesOnly,
       popupAppsFavoritesOnly: popupFavorites ? popupFavorites.checked : previous.popupAppsFavoritesOnly,
@@ -1729,9 +1730,9 @@
   });
 
   lifecycle.subscribe(chrome.storage.onChanged, function (changes, area) {
-    if (area !== 'local' || !changes[globalThis.PageAutomationSystemSettings.SETTINGS_KEY]) return;
-    systemSettings = globalThis.PageAutomationSystemSettings.normalize(
-      changes[globalThis.PageAutomationSystemSettings.SETTINGS_KEY].newValue
+    if (area !== 'local' || !changes[globalThis.PageAgentSystemSettings.SETTINGS_KEY]) return;
+    systemSettings = globalThis.PageAgentSystemSettings.normalize(
+      changes[globalThis.PageAgentSystemSettings.SETTINGS_KEY].newValue
     );
     renderSystemSettings();
   });
@@ -3314,7 +3315,7 @@
   lifecycle.listen(window, 'pagehide', teardown);
 
   flowNodeController = globalThis.OptionsFlowNodeController.create({
-    lifecycleApi: globalThis.PageAutomationLifecycle,
+    lifecycleApi: globalThis.PageAgentLifecycle,
     window: window,
     document: document,
     runtime: chrome.runtime,
@@ -3485,7 +3486,7 @@
   scheduleController.init();
 
   urlTriggerController = globalThis.OptionsUrlTriggerController.create({
-    lifecycleApi: globalThis.PageAutomationLifecycle,
+    lifecycleApi: globalThis.PageAgentLifecycle,
     window: window,
     document: document,
     $: $,

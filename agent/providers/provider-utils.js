@@ -13,7 +13,7 @@
     '"': true, '\\': true, '/': true, b: true, f: true, n: true, r: true, t: true, u: true,
   });
   var RETRYABLE_STATUS = Object.freeze({ 408: true, 409: true, 425: true, 429: true, 500: true, 502: true, 503: true, 504: true, 524: true });
-  var NON_RETRYABLE_LIMIT = /insufficient_quota|quota exceeded|out of budget|billing|monthly usage limit|freeusagelimit|gousagelimit/i;
+  var NON_RETRYABLE_LIMIT = /insufficient_quota|quota exceeded|out of budget|billing|(?:daily|monthly) usage limit|freeusagelimit|gousagelimit/i;
   var RETRYABLE_ERROR = /overloaded|rate.?limit|too many requests|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|fetch failed|upstream.?connect|reset before headers|socket hang up|timed? out|timeout|terminated|ended without|stream ended before|you can retry|try your request again|please retry/i;
 
   function text(value) {
@@ -201,7 +201,8 @@
     this.bodyText = omitInlineImageData(truncate(bodyText || '', MAX_ERROR_BODY_CHARS));
     var detail = omitInlineImageData(errorMessageFromBody(body) || this.bodyText || this.statusText);
     this.message = 'Provider request failed (HTTP ' + this.status + ')' + (detail ? ': ' + detail : '');
-    this.retryable = isRetryableStatus(this.status) && !NON_RETRYABLE_LIMIT.test(detail);
+    this.retryable = isRetryableStatus(this.status)
+      && !NON_RETRYABLE_LIMIT.test(detail + '\n' + safeJsonStringify(body || {}));
     if (Error.captureStackTrace) Error.captureStackTrace(this, ProviderHttpError);
   }
   ProviderHttpError.prototype = Object.create(Error.prototype);
@@ -214,9 +215,10 @@
   function isRetryableError(error) {
     if (!error) return false;
     if (error.name === 'AbortError') return false;
-    if (error.retryable === true) return true;
-    var message = text(error.message || error);
+    var message = [text(error.code || error.type), text(error.message || error), text(error.bodyText),
+      error.body ? safeJsonStringify(error.body) : ''].join('\n');
     if (NON_RETRYABLE_LIMIT.test(message)) return false;
+    if (typeof error.retryable === 'boolean') return error.retryable;
     return RETRYABLE_ERROR.test(message);
   }
 

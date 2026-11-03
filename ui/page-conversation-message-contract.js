@@ -4,7 +4,7 @@
   var protocol = commonJs ? require('../agent/conversation-protocol') : root.ConversationProtocol;
   var api = factory(protocol);
   if (typeof module === 'object' && module.exports) module.exports = api;
-  if (root) root.PageAutomationPageConversationMessages = api;
+  if (root) root.PageAgentPageConversationMessages = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (protocol) {
   'use strict';
 

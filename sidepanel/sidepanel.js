@@ -48,12 +48,12 @@
     ? 'sidepanelRunTargetSelectionIncognito'
     : 'sidepanelRunTargetSelection';
   var sidepanelLifecyclePort = null;
-  var runtimeClient = window.PageAutomationRuntimeClient.create(chrome.runtime);
-  var resourceClient = window.PageAutomationResourceClient.create(chrome.runtime);
-  var lifecycle = window.PageAutomationLifecycle.create(window);
-  var syncEventStream = window.PageAutomationSyncEventStream
-    && window.PageAutomationSyncEventStream.create
-    ? window.PageAutomationSyncEventStream.create({ runtime: chrome.runtime })
+  var runtimeClient = window.PageAgentRuntimeClient.create(chrome.runtime);
+  var resourceClient = window.PageAgentResourceClient.create(chrome.runtime);
+  var lifecycle = window.PageAgentLifecycle.create(window);
+  var syncEventStream = window.PageAgentSyncEventStream
+    && window.PageAgentSyncEventStream.create
+    ? window.PageAgentSyncEventStream.create({ runtime: chrome.runtime })
     : null;
   var tornDown = false;
 
@@ -87,7 +87,7 @@
       throw new Error('SidepanelRuntimeInputController must load before sidepanel.js');
     }
     runtimeInputController = window.SidepanelRuntimeInputController.create({
-      lifecycleApi: window.PageAutomationLifecycle,
+      lifecycleApi: window.PageAgentLifecycle,
       document: document,
       window: window,
       container: elRuntimeInputs,
@@ -225,7 +225,7 @@
     if (tornDown || !activeWindowId) return;
     try {
       if (!sidepanelLifecyclePort && chrome.runtime && chrome.runtime.connect) {
-        sidepanelLifecyclePort = chrome.runtime.connect({ name: 'page-automation-sidepanel' });
+        sidepanelLifecyclePort = chrome.runtime.connect({ name: 'page-agent-sidepanel' });
         var connectedPort = sidepanelLifecyclePort;
         lifecycle.subscribe(connectedPort.onMessage, function (message) {
           if (message && message.type === 'CLOSE_SIDEPANEL') {
@@ -884,7 +884,7 @@
 
   function createSessionControllerApi() {
     return {
-      lifecycleApi: window.PageAutomationLifecycle,
+      lifecycleApi: window.PageAgentLifecycle,
       document: document,
       window: window,
       browser: chrome,
@@ -922,7 +922,7 @@
 
   function createRunEntryApi() {
     return {
-      lifecycleApi: window.PageAutomationLifecycle,
+      lifecycleApi: window.PageAgentLifecycle,
       window: window,
       browser: chrome,
       resourceClient: resourceClient,

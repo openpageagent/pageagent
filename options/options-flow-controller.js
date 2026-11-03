@@ -13,10 +13,10 @@
     return;
   }
 
-  var lifecycleApi = root && root.PageAutomationLifecycle;
+  var lifecycleApi = root && root.PageAgentLifecycle;
   if (commonJs && !lifecycleApi) lifecycleApi = require('../ui/lifecycle.js');
-  var mailSettings = commonJs ? require('../settings/mail-settings.js') : root.PageAutomationMailSettings;
-  var configMigration = commonJs ? require('../shared/config-migration.js') : root.PageAutomationConfigMigration;
+  var mailSettings = commonJs ? require('../settings/mail-settings.js') : root.PageAgentMailSettings;
+  var configMigration = commonJs ? require('../shared/config-migration.js') : root.PageAgentConfigMigration;
   var api = factory(lifecycleApi, mailSettings, configMigration);
   if (commonJs) module.exports = api;
   if (root) root.OptionsFlowController = api;
@@ -143,7 +143,7 @@
     options = options || {};
     var lifecycleFactory = options.lifecycleApi || LifecycleApi;
     if (!lifecycleFactory || typeof lifecycleFactory.create !== 'function') {
-      throw new Error('PageAutomationLifecycle must load before OptionsFlowController');
+      throw new Error('PageAgentLifecycle must load before OptionsFlowController');
     }
 
     var window = options.window || (typeof globalThis !== 'undefined' ? globalThis : {});
@@ -155,7 +155,7 @@
         || typeof resourceClient.authorizedPost !== 'function'
         || typeof resourceClient.authorizedPatch !== 'function'
         || typeof resourceClient.authorizedDelete !== 'function') {
-      throw new Error('OptionsFlowController requires PageAutomationResourceClient');
+      throw new Error('OptionsFlowController requires PageAgentResourceClient');
     }
     var getConfig = requireFunction(options.getConfig, 'getConfig');
     var mutateConfig = requireFunction(options.mutateConfig, 'mutateConfig');
@@ -465,9 +465,9 @@
             + '<button class="btn-secondary" data-action="copy-flow" data-id="' + esc(id) + '">复制为用户流程</button>'
             + '<button class="btn-secondary" data-action="cancel-flow">关闭</button>'
           : '<button class="btn-primary" data-action="save-flow">保存流程</button>'
+            + '<button class="btn-secondary" data-action="cancel-flow">取消</button>'
             + '<button class="btn-secondary" data-action="open-flow-notification">流程通知</button>'
-            + (id ? '<button class="btn-secondary" data-action="validate-flow" data-id="' + esc(id) + '">校验</button>' : '')
-            + '<button class="btn-secondary" data-action="cancel-flow">取消</button>')
+            + (id ? '<button class="btn-secondary" data-action="validate-flow" data-id="' + esc(id) + '">校验</button>' : ''))
         + '<span class="spacer"></span>'
         + (readonly
           ? '<button class="btn-danger" disabled title="内置流程不能删除">删除</button>'
@@ -513,8 +513,8 @@
         + '<div class="form-row form-row-spaced"><label for="flow-mail-body">邮件正文（纯文本）</label>'
         + '<page-code-editor id="flow-mail-body" language="html" template rows="10"' + (readonly ? ' disabled' : '') + '>' + esc(mailNotification.body === undefined ? MailSettings.FLOW_NOTIFICATION_DEFAULTS.body : mailNotification.body) + '</page-code-editor>'
         + '</div></section></form>';
-      $('#drawer-actions').innerHTML = '<button type="button" class="btn-secondary" data-action="cancel-drawer">' + (readonly ? '关闭' : '取消') + '</button>'
-        + (readonly ? '' : '<button type="submit" form="flow-mail-form" class="btn-primary">确定</button>');
+      $('#drawer-actions').innerHTML = (readonly ? '' : '<button type="submit" form="flow-mail-form" class="btn-primary">确定</button>')
+        + '<button type="button" class="btn-secondary" data-action="cancel-drawer">' + (readonly ? '关闭' : '取消') + '</button>';
       var form = $('#flow-mail-form');
       function readNotificationForm() {
         return {

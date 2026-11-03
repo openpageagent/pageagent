@@ -19,7 +19,8 @@ async function startSelkies({ start, stopping, state }) {
     SELKIES_ADDR: '0.0.0.0', SELKIES_PORT: '10000', SELKIES_MODE: 'websockets', SELKIES_ENABLE_DUAL_MODE: 'false',
     SELKIES_ENABLE_HTTPS: 'true', SELKIES_HTTPS_CERT: state + '/tls/selkies.crt', SELKIES_HTTPS_KEY: state + '/tls/selkies.key',
     SELKIES_ENCODER: process.env.SELKIES_ENCODER || 'jpeg',
-    SELKIES_ENABLE_BASIC_AUTH: 'false', SELKIES_AUDIO_ENABLED: 'false', SELKIES_GAMEPAD_ENABLED: 'false',
+    SELKIES_ENABLE_BASIC_AUTH: process.env.SELKIES_ENABLE_BASIC_AUTH || 'false',
+    SELKIES_AUDIO_ENABLED: 'false', SELKIES_GAMEPAD_ENABLED: 'false',
     SELKIES_MANUAL_RESOLUTION: 'true', SELKIES_MANUAL_WIDTH: String(dimensions[0]), SELKIES_MANUAL_HEIGHT: String(dimensions[1]),
     SELKIES_ENABLE_RESIZE: 'false', SELKIES_COMMAND_ENABLED: 'false',
   });

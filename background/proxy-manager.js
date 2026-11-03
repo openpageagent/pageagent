@@ -87,7 +87,7 @@
     var proxyScope = deps.incognito === true ? 'incognito_session_only' : 'regular';
     var sessionRules = {};
     var opQueue = Promise.resolve();
-    var settingsApi = globalThis.PageAutomationSystemSettings;
+    var settingsApi = globalThis.PageAgentSystemSettings;
     var systemProxy = null;
     var systemProxyServer = null;
     var systemProxySignature = null;

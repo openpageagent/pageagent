@@ -1,6 +1,12 @@
 import { GitLabClient, normalizeSite } from './client.js';
 import { layout } from './views.js';
 
+let parameterReceiver;
+export async function applyParameters(input) {
+  if (!parameterReceiver) throw new Error('GitLab 页面尚未就绪，无法应用启动参数。');
+  parameterReceiver(input);
+}
+
 export async function mountGitLabTools() {
   document.getElementById('app-root').innerHTML = layout;
   const $ = id => document.getElementById(id);
@@ -10,6 +16,7 @@ export async function mountGitLabTools() {
   let connecting = false, busy = false, settingsVersion = null;
   let resultLines = [];
   let branchTimestamp = createBranchTimestamp();
+  let restoreLaunch = false;
 
   function message(id, text, error = false) {
     $(id).textContent = text;
@@ -18,7 +25,6 @@ export async function mountGitLabTools() {
     if (id === 'connection-status') updateConnectionSummary();
   }
   function openSettings() {
-    $('project-filters').open = false;
     if (!$('settings-dialog').open) $('settings-dialog').showModal();
     if (!$('site').value && !$('connection-fields').disabled) $('site').focus();
   }
@@ -29,11 +35,6 @@ export async function mountGitLabTools() {
       ? `${new URL(client.site).host} · @${client.user.username}${error ? ' · 设置有提示' : ''}`
       : error ? '连接未就绪 · 打开设置' : '未连接 · 打开设置';
     summary.title = [client?.site, $('connection-status').textContent].filter(Boolean).join('\n');
-  }
-  function updateProjectFilterState() {
-    const active = !!($('project-search').value.trim() || $('project-filter').value.trim());
-    $('project-filters').dataset.active = String(active);
-    $('project-filters').querySelector('summary').textContent = active ? '筛选中' : '筛选项目';
   }
   function invalidateReads() { Object.keys(tickets).forEach(key => tickets[key]++); }
   function readContext(kind, needsProject = true) {
@@ -209,7 +210,9 @@ export async function mountGitLabTools() {
       message('lookup-status', `已替换待处理列表，共 ${targets.size} 个源分支。`);
     } catch (error) { if (context.current()) message('lookup-status', error.message, true); }
   }
-  function resetConnection() {
+  function resetConnection(preserveLaunch = false) {
+    const launch = preserveLaunch === true && restoreLaunch && $('project').value
+      ? { projectId: Number($('project').value), commit: $('commit').value, branches: [...targets] } : null;
     client = null; invalidateReads();
     for (const timer of timers.values()) clearTimeout(timer);
     projects = []; $('project').replaceChildren(new Option('请选择项目', ''));
@@ -219,9 +222,11 @@ export async function mountGitLabTools() {
     $('token-settings').hidden = $('auth-mode').value !== 'token';
     $('session-help').hidden = $('auth-mode').value === 'token';
     controls();
+    if (launch && parameterReceiver) parameterReceiver(launch);
   }
   async function connect() {
     if (busy || connecting || !permitted()) return;
+    const launch = restoreLaunch ? { projectId: Number($('project').value), commit: $('commit').value, branches: [...targets] } : null;
     const previousUserId = client?.user.id;
     if (!client) resetConnection();
     invalidateReads();
@@ -245,8 +250,17 @@ export async function mountGitLabTools() {
         message('connection-status', connectedMessage);
         $('settings-dialog').close();
       } catch (error) { message('connection-status', `${connectedMessage}\n连接成功，但配置保存失败：${error.message}`, true); }
-      void loadProjects();
-    } catch (error) { resetConnection(); message('connection-status', error.message, true); openSettings(); }
+      if (launch?.projectId) {
+        const project = await connection.get(`/projects/${encodeURIComponent(launch.projectId)}`);
+        projects = [project]; renderProjects(); $('project').value = String(project.id); clearProject();
+        $('commit').value = launch.commit; targets = new Set(launch.branches); restoreLaunch = false; renderBranches();
+        await loadBranches();
+      } else void loadProjects();
+    } catch (error) {
+      resetConnection();
+      if (launch?.projectId) parameterReceiver(launch);
+      message('connection-status', error.message, true); openSettings();
+    }
     finally { connecting = false; controls(); }
   }
   async function run() {
@@ -329,31 +343,20 @@ export async function mountGitLabTools() {
 
   $('settings-open').addEventListener('click', openSettings);
   $('settings-close').addEventListener('click', () => $('settings-dialog').close());
-  document.querySelector('.gitlab-app').addEventListener('click', event => {
-    if (!$('project-filters').contains(event.target)) $('project-filters').open = false;
-  });
-  $('project-filters').addEventListener('keydown', event => {
-    if (event.key === 'Escape') {
-      $('project-filters').open = false;
-      $('project-filters').querySelector('summary').focus();
-      event.preventDefault();
-    }
-  });
-  ['project-search', 'project-filter'].forEach(id => $(id).addEventListener('input', updateProjectFilterState));
   $('remove-source').addEventListener('change', updatePreview);
   $('site').addEventListener('input', () => {
     $('token').value = ''; $('remember-token').checked = false;
     resetConnection();
   });
-  $('token').addEventListener('input', resetConnection);
-  $('auth-mode').addEventListener('change', resetConnection);
+  $('token').addEventListener('input', () => resetConnection(true));
+  $('auth-mode').addEventListener('change', () => resetConnection(true));
   $('connect').addEventListener('click', connect);
   $('open-site').addEventListener('click', async () => {
     try { await chrome.tabs.create({ url: normalizeSite($('site').value) + '/' }); }
     catch (error) { message('connection-status', error.message, true); }
   });
   $('operation').addEventListener('change', () => { tickets.lookup++; updatePreview(); });
-  $('project').addEventListener('change', () => { $('project-filters').open = false; changeProject(); });
+  $('project').addEventListener('change', changeProject);
   debounceRead('project-search', 'projects', loadProjects);
   debounceRead('branch-search', 'branches', loadBranches);
   debounceRead('commit', 'commit', loadCommit);
@@ -398,6 +401,21 @@ export async function mountGitLabTools() {
   resetConnection();
   if (!permitted()) message('connection-status', '请在应用权限中开启 SDK；保存配置需要 data.read 和 data.write 权限。', true);
   else if (settingsError) message('connection-status', `无法读取配置：${settingsError.message}。仍可手动连接。`, true);
-  else if (saved?.site && (saved.mode !== 'token' || saved.token)) await connect();
+  else if (PageAgent.apps.input === null && saved?.site && (saved.mode !== 'token' || saved.token)) await connect();
+  parameterReceiver = input => {
+    const site = input.site === undefined ? $('site').value : normalizeSite(input.site);
+    if (site !== $('site').value) {
+      $('site').value = site; $('token').value = ''; $('remember-token').checked = false;
+      $('auth-mode').value = 'session'; resetConnection();
+    }
+    $('project-filter').value = '';
+    projects = [projects.find(project => Number(project.id) === input.projectId) || { id: input.projectId, name: `项目 ${input.projectId}（待连接确认）` }];
+    renderProjects(); $('project').value = String(input.projectId); clearProject();
+    if (input.commit !== undefined) $('commit').value = input.commit;
+    if (input.operation !== undefined) $('operation').value = input.operation;
+    if (input.removeSource !== undefined) $('remove-source').checked = input.removeSource;
+    targets = new Set(input.branches || []); restoreLaunch = true; renderBranches();
+    message('run-status', '已填入项目、提交和分支参数；保存并连接后确认项目，点击执行才会写入 GitLab。');
+  };
   if (!client) openSettings();
 }

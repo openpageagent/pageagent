@@ -23,6 +23,7 @@
     'shared/system-runtime-permissions.js',
     'shared/app-contract.js',
     'shared/app-ui-contract.js',
+    'dependencies/utilities/diff/dist/diff.js',
     'apps/app-store.js',
     'apps/app-package.js',
     'background/builtin-app-loader.js',
@@ -110,7 +111,7 @@
     'background/page-standard-actions.js',
     'background/page-action-engine.js',
     'background/page-network-fact-provider.js',
-    'background/page-automation-runtime.js',
+    'background/page-agent-runtime.js',
     'background/page-resource-cache.js',
     'background/cdp-tools.js',
     'background/page-readiness.js',
@@ -196,15 +197,15 @@
     'agent/agent-bootstrap.js',
     'flows/index.js'
   );
-  globalThis.PageAutomationUserAgent = globalThis.UserAgentRuntime.create(chrome, {
+  globalThis.PageAgentUserAgent = globalThis.UserAgentRuntime.create(chrome, {
     prepareRequest: function () { return proxyManager.sync(); },
   });
   var mailClient = globalThis.MailClient.create(chrome, function (connectionId) {
     return mcpRuntime && mcpRuntime.getClient(connectionId);
   });
-  var SessionFloatingMessages = globalThis.PageAutomationSessionFloatingMessageContract;
+  var SessionFloatingMessages = globalThis.PageAgentSessionFloatingMessageContract;
   if (!SessionFloatingMessages || SessionFloatingMessages.API_VERSION !== 1) throw new Error('session/floating message contract 未加载');
-  var PageConversationMessages = globalThis.PageAutomationPageConversationMessages;
+  var PageConversationMessages = globalThis.PageAgentPageConversationMessages;
   if (!PageConversationMessages || PageConversationMessages.API_VERSION !== 1) throw new Error('page conversation message contract 未加载');
   if (!globalThis.FloatingConversationWiring || globalThis.FloatingConversationWiring.API_VERSION !== 1
       || typeof globalThis.FloatingConversationWiring.create !== 'function') throw new Error('FloatingConversationWiring 未加载');
@@ -223,9 +224,10 @@
   // --- 常量 ---
   var INCOGNITO_CONTEXT = !!(chrome.extension && chrome.extension.inIncognitoContext);
   var RUNTIME_SCOPE = INCOGNITO_CONTEXT ? 'incognito' : 'regular';
-  var STORAGE_KEY = INCOGNITO_CONTEXT ? 'automation_state_incognito' : 'automation_state';
+  var STORAGE_KEY = INCOGNITO_CONTEXT ? 'page_agent_state_incognito' : 'page_agent_state';
+  var LEGACY_STORAGE_KEY = INCOGNITO_CONTEXT ? 'automation_state_incognito' : 'automation_state';
   var SW_KEEPALIVE_ALARM_NAME = 'sw_keepalive:' + RUNTIME_SCOPE;
-  var LOG_PREFIX = '[Automation]';
+  var LOG_PREFIX = '[Page Agent]';
 
   // --- 运行时状态缓存 ---
   var stateCache = null;
@@ -273,9 +275,9 @@
     } catch (_) {}
   }
 
-  var syncEventStream = globalThis.PageAutomationSyncEventStream
-    && globalThis.PageAutomationSyncEventStream.create
-    ? globalThis.PageAutomationSyncEventStream.create({ runtime: chrome.runtime })
+  var syncEventStream = globalThis.PageAgentSyncEventStream
+    && globalThis.PageAgentSyncEventStream.create
+    ? globalThis.PageAgentSyncEventStream.create({ runtime: chrome.runtime })
     : null;
 
   function publishSyncEvent(event) {
@@ -315,21 +317,19 @@
     } catch (_) {}
   }
 
-  var PAGE_CONVERSATION_VISIBILITY_KEY_PREFIX = 'page_conversation_visible_origin_';
-  var pageConversationVisibilityWrites = Object.create(null);
+  var PAGE_CONVERSATION_VISIBILITY_KEY = 'page_conversation_visible';
+  var pageConversationVisibilityWrite = Promise.resolve();
 
-  function pageConversationVisibilitySite(sender) {
-    var tabUrl = String(sender && sender.tab && sender.tab.url || '').trim();
+  function validatePageConversationVisibilitySender(sender) {
+    var pageUrl = String(sender && (sender.url || sender.tab && sender.tab.url) || '').trim();
     var parsed;
-    try { parsed = new URL(tabUrl); } catch (_) {}
+    try { parsed = new URL(pageUrl); } catch (_) {}
+    var appEntry = sender && sender.id === chrome.runtime.id && sender.frameId === 0
+      && globalThis.AppContract.parseUrl(pageUrl, chrome.runtime.getURL('/'));
+    if (appEntry) return;
     if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) {
       throw new Error('无法识别当前站点');
     }
-    return parsed.origin;
-  }
-
-  function pageConversationVisibilityStorageKey(site) {
-    return PAGE_CONVERSATION_VISIBILITY_KEY_PREFIX + encodeURIComponent(String(site || ''));
   }
 
   function invokePageConversationVisibilityStorage(method, value) {
@@ -363,43 +363,35 @@
     });
   }
 
-  function getPageConversationVisibility(site) {
-    var key = pageConversationVisibilityStorageKey(site);
-    var pending = pageConversationVisibilityWrites[key] || Promise.resolve();
-    return pending.catch(function () {}).then(function () {
-      return invokePageConversationVisibilityStorage('get', key);
+  function getPageConversationVisibility() {
+    return pageConversationVisibilityWrite.catch(function () {}).then(function () {
+      return invokePageConversationVisibilityStorage('get', PAGE_CONVERSATION_VISIBILITY_KEY);
     }).then(function (result) {
-      return !!(result && result[key] === true);
+      return !!(result && result[PAGE_CONVERSATION_VISIBILITY_KEY] === true);
     });
   }
 
-  function setPageConversationVisibility(site, open) {
-    var key = pageConversationVisibilityStorageKey(site);
-    var previous = pageConversationVisibilityWrites[key] || Promise.resolve();
-    var operation = previous.catch(function () {}).then(function () {
-      if (!open) return invokePageConversationVisibilityStorage('remove', key);
+  function setPageConversationVisibility(open) {
+    var operation = pageConversationVisibilityWrite.catch(function () {}).then(function () {
       var patch = {};
-      patch[key] = true;
+      patch[PAGE_CONVERSATION_VISIBILITY_KEY] = open === true;
       return invokePageConversationVisibilityStorage('set', patch);
     }).then(function () {
       return open === true;
     });
-    pageConversationVisibilityWrites[key] = operation;
-    operation.finally(function () {
-      if (pageConversationVisibilityWrites[key] === operation) delete pageConversationVisibilityWrites[key];
-    }).catch(function () {});
+    pageConversationVisibilityWrite = operation;
     return operation;
   }
 
   // --- 恢复持久化状态 ---
   function restoreState() {
-    chrome.storage.session.get(STORAGE_KEY, function (result) {
+    chrome.storage.session.get([STORAGE_KEY, LEGACY_STORAGE_KEY], function (result) {
       var error = chrome.runtime.lastError;
       if (error || !result) {
         console.error(LOG_PREFIX, '恢复运行状态失败:', error ? error.message : '存储未返回结果');
         return;
       }
-      var persisted = result[STORAGE_KEY] || {};
+      var persisted = result[STORAGE_KEY] === undefined ? result[LEGACY_STORAGE_KEY] || {} : result[STORAGE_KEY];
       var rt = RuntimeState.createRuntimeState();
       stateCache = rt.ensureState(persisted);
       stateCache.sharedState = stateCache.sharedState || {};
@@ -454,7 +446,7 @@
     getDriverIdForSource: function (s) { return sourceRegistry.getDriverIdForSource(s); },
     matchesSourceUrlFamily: function (s, url) { return sourceRegistry.matchesSourceUrlFamily(s, url); },
     isRetryableTransportError: function (e) { return loggingStatus.isRetryableTransportError(e); },
-    getPageAutomation: function () { return pageAutomation; },
+    getPageAgent: function () { return pageAgent; },
   });
   var cdpClient = CdpClient.createCdpClient({ chrome: chrome });
   var cdpSessionManager = CdpSessionManager.createCdpSessionManager({ chrome: chrome, cdpClient: cdpClient });
@@ -473,7 +465,7 @@
   });
   // State-change readiness barrier: fed by chrome.debugger Network events,
   // consumed by Flow page actions (PageActionEngine) and navigation waits
-  // (PageAutomationRuntime.waitForReadiness via NodePageLifecycleOps).
+  // (PageAgentRuntime.waitForReadiness via NodePageLifecycleOps).
   var pageReadinessBarrier = PageReadinessBarrier.createPageReadinessBarrier({
     cdpSessionManager: cdpSessionManager,
     pageVerificationEngine: pageVerificationEngine,
@@ -487,14 +479,14 @@
     nativeFileMaterializer: nativeFileMaterializer,
     readinessBarrier: pageReadinessBarrier,
   });
-  var pageAutomation = PageAutomationRuntime.createPageAutomationRuntime({
+  var pageAgent = PageAgentRuntime.createPageAgentRuntime({
     pagePerceptionEngine: pagePerceptionEngine,
     pageActionEngine: pageActionEngine,
     pageVerificationEngine: pageVerificationEngine,
     pageReadinessBarrier: pageReadinessBarrier,
   });
   var pageResourceCache = PageResourceCache.createReader({ cdpSessionManager: cdpSessionManager });
-  pageAutomation.perception.registerEvidenceProvider('page-resource-cache', pageResourceCache);
+  pageAgent.perception.registerEvidenceProvider('page-resource-cache', pageResourceCache);
   var pageReadiness;
   var actionIndicator;
 
@@ -622,7 +614,7 @@
     chrome: chrome,
     addLog: loggingStatus.addLog,
     incognito: INCOGNITO_CONTEXT,
-    saveSettings: function (value) { return globalThis.PageAutomationUserAgent.save(value); },
+    saveSettings: function (value) { return globalThis.PageAgentUserAgent.save(value); },
   });
 
   // Node Executor — 声明式节点的通用执行器，兼任脚本 API 桥后端
@@ -631,7 +623,7 @@
     mailClient: mailClient,
     executeLocalOperation: executeLocalOperation,
     tabRuntime: tabRuntime,
-    pageAutomation: pageAutomation,
+    pageAgent: pageAgent,
     addLog: loggingStatus.addLog,
     getConfig: function () { return configCache; },
     pageHostMatchesTab: pageHostMatchesTab,
@@ -678,7 +670,7 @@
   var legacyRunReportPromise = Promise.resolve({ ok: true });
   // 失败诊断截图也只通过统一感知引擎采集，不抢占用户窗口焦点。
   function captureTabScreenshot(tabId, quality) {
-    return pageAutomation.captureScreenshot(tabId, { format: 'jpeg', quality: quality }).then(function (capture) {
+    return pageAgent.captureScreenshot(tabId, { format: 'jpeg', quality: quality }).then(function (capture) {
       return capture.dataUrl;
     });
   }
@@ -914,7 +906,7 @@
 
   var pageHeartbeat = PageHeartbeat.createPageHeartbeat({
     chrome: chrome,
-    pageAutomation: pageAutomation,
+    pageAgent: pageAgent,
     addLog: loggingStatus.addLog,
     incognito: INCOGNITO_CONTEXT,
   });
@@ -1467,6 +1459,9 @@
   var ACTIVE_SESSION_COMPACT_INTERVAL_MS = 15000;
   var RUNNING_SNAPSHOT_INTERVAL_MS = 60000;
   var SNAPSHOT_STORAGE_KEY = INCOGNITO_CONTEXT
+    ? 'page_agent_run_snapshots_incognito'
+    : 'page_agent_run_snapshots';
+  var LEGACY_SNAPSHOT_STORAGE_KEY = INCOGNITO_CONTEXT
     ? 'automation_run_snapshots_incognito'
     : 'automation_run_snapshots';
 
@@ -1503,8 +1498,9 @@
   }
   var runSessionRegistry = globalThis.RunSessionRegistry.create({
     readSnapshots: function () {
-      return invokeRunSnapshotStorage('get', SNAPSHOT_STORAGE_KEY).then(function (data) {
-        return data && data[SNAPSHOT_STORAGE_KEY] || {};
+      return invokeRunSnapshotStorage('get', [SNAPSHOT_STORAGE_KEY, LEGACY_SNAPSHOT_STORAGE_KEY]).then(function (data) {
+        if (!data) return {};
+        return data[SNAPSHOT_STORAGE_KEY] === undefined ? data[LEGACY_SNAPSHOT_STORAGE_KEY] || {} : data[SNAPSHOT_STORAGE_KEY];
       });
     },
     writeSnapshots: function (snapshots) {
@@ -1765,12 +1761,12 @@
       addLog: loggingStatus.addLog,
       resolveCanonicalSource: function (source) { return sourceRegistry.resolveCanonicalSource(source); },
       matchesSourceUrlFamily: function (source, url) { return sourceRegistry.matchesSourceUrlFamily(source, url); },
-      getPageAutomation: function () { return pageAutomation; },
+      getPageAgent: function () { return pageAgent; },
     }) : tabRuntime;
     return McpTabAccess.createMcpTabAccessManager({
     chrome: chrome,
     tabRuntime: connectionTabs,
-    pageAutomation: pageAutomation,
+    pageAgent: pageAgent,
     getConfig: function () { return configCache; },
     addLog: loggingStatus.addLog,
     pageHostMatchesTab: pageHostMatchesTab,
@@ -2217,7 +2213,7 @@
   var sessionTabAccessFactory = SessionTabAccess.createSessionTabAccessFactory({
     chrome: chrome,
     cdpSessionManager: cdpSessionManager,
-    pageAutomation: pageAutomation,
+    pageAgent: pageAgent,
     getConfig: function () { return configCache; },
     pageIdFromSource: pageIdFromSource,
     hostFromUrl: hostFromUrl,
@@ -2373,7 +2369,7 @@
     getConfig: function () { return configCache; },
     pageHostMatchesTab: pageHostMatchesTab,
     getAssistantOrchestrator: function () { return assistantOrchestrator; },
-    pageAutomation: pageAutomation,
+    pageAgent: pageAgent,
     sleep: CoreUtils.sleep,
     now: function () { return Date.now(); },
     random: function () { return Math.random(); },
@@ -2502,6 +2498,48 @@
         return conversationJournalRuntime.getAllEvents(conversationId);
       });
     },
+    getApplicationConversations: async function (sender) {
+      var url = sender.url || sender.tab && sender.tab.url || '';
+      if (!globalThis.AppContract.parseUrl(url, chrome.runtime.getURL('/'))) return [];
+      var app = await globalThis.PageAgentApps.conversationContext('', url);
+      if (!app || !app.appId) return [];
+      await conversationMigrationGate;
+      var bindingKey = 'app_conversation_bindings_' + RUNTIME_SCOPE;
+      var values = await Promise.all([
+        conversationJournalRuntime.listMetadata(),
+        chrome.storage.local.get(bindingKey),
+      ]);
+      var bindings = values[1][bindingKey] || {};
+      var candidates = values[0].filter(function (metadata) {
+        return !metadata.archived && !metadata.deleted && metadata.assistantId;
+      }).sort(function (left, right) {
+        return Number(right.updatedAt || 0) - Number(left.updatedAt || 0)
+          || String(right.conversationId).localeCompare(String(left.conversationId));
+      });
+      var conversations = [], seenAssistants = new Set();
+      for (var metadata of candidates) {
+        if (seenAssistants.has(metadata.assistantId)) continue;
+        var binding = bindings[metadata.conversationId];
+        if (binding) {
+          if (binding.active === false || binding.appId !== app.appId) continue;
+        } else {
+          var surface = metadata.activeGeneration && metadata.activeGeneration.surface;
+          if (!surface || surface.type !== 'page') continue;
+          var page = await conversationJournalRuntime.queryEvents(metadata.conversationId, {
+            types: ['generation_started'], limit: 1,
+          });
+          var started = page.events[0], payload = started && started.payload;
+          if (started && started.payloadRef) {
+            var blob = await conversationJournalRuntime.getPayloadBlob(started.payloadRef.payloadId, started.payloadRef.sha256);
+            payload = blob && blob.value;
+          }
+          if (!payload || !payload.entry || payload.entry.currentResource !== '/apps/' + app.appId) continue;
+        }
+        seenAssistants.add(metadata.assistantId);
+        conversations.push({ conversationId: metadata.conversationId, assistantId: metadata.assistantId });
+      }
+      return conversations;
+    },
   });
 
   var localMcpConnectionRuntime = {};
@@ -2550,7 +2588,7 @@
       addLog: addResourceStepLog,
       getConfig: function () { return options.appConfig || configCache; },
       getSession: function () { return applicationSession; },
-      pageAutomation: pageAutomation,
+      pageAgent: pageAgent,
       pageHostMatchesTab: pageHostMatchesTab,
       getRunHistory: function () { return configStore.getRuns(); },
       getSandboxEngine: function () {
@@ -2601,13 +2639,13 @@
   }
 
   var imageArtifactStoreRuntime = null;
-  var recordingStoreRuntime = globalThis.PageAutomationRecordingArtifactStore.create(
+  var recordingStoreRuntime = globalThis.PageAgentRecordingArtifactStore.create(
     globalThis.indexedDB,
     globalThis.IDBKeyRange,
     { crypto: globalThis.crypto, runtimeScope: RUNTIME_SCOPE, storage: chrome.storage.local }
   );
-  var recordingCompilerRuntime = globalThis.PageAutomationRecordingCompiler;
-  var recordingProjectorRuntime = globalThis.PageAutomationRecordingArtifactProjector;
+  var recordingCompilerRuntime = globalThis.PageAgentRecordingCompiler;
+  var recordingProjectorRuntime = globalThis.PageAgentRecordingArtifactProjector;
   var conversationRecordingCoordinator = null;
   var conversationJournalRuntime = globalThis.ConversationJournalStore.create({
     indexedDB: globalThis.indexedDB,
@@ -2619,7 +2657,7 @@
       if (conversationId) broadcast({ type: 'CONVERSATION_JOURNAL_UPDATED', conversationId: conversationId });
     },
   });
-  var conversationRecordingAttachmentsRuntime = globalThis.PageAutomationConversationRecordingAttachments.create({
+  var conversationRecordingAttachmentsRuntime = globalThis.PageAgentConversationRecordingAttachments.create({
     store: recordingStoreRuntime,
     journal: conversationJournalRuntime,
     resolveAssistant: function (assistantId) { return resolveConversationAssistant(assistantId); },
@@ -2670,7 +2708,7 @@
   var archiveService, builtinConnections;
   function configurationBusyError(execution) {
     return archiveService && (execution === false ? archiveService.isApplying() : archiveService.isExecutionBlocked())
-      ? AgentResourceProtocol.arpError('RESOURCE_BUSY', '配置同步未完成，请等待或在「同步和备份」中重试') : null;
+      ? AgentResourceProtocol.arpError('RESOURCE_BUSY', '正在应用配置，请稍后重试') : null;
   }
   function createCanonicalResourceRuntime() {
     var resourceRouter = globalThis.AgentResourceRouter;
@@ -2696,7 +2734,7 @@
         runtimeScope: RUNTIME_SCOPE,
       });
       imageArtifactStoreRuntime.gc().catch(function () {});
-      globalThis.PageAutomationImageArtifacts = Object.freeze({
+      globalThis.PageAgentImageArtifacts = Object.freeze({
         store: imageArtifactStoreRuntime,
         releaseTopic: imageArtifactStoreRuntime.releaseTopic,
         exportTopic: imageArtifactStoreRuntime.exportTopic,
@@ -2724,7 +2762,7 @@
       conversationExport: function (input) { return exportConversationBackup(input); },
       modelSettings: globalThis.ModelSettings,
       agentProvider: globalThis.AgentProvider,
-      systemSettings: globalThis.PageAutomationSystemSettings,
+      systemSettings: globalThis.PageAgentSystemSettings,
       saveSystemSettings: function (value) { return proxyManager.saveSystemSettings(value); },
       mailClient: mailClient,
       fetch: globalThis.fetch.bind(globalThis),
@@ -2831,9 +2869,11 @@
     };
     appBridge = globalThis.AppBridge.install(resourceOptions.appService, {
       incognito: INCOGNITO_CONTEXT,
-      dispatchResource: function (method, request, auth, scope, signal) {
+      dispatchResource: function (method, request, auth, scope, signal, sessionId) {
         return runtime.dispatch(method, request, {
           actorId: 'app:' + auth.appId + ':' + auth.slot + ':' + auth.revision,
+          conversationId: 'app:' + sessionId,
+          entryContext: 'global',
           permissionScope: scope, appResourceSession: auth, incognito: INCOGNITO_CONTEXT,
           abortSignal: signal,
         });
@@ -2883,10 +2923,10 @@
             fetch: globalThis.fetch.bind(globalThis),
             imageArtifactStore: imageArtifactStoreRuntime,
             cdpSessionManager: cdpSessionManager,
-            pageAutomation: pageAutomation,
+            pageAgent: pageAgent,
           }),
         },
-        browser: { cdpSessionManager: cdpSessionManager, pageAutomation: pageAutomation },
+        browser: { cdpSessionManager: cdpSessionManager, pageAgent: pageAgent },
       },
     });
     runtime.imageArtifactStore = imageArtifactStoreRuntime;
@@ -2930,8 +2970,8 @@
       } catch (error) { reject(error); }
     });
   });
-  var conversationSystemSettingsCache = globalThis.PageAutomationSystemSettings.normalize({});
-  var conversationSystemSettingsReady = globalThis.PageAutomationSystemSettings.load(
+  var conversationSystemSettingsCache = globalThis.PageAgentSystemSettings.normalize({});
+  var conversationSystemSettingsReady = globalThis.PageAgentSystemSettings.load(
     chrome.storage.local,
     chrome.runtime
   ).then(function (settings) {
@@ -2943,7 +2983,7 @@
   if (chrome.storage && chrome.storage.onChanged) {
     chrome.storage.onChanged.addListener(function (changes, areaName) {
       if (areaName !== 'local') return;
-      var recordingStoreApi = globalThis.PageAutomationRecordingArtifactStore;
+      var recordingStoreApi = globalThis.PageAgentRecordingArtifactStore;
       var sharedRecordingChanged = changes && Object.keys(changes).some(function (storageKey) {
         if (!recordingStoreApi || typeof recordingStoreApi.isSharedMetadataKey !== 'function'
             || !recordingStoreApi.isSharedMetadataKey(storageKey)) return false;
@@ -2966,9 +3006,9 @@
       if (topicKey && changes && changes[topicKey]) {
         publishConversationTopicSyncEvents(changes[topicKey]);
       }
-      var systemKey = globalThis.PageAutomationSystemSettings.SETTINGS_KEY || 'system_settings';
+      var systemKey = globalThis.PageAgentSystemSettings.SETTINGS_KEY || 'system_settings';
       if (changes && changes[systemKey]) {
-        conversationSystemSettingsCache = globalThis.PageAutomationSystemSettings.normalize(changes[systemKey].newValue || {});
+        conversationSystemSettingsCache = globalThis.PageAgentSystemSettings.normalize(changes[systemKey].newValue || {});
       }
       var key = globalThis.ModelSettings.SETTINGS_KEY || 'model_settings';
       var changed = changes && changes[key];
@@ -3015,7 +3055,7 @@
       return resolveConversationAssistant(matches[0]);
     });
   }
-  conversationRecordingCoordinator = globalThis.PageAutomationConversationRecordingCoordinator.create({
+  conversationRecordingCoordinator = globalThis.PageAgentConversationRecordingCoordinator.create({
     chrome: chrome,
     runtimeScope: RUNTIME_SCOPE,
     store: recordingStoreRuntime,
@@ -3181,6 +3221,57 @@
     });
   })(conversationAgentRuntime.commandBus);
 
+  function connectConversationEventReader(port) {
+    if (!trustedExtensionSender(port.sender)) { port.disconnect(); return; }
+    // 一页或单条事件都可能超过 64MiB。每块最多 1Mi UTF-16 单元，
+    // 即使经 JSON 转义也最多约 6MiB；收到下一次读取请求才继续发送。
+    var chunkChars = 1024 * 1024;
+    var serialized = null;
+    var offset = 0;
+    var started = false;
+    var closed = false;
+    port.onDisconnect.addListener(function () {
+      closed = true;
+      serialized = null;
+    });
+    function fail(error) {
+      serialized = null;
+      if (closed) return;
+      try {
+        port.postMessage({ error: {
+          code: 'EVENT_TRANSFER_FAILED',
+          message: String(error && error.message || error).slice(0, 4000),
+        } });
+      } catch (_) { port.disconnect(); }
+    }
+    function sendNext() {
+      var end = Math.min(offset + chunkChars, serialized.length);
+      var done = end === serialized.length;
+      port.postMessage({ chunk: serialized.slice(offset, end), done: done });
+      offset = end;
+      if (done) serialized = null;
+    }
+    port.onMessage.addListener(function (message) {
+      if (closed) return;
+      if (started) {
+        if (!message || message.next !== true || serialized === null) {
+          fail(new Error('无效的事件分块读取请求'));
+          return;
+        }
+        try { sendNext(); } catch (error) { fail(error); }
+        return;
+      }
+      started = true;
+      conversationCommandBus.dispatch({
+        command: 'GET_EVENTS', input: message && message.input || {},
+      }, port.sender).then(function (response) {
+        if (closed) return;
+        serialized = JSON.stringify(response);
+        sendNext();
+      }).catch(fail);
+    });
+  }
+
   assistantOrchestrator = globalThis.AssistantOrchestrator.create({
     commandBus: conversationCommandBus,
     journal: conversationAgentRuntime.journal,
@@ -3258,7 +3349,7 @@
     journal: conversationAgentRuntime.journal,
     coordinator: conversationAgentRuntime.coordinator,
   });
-  globalThis.PageAutomationConversationRuntime = conversationAgentRuntime;
+  globalThis.PageAgentConversationRuntime = conversationAgentRuntime;
 
   function conversationBackupFiles(value) {
     var files = value && value.files || value;
@@ -3507,7 +3598,7 @@
     input = input || {};
     var conversationId = String(input.conversationId || '').trim();
     if (!conversationId) throw conversationArchiveError('INVALID_ARCHIVE_EXPORT', '缺少 conversationId');
-    var zipStore = globalThis.PageAutomationZipStore;
+    var zipStore = globalThis.PageAgentZipStore;
     if (!zipStore || typeof zipStore.create !== 'function') {
       throw conversationArchiveError('ARCHIVE_EXPORT_UNAVAILABLE', 'ZIP 归档组件未加载');
     }
@@ -3770,30 +3861,44 @@
           return { id: item.id, alias: item.alias, url: item.url, enabled: item.enabled, ready: item.ready,
             platform: item.platform, state: item.state, reason: item.reason, paired: item.paired, needsPairing: item.needsPairing,
             serverName: item.serverName, serverId: item.serverId, serverVersion: item.serverVersion, arpPermissions: item.arpPermissions };
-        }), archive: null, versions: null, target: binding,
+        }), archive: null, syncOperations: [], versions: null, target: binding,
         clientId: client.clientId, clientName: client.clientName };
-      if (!binding) {
-        if (payload.action === 'status') return result;
-        throw new Error('请先保存此连接的同步和备份配置');
-      }
-      async function call(method, uri, input) {
+      async function call(method, uri, input, connectionId) {
         var request = Object.assign({ uri: uri }, input || {});
         if (method !== 'GET') request.idempotencyKey = crypto.randomUUID();
-        var envelope = await mcpRuntime.callServerArp(binding.connectionId, method, request, { trustedConnectionUi: true });
+        var envelope = await mcpRuntime.callServerArp(connectionId || binding.connectionId, method, request, { trustedConnectionUi: true });
         if (!envelope || envelope.error || !envelope.primary) throw new Error(envelope && envelope.error && envelope.error.message || '同步和备份服务响应无效');
         return envelope.primary.data;
       }
-      var bucketUri = '/archive/buckets/' + encodeURIComponent(binding.bucketId);
       if (payload.action === 'status') {
-        var connection = result.connections.find(function (item) { return item.id === binding.connectionId; });
-        if (!connection || !connection.ready) return result;
-        try {
-          result.archive = await call('GET', '/archive');
-          var bucket = result.archive.buckets.find(function (item) { return item.id === binding.bucketId; });
-          if (bucket && payload.includeVersions) result.versions = await call('GET', bucketUri + '/versions');
-        } catch (error) { result.error = error.message; }
+        var archives = new Map();
+        function readArchive(connectionId) {
+          var connection = result.connections.find(function (item) { return item.id === connectionId; });
+          if (!connection || !connection.ready) return Promise.reject(new Error('同步和备份连接尚未就绪，暂时无法读取服务端日志'));
+          if (!archives.has(connectionId)) archives.set(connectionId, call('GET', '/archive', null, connectionId));
+          return archives.get(connectionId);
+        }
+        await Promise.all([
+          (async function () {
+            if (!binding) return;
+            try {
+              result.archive = await readArchive(binding.connectionId);
+              var bucket = result.archive.buckets.find(function (item) { return item.id === binding.bucketId; });
+              if (bucket && payload.includeVersions) result.versions = await call('GET', '/archive/buckets/' + encodeURIComponent(binding.bucketId) + '/versions');
+            } catch (error) { result.error = error.message; }
+          })(),
+          (async function () {
+            if (!configuration.settings.syncConnectionId) return;
+            try {
+              var archive = await readArchive(configuration.settings.syncConnectionId);
+              result.syncOperations = archive.operations.filter(function (item) { return item.clientId === client.clientId && item.kind === 'apply'; });
+            } catch (error) { result.syncError = error.message; }
+          })(),
+        ]);
         return result;
       }
+      if (!binding) throw new Error('请先保存此连接的同步和备份配置');
+      var bucketUri = '/archive/buckets/' + encodeURIComponent(binding.bucketId);
       if (['backup', 'apply'].includes(payload.action)) {
         if (!compatibility || compatibility.compatible !== true) throw new Error('连接尚未就绪或同步版本不兼容');
         var body = { kind: payload.action };
@@ -3811,7 +3916,7 @@
       if (payload.action === 'retry') {
         McpContract.id(payload.operationId);
         var retry = await call('GET', '/archive/operations/' + encodeURIComponent(payload.operationId));
-        if (retry.kind === 'apply') await archiveService.authorizeManual(binding.connectionId, retry.id);
+        if (retry.kind === 'apply') await archiveService.authorizeManual(binding.connectionId, retry.id, retry.bucketId);
         return call('POST', '/archive/operations/' + encodeURIComponent(payload.operationId) + '/retries', { body: {} });
       }
       if (payload.action === 'syncable') {
@@ -3831,7 +3936,7 @@
       if (type === 'MCP_CLIENT_RESET_ID') return mcpRuntime.resetId(context);
       if (type === 'MCP_CONNECTIONS_IMPORT') return mcpRuntime.store.importConnections(payload.records, context, payload.preview === true);
     },
-    pageAutomation: pageAutomation,
+    pageAgent: pageAgent,
     getConfig: function () { return configCache; },
     conversationCommandBus: conversationCommandBus,
     exportConversationBackup: exportConversationBackup,
@@ -3886,7 +3991,7 @@
       return undefined;
     }
     if (message && message.type === 'APP_CONVERSATION_CONTEXT' && sender.id === chrome.runtime.id) {
-      globalThis.PageAgentApps.conversationContext(message.conversationId).then(function (result) {
+      globalThis.PageAgentApps.conversationContext(message.conversationId, sender.url).then(function (result) {
         if (result && sender.tab) globalThis.PageAgentApps.watchTab(sender.tab.id, result.appId);
         sendResponse({ result: result });
       }, function (error) { sendResponse({ error: { code: error.code || 'APP_ERROR', message: error.message } }); });
@@ -3992,7 +4097,7 @@
         var controller = new AbortController();
         var timer = setTimeout(function () { controller.abort(); }, 10000);
         try {
-          var response = await globalThis.PageAutomationUserAgent.fetchSystem(url.href, {
+          var response = await globalThis.PageAgentUserAgent.fetchSystem(url.href, {
             signal: controller.signal, cache: 'no-cache', credentials: 'omit',
           });
           return { ok: response.ok, status: response.status, data: response.ok ? await response.text() : null };
@@ -4091,14 +4196,13 @@
     }
 
     if (message && message.type === PageConversationMessages.TYPES.GET_VISIBILITY) {
-      var visibilitySite;
       try {
-        visibilitySite = pageConversationVisibilitySite(sender);
+        validatePageConversationVisibilitySender(sender);
       } catch (error) {
         sendResponse({ ok: false, error: error && error.message || '无法识别当前站点' });
         return undefined;
       }
-      getPageConversationVisibility(visibilitySite).then(function (open) {
+      getPageConversationVisibility().then(function (open) {
         sendResponse({ ok: true, payload: { open: open } });
       }, function (error) {
         sendResponse({ ok: false, error: error && error.message || String(error || '读取页面对话显示状态失败') });
@@ -4112,14 +4216,13 @@
         sendResponse({ ok: false, error: '页面对话显示状态必须是布尔值' });
         return undefined;
       }
-      var visibilitySite;
       try {
-        visibilitySite = pageConversationVisibilitySite(sender);
+        validatePageConversationVisibilitySender(sender);
       } catch (error) {
         sendResponse({ ok: false, error: error && error.message || '无法识别当前站点' });
         return undefined;
       }
-      setPageConversationVisibility(visibilitySite, visibilityPayload.open).then(function (open) {
+      setPageConversationVisibility(visibilityPayload.open).then(function (open) {
         sendResponse({ ok: true, payload: { open: open } });
       }, function (error) {
         sendResponse({ ok: false, error: error && error.message || String(error || '保存页面对话显示状态失败') });
@@ -4295,8 +4398,8 @@
     });
   }
 
-  var ACTION_CONTEXT_MENU_OPEN_HOME = 'pageAutomation.openHome';
-  var ACTION_CONTEXT_MENU_OPEN_SIDEPANEL = 'pageAutomation.openSidepanel';
+  var ACTION_CONTEXT_MENU_OPEN_HOME = 'pageAgent.openHome';
+  var ACTION_CONTEXT_MENU_OPEN_SIDEPANEL = 'pageAgent.openSidepanel';
   var sidepanelPortsByWindowId = {};
 
   function ignoreLastError() {
@@ -4311,17 +4414,17 @@
   function registerSidepanelPort(port, windowId) {
     windowId = normalizeWindowId(windowId);
     if (!port || !windowId) return;
-    if (port._pageAutomationWindowId && port._pageAutomationWindowId !== windowId) {
-      var previousKey = String(port._pageAutomationWindowId);
+    if (port._pageAgentWindowId && port._pageAgentWindowId !== windowId) {
+      var previousKey = String(port._pageAgentWindowId);
       if (sidepanelPortsByWindowId[previousKey] === port) delete sidepanelPortsByWindowId[previousKey];
     }
-    port._pageAutomationWindowId = windowId;
+    port._pageAgentWindowId = windowId;
     sidepanelPortsByWindowId[String(windowId)] = port;
   }
 
   function unregisterSidepanelPort(port) {
-    if (!port || !port._pageAutomationWindowId) return;
-    var key = String(port._pageAutomationWindowId);
+    if (!port || !port._pageAgentWindowId) return;
+    var key = String(port._pageAgentWindowId);
     if (sidepanelPortsByWindowId[key] === port) delete sidepanelPortsByWindowId[key];
   }
 
@@ -4435,6 +4538,9 @@
       var ids = [
         ACTION_CONTEXT_MENU_OPEN_HOME,
         ACTION_CONTEXT_MENU_OPEN_SIDEPANEL,
+        // 升级时清理旧项目名注册的菜单。
+        'pageAutomation.openHome',
+        'pageAutomation.openSidepanel',
         'pageAutomation.toggleFloatingStatus',
       ];
       var index = 0;
@@ -4485,7 +4591,11 @@
   } catch (_) {}
   if (chrome.runtime && chrome.runtime.onConnect) {
     chrome.runtime.onConnect.addListener(function (port) {
-      if (!port || port.name !== 'page-automation-sidepanel') return;
+      if (port && port.name === 'page-agent-conversation-events') {
+        connectConversationEventReader(port);
+        return;
+      }
+      if (!port || port.name !== 'page-agent-sidepanel') return;
       port.onMessage.addListener(function (message) {
         if (message && message.type === 'SIDEPANEL_WINDOW') {
           registerSidepanelPort(port, message.windowId);
@@ -4531,11 +4641,11 @@
   configReady.then(recoverRunningSessionsIfAny);
   pageReadiness = PageReadiness.createPageReadiness({
     chrome: chrome,
-    pageAutomation: pageAutomation,
+    pageAgent: pageAgent,
     getConfigReady: function () { return configReady; },
     getConfig: function () { return configCache; },
     pageHostMatchesTab: pageHostMatchesTab,
-    foregroundTabForAutomation: function (tabId) { return tabRuntime.foregroundTabForAutomation(tabId); },
+    foregroundTabForAgent: function (tabId) { return tabRuntime.foregroundTabForAgent(tabId); },
   });
   refreshRunInputCache();
 
@@ -4547,9 +4657,9 @@
     addLog: loggingStatus.addLog,
     sourceRegistry: sourceRegistry,
     hostFromUrl: hostFromUrl,
-    pageAutomation: pageAutomation,
+    pageAgent: pageAgent,
   });
-  pageAutomation.registerDiagnosticProvider(cdpTools);
+  pageAgent.registerDiagnosticProvider(cdpTools);
 
   function recordCdpNetworkEvent(tabId, method, params) {
     return cdpTools.recordNetworkEvent(tabId, method, params);
@@ -4583,7 +4693,7 @@
     addLog: loggingStatus.addLog,
     prepareNetwork: async function () {
       await proxyManager.sync();
-      return globalThis.PageAutomationUserAgent.sync();
+      return globalThis.PageAgentUserAgent.sync();
     },
     dispatchResource: async function (method, request, context) {
       var targetPath = '';
@@ -4638,7 +4748,7 @@
         });
         return changed ? configStore.saveConfig(stored) : stored;
       });
-      var mailKey = globalThis.PageAutomationMailSettings.SETTINGS_KEY;
+      var mailKey = globalThis.PageAgentMailSettings.SETTINGS_KEY;
       var mail = (await chrome.storage.local.get(mailKey))[mailKey];
       if (mail && !Object.prototype.hasOwnProperty.call(mail, 'connectionId')) await mailClient.save(Object.assign({}, mail, { connectionId: migration.connectionId }));
       await mcpRuntime.store.transaction(function (current) { if (current.migration) current.migration.pending = false; });
@@ -4662,11 +4772,11 @@
 
   var mcpNetworkReconnectTimer = null;
   chrome.storage.onChanged.addListener(function (changes, area) {
-    var change = area === 'local' && changes[globalThis.PageAutomationSystemSettings.SETTINGS_KEY];
+    var change = area === 'local' && changes[globalThis.PageAgentSystemSettings.SETTINGS_KEY];
     if (!change) return;
-    var previous = globalThis.PageAutomationSystemSettings.normalize(change.oldValue);
-    var next = globalThis.PageAutomationSystemSettings.normalize(change.newValue);
-    if (previous.userAgent === next.userAgent && globalThis.PageAutomationSystemSettings.PROXY_FIELDS.every(function (key) {
+    var previous = globalThis.PageAgentSystemSettings.normalize(change.oldValue);
+    var next = globalThis.PageAgentSystemSettings.normalize(change.newValue);
+    if (previous.userAgent === next.userAgent && globalThis.PageAgentSystemSettings.PROXY_FIELDS.every(function (key) {
       return previous[key] === next[key];
     })) return;
     clearTimeout(mcpNetworkReconnectTimer);
@@ -4697,7 +4807,7 @@
   });
 
   // --- 暴露关键 API 到全局作用域（供其他模块访问） ---
-  self.AutomationFramework = {
+  self.PageAgentFramework = {
     getState: getState,
     setState: setState,
     flowRegistry: flowRegistry,

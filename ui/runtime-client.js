@@ -1,9 +1,9 @@
-(function attachPageAutomationRuntimeClient(root, factory) {
+(function attachPageAgentRuntimeClient(root, factory) {
   'use strict';
 
   var api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  if (root) root.PageAutomationRuntimeClient = api;
+  if (root) root.PageAgentRuntimeClient = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 

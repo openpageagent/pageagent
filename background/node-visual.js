@@ -4,7 +4,8 @@
 })(globalThis, function () {
   'use strict';
 
-  var BASELINES_KEY = 'automation_baselines';
+  var BASELINES_KEY = 'page_agent_baselines';
+  var LEGACY_BASELINES_KEY = 'automation_baselines';
 
   function createVisualNodes(deps) {
     deps = deps || {};
@@ -71,14 +72,15 @@
     function getBaselines(execution) {
       ensureNotStopped(execution);
       return new Promise(function (resolve, reject) {
-        chrome.storage.local.get(BASELINES_KEY, function (result) {
+        chrome.storage.local.get([BASELINES_KEY, LEGACY_BASELINES_KEY], function (result) {
           var lastError = chrome.runtime && chrome.runtime.lastError;
           if (lastError) {
             reject(new Error('读取视觉基线失败: ' + lastError.message));
             return;
           }
           try { ensureNotStopped(execution); } catch (error) { reject(error); return; }
-          resolve(result[BASELINES_KEY] || {});
+          var baselines = result[BASELINES_KEY] === undefined ? result[LEGACY_BASELINES_KEY] : result[BASELINES_KEY];
+          resolve(baselines || {});
         });
       });
     }

@@ -1,10 +1,10 @@
 (function attachConversationRecordingCoordinator(root, factory) {
   'use strict';
   var commonJs = typeof module === 'object' && module.exports;
-  var contract = commonJs ? require('../shared/recording-contract') : root.PageAutomationRecordingContract;
+  var contract = commonJs ? require('../shared/recording-contract') : root.PageAgentRecordingContract;
   var api = factory(root, contract);
   if (commonJs) module.exports = api;
-  if (root) root.PageAutomationConversationRecordingCoordinator = api;
+  if (root) root.PageAgentConversationRecordingCoordinator = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, contract) {
   'use strict';
   if (!contract || contract.API_VERSION !== 1) throw new Error('RecordingContract must load before ConversationRecordingCoordinator');
@@ -182,6 +182,15 @@
       return invoke(chromeApi.tabs, 'sendMessage', [Number(document.tabId), message, options]);
     }
     async function enableDocument(session, document) {
+      var networkCapture = contract.normalizeNetworkCapture(session.networkCapture);
+      var networkCaptureError = '';
+      if (networkCapture.http || networkCapture.websocket || networkCapture.sse) {
+        var target = { tabId: Number(document.tabId) };
+        if (document.documentId) target.documentIds = [document.documentId];
+        else target.frameIds = [Number(document.frameId) || 0];
+        try { await invoke(chromeApi.scripting, 'executeScript', [{ target: target, world: 'MAIN', injectImmediately: true, files: ['content/net-capture-main.js'] }]); }
+        catch (error) { networkCaptureError = String(error && error.message || error); }
+      }
       var capability = randomId('document_capability', cryptoApi);
       var capabilityHash = await store.hashToken(capability);
       var registered = Object.assign({}, document, { capabilityHash: capabilityHash, enabledAt: Number(clock()) });
@@ -192,6 +201,8 @@
           recordingId: session.recordingId, capability: capability, documentLocalNonce: document.localNonce || '',
           state: session.state, showIndicator: document.top === true, startedAt: session.startedAt,
           count: session.acceptedEventCount,
+          networkCapture: networkCapture,
+          networkCaptureError: networkCaptureError,
         },
       };
       try { await sendToDocument(registered, message); }
@@ -287,10 +298,11 @@
     }
     async function start(payload, sender) {
       contract.assertExactKeys(payload, {
-        draftCollectionId: true, consentVersion: true, confirmedAt: true,
+        draftCollectionId: true, consentVersion: true, confirmedAt: true, networkCapture: true,
       }, 'START_CONVERSATION_RECORDING payload');
       boundedText(payload.draftCollectionId, 'draftCollectionId', 256, false);
       boundedText(payload.consentVersion, 'consentVersion', 128, true);
+      var networkCapture = contract.normalizeNetworkCapture(payload.networkCapture);
       var confirmedAt = Number(payload.confirmedAt);
       if (payload.consentVersion !== contract.CONSENT_VERSION || !(confirmedAt > 0)
           || confirmedAt > Number(clock()) + 30000 || Number(clock()) - confirmedAt > 5 * 60 * 1000) {
@@ -307,6 +319,7 @@
         profileId: context.profileId || surface.profileId,
         incognito: surface.incognito, draftCollectionId: text(payload.draftCollectionId),
         consentVersion: payload.consentVersion, confirmedAt: payload.confirmedAt,
+        networkCapture: networkCapture,
         trackedTabs: (function () { var value = {}; value[tabKey(seed.id)] = { tabId: seed.id, tabKey: tabKey(seed.id), windowId: seed.windowId, createdAt: startedAt, initialUrl: String(seed.url || ''), seed: true }; return value; })(),
         excludedTabIds: (tabs || []).filter(function (tab) { return Number(tab.id) !== Number(seed.id); }).map(function (tab) { return Number(tab.id); }),
         knownWindowIds: Array.from(new Set((tabs || []).map(function (tab) { return Number(tab.windowId) || 0; }).filter(Boolean))),

@@ -312,7 +312,6 @@
     }
     handlers.GET[URI_TEMPLATES.item] = function (request, context) {
       return service.getKnowledge(request.params.knowledgeId).then(function (data) {
-        if (data && data.id === 'builtin_app_generation_guide' && data.retrieval !== 'grep' && typeof globalThis.AppGenerationGate !== 'undefined') globalThis.AppGenerationGate.knowledge(context);
         var actorId = String(context && (context.actorId || context.actor) || '');
         if (data && data.retrieval === 'grep' && actorId.indexOf('ui:') !== 0) {
           data = grepOnlyDigest(data);

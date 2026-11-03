@@ -3,7 +3,7 @@
   'use strict';
 
   function create(chromeApi, getWebSocketClient) {
-    var settings = root.PageAutomationMailSettings;
+    var settings = root.PageAgentMailSettings;
 
     async function load() {
       var stored = await chromeApi.storage.local.get(settings.SETTINGS_KEY);

@@ -56,7 +56,7 @@
           Object.keys(item.bundle.resources[section]).forEach(function (id) {
             // A packaged dependency must never overwrite a user resource or another template.
             if (Object.prototype.hasOwnProperty.call(runtime[section], id)) return;
-            var value = root.PageAutomationConfigMigration.cleanItem(section, structuredClone(item.bundle.resources[section][id]));
+            var value = root.PageAgentConfigMigration.cleanItem(section, structuredClone(item.bundle.resources[section][id]));
             runtime[section][id] = Object.assign(value, { __builtin: true, __builtinSection: section, __builtinRole: 'dependency', __builtinFile: item.file, __builtinHash: item.hash });
           });
         });

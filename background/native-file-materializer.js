@@ -7,6 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   var API_VERSION = 1;
+  // 已注册的外部 Native Messaging 主机标识，必须与宿主安装清单一致。
   var HOST_NAME = 'com.pageagent.automation.files';
   var MAX_BYTES = 20 * 1024 * 1024;
 

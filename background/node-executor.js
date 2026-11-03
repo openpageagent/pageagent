@@ -6,7 +6,7 @@
 
   var MAX_WEBHOOK_BODY_LENGTH = 64 * 1024;
   var DELAY_CHUNK_MS = 1000;
-  var CHECKPOINTS_KEY = 'automation_checkpoints';
+  var CHECKPOINTS_KEY = 'page_agent_checkpoints';
   var MAX_RUN_ARTIFACTS = 30;
   var MAX_COVERAGE_MARKS = 1000;
   var MAX_LAST_CONTENT_SHORTCUT_SIZE = 256 * 1024;
@@ -21,8 +21,8 @@
     var getSandboxEngine = deps.getSandboxEngine || (function () { return null; });
     var getSession = deps.getSession || (function () { return null; });
     var getAbortSignal = deps.getAbortSignal || (function () { return null; });
-    var pageAutomation = deps.pageAutomation;
-    if (!pageAutomation || typeof pageAutomation.executeCommand !== 'function') throw new Error('NodeExecutor requires PageAutomationRuntime');
+    var pageAgent = deps.pageAgent;
+    if (!pageAgent || typeof pageAgent.executeCommand !== 'function') throw new Error('NodeExecutor requires PageAgentRuntime');
     var proxyManager = deps.proxyManager || null;
     var getRunHistory = deps.getRunHistory || (function () { return Promise.resolve([]); });
     var throwIfStopped = deps.throwIfStopped || (function () {});
@@ -311,7 +311,7 @@
             };
           }
           var session = getSession();
-          return pageAutomation.executeCommand(command, params, {
+          return pageAgent.executeCommand(command, params, {
             source: source || 'flow', owner: session && session.runId || '', pageId: pageId || '',
             signal: execution && execution.signal || null,
           })
@@ -547,10 +547,10 @@
       ensurePageReady: ensurePageReady,
       requireRuntimeTabId: requireRuntimeTabId,
       capturePageScreenshot: function (tabId, options) {
-        return Promise.resolve(deps.authorizeApplication ? deps.authorizeApplication({ kind: 'page', tabId: tabId, command: 'screenshot' }) : null).then(function () { return pageAutomation.captureScreenshot(tabId, options); });
+        return Promise.resolve(deps.authorizeApplication ? deps.authorizeApplication({ kind: 'page', tabId: tabId, command: 'screenshot' }) : null).then(function () { return pageAgent.captureScreenshot(tabId, options); });
       },
       preparePageCommandTab: tabRuntime.preparePageCommandTab,
-      verifyAssertion: pageAutomation.verification.verifyAssertion,
+      verifyAssertion: pageAgent.verification.verifyAssertion,
     });
     var captureScreenshotForPage = visualNodes.captureScreenshotForPage;
     var execScreenshot = visualNodes.execScreenshot;
@@ -574,7 +574,7 @@
       perceivePage: perceivePage,
       captureScreenshotForPage: captureScreenshotForPage,
       getModelClient: getModelClient,
-      verifyAssertion: pageAutomation.verification.verifyAssertion,
+      verifyAssertion: pageAgent.verification.verifyAssertion,
     });
 
     function execRunAssistant(node, params, state, execution) {
@@ -849,7 +849,7 @@
         return '<tr><td>' + htmlEscape(id) + '</td><td>' + htmlEscape(report.nodeStatuses[id]) + '</td></tr>';
       }).join('');
       return '<!doctype html><meta charset="utf-8"><title>Page Agent Report</title>'
-        + '<style>body{font-family:Arial,sans-serif;margin:24px;color:#222}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:6px 8px}th{background:#f4f6f8;text-align:left}.fail{color:#b00020}</style>'
+        + '<style>body{font-family:Arial,sans-serif;margin:8px;color:#222}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:6px 8px}th{background:#f4f6f8;text-align:left}.fail{color:#b00020}</style>'
         + '<h1>Page Agent Report</h1><p>Flow: ' + htmlEscape(report.flowLabel || report.flowId) + '</p>'
         + '<p>Total ' + report.summary.total + ', Passed ' + report.summary.passed + ', Failed <span class="fail">' + report.summary.failed + '</span>, Skipped ' + report.summary.skipped + '</p>'
         + '<table><thead><tr><th>Node</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table>';
@@ -1151,14 +1151,14 @@
         var reason = passed
           ? '可访问性检查满足阈值：违规 ' + violations.length + ' 条，阈值 ' + max
           : '可访问性检查失败：违规 ' + violations.length + ' 条，超过阈值 ' + max;
-        var verification = pageAutomation.verification.verifyAssertion({
+        var verification = pageAgent.verification.verifyAssertion({
           kind: 'accessibilityCheck', passed: passed,
           actual: { count: violations.length, violations: violations },
           expected: { maxViolations: max, failOnViolation: params.failOnViolation !== false },
           reason: reason,
         });
         var completedAt = new Date().toISOString();
-        var receipt = pageAutomation.verification.createFactReceipt({
+        var receipt = pageAgent.verification.createFactReceipt({
           source: 'flow',
           tabId: snapshot.tabId,
           kind: 'accessibilityCheck',
@@ -1286,13 +1286,13 @@
         var entries = evaluation.entries;
         var passed = evaluation.passed;
         var reason = passed ? '路由断言已满足' : '路由断言失败：' + evaluation.failures.join('；');
-        var verification = pageAutomation.verification.verifyAssertion({
+        var verification = pageAgent.verification.verifyAssertion({
           kind: 'routeAssert', passed: passed,
           actual: { count: entries.length, entries: entries },
           expected: { minCount: min, maxCount: max, status: params.status || null, bodyContains: params.bodyContains || '', maxDurationMs: maxDuration },
           reason: reason,
         });
-        var receipt = pageAutomation.verification.createFactReceipt({
+        var receipt = pageAgent.verification.createFactReceipt({
           source: 'flow',
           tabId: Number(evaluation.tabId || params.tabId) || 0,
           kind: 'routeAssert',

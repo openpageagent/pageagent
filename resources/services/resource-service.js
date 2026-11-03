@@ -3,7 +3,7 @@
   'use strict';
   var commonJs = typeof module === 'object' && module.exports;
   var arp = commonJs ? require('../protocol') : root.AgentResourceProtocol;
-  var mailSettings = commonJs ? require('../../settings/mail-settings.js') : root.PageAutomationMailSettings;
+  var mailSettings = commonJs ? require('../../settings/mail-settings.js') : root.PageAgentMailSettings;
   if (!arp) throw new Error('AgentResourceProtocol must load before AgentResourceService');
   var api = factory(root, arp, mailSettings);
   if (commonJs) module.exports = api;
@@ -713,7 +713,7 @@
       var warnings = [];
       if (flow.mailNotification !== undefined) {
         try {
-          requireDependency(mailSettings, 'PageAutomationMailSettings').validateFlowNotification(flow.mailNotification);
+          requireDependency(mailSettings, 'PageAgentMailSettings').validateFlowNotification(flow.mailNotification);
         } catch (error) {
           errors.push('流程结束邮件通知: ' + error.message);
         }
@@ -2513,6 +2513,7 @@
       getSkillInstructions: getSkillInstructions,
       listSkillResources: listSkillResources,
       getSkillResource: getSkillResource,
+      validateSkill: normalizeUserSkill,
       createSkill: createSkill,
       patchSkill: patchSkill,
       deleteSkill: deleteSkill,

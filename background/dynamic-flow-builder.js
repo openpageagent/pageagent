@@ -5,7 +5,7 @@
 })(globalThis, function () {
 
   var USER_FLOW_PREFIX = 'user:';
-  var PAGE_ENGINE_DRIVER_ID = 'page-automation-engine';
+  var PAGE_ENGINE_DRIVER_ID = 'page-agent-engine';
   var LEGACY_PAGE_SCRIPT_PREFIX = 'pfa-page-driver-';
   var NET_SCRIPT_PREFIX = 'pfa-net-';
   var STEALTH_SCRIPT_PREFIX = 'pfa-stealth-';

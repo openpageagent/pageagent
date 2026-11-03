@@ -1,18 +1,19 @@
-.gitlab-app { height: 100dvh; min-height: 680px; max-width: 1920px; margin: auto; padding: 14px 20px 20px; display: flex; flex-direction: column; gap: 14px; }
+.gitlab-app { --workspace-gap: 8px; height: 100dvh; min-height: 720px; max-width: 1920px; margin: auto; padding: 8px; display: flex; flex-direction: column; gap: var(--workspace-gap); }
 .gitlab-app [hidden] { display: none !important; }
 .gitlab-app fieldset { min-width: 0; padding: 0; margin: 0; border: 0; }
 .gitlab-app h1, .gitlab-app h2 { margin: 0; font-family: var(--font-body); font-weight: 500; }
 .gitlab-app h1 { color: var(--text); font-size: 18px; }
 .gitlab-app h2 { font-size: 14px; }
 .gitlab-app label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.gitlab-app input:not([type="checkbox"]), .gitlab-app select { width: 100%; max-width: none; min-width: 0; height: 36px; }
+.gitlab-app input:not([type="checkbox"]), .gitlab-app select { width: 100%; max-width: none; min-width: 0; height: 36px; padding-inline: 8px; }
 .gitlab-app input[type="checkbox"] { flex: 0 0 auto; width: 16px; height: 16px; margin: 3px 0; }
-.gitlab-app button { white-space: nowrap; }
+.gitlab-app button { padding-inline: 8px; white-space: nowrap; }
+.gitlab-app button:not(.icon-button) { height: 28px; min-height: 28px; padding-block: 0; }
 .gitlab-app svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
 .gitlab-app .check { flex-direction: row; align-items: center; gap: 6px; white-space: nowrap; }
 .gitlab-app .icon-button { width: 36px; height: 36px; padding: 0; flex: 0 0 auto; background: transparent; }
 .gitlab-app .icon-button.small { width: 28px; height: 28px; min-height: 28px; border-color: transparent; }
-.gitlab-app .workspace-header, .gitlab-app .brand, .gitlab-app .workspace-account { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.gitlab-app .workspace-header, .gitlab-app .brand, .gitlab-app .workspace-account { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .gitlab-app .workspace-header { flex: 0 0 auto; justify-content: space-between; }
 .gitlab-app .brand { flex-shrink: 0; }
 .gitlab-app .brand > svg { width: 24px; height: 24px; color: var(--accent); }
@@ -21,83 +22,77 @@
 .gitlab-app .connection-summary[data-state="connected"]::before { background: var(--success); }
 .gitlab-app .connection-summary[data-state="connecting"]::before { background: var(--transmitting); }
 .gitlab-app .connection-summary[data-state="error"]::before { background: var(--danger); }
-.gitlab-app #operation-fields { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; }
-.gitlab-app .command-bar { flex: 0 0 auto; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 165px max-content; gap: 14px; padding: 12px 16px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
-.gitlab-app .command-bar > div { min-width: 0; }
+.gitlab-app #operation-fields { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--workspace-gap); }
+.gitlab-app .command-bar, .gitlab-app .work-area { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--workspace-gap); }
+.gitlab-app .command-bar { flex: 0 0 auto; }
+.gitlab-app .command-pane { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
 .gitlab-app .field-heading { height: 28px; margin-bottom: 5px; display: flex; flex-direction: row; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-secondary); }
-.gitlab-app .field-actions { display: flex; align-items: center; gap: 6px; }
-.gitlab-app .project-filters { position: relative; margin: 0; padding: 0; border: 0; background: transparent; }
-.gitlab-app .project-filters > summary { min-height: 26px; padding: 0 4px; margin: 0; font-size: 12px; border-radius: 4px; }
-.gitlab-app .project-filters > summary::before, .gitlab-app .project-filters > summary::after { display: none; }
-.gitlab-app .project-filters > summary:hover, .gitlab-app .project-filters[open] > summary, .gitlab-app .project-filters[data-active="true"] > summary { background: var(--accent-soft); color: var(--accent); }
-.gitlab-app .filter-popover { position: absolute; z-index: 2; top: 32px; right: -34px; width: min(340px, calc(100vw - 64px)); padding: 16px; display: grid; gap: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px #0002; }
+.gitlab-app .project-filters { margin-top: 8px; }
+.gitlab-app .commit-input { display: flex; align-items: center; gap: 8px; }
+.gitlab-app .commit-input > label { flex-shrink: 0; font-size: 12px; color: var(--text-secondary); }
+.gitlab-app .commit-input > input { flex: 1; }
+.gitlab-app .operation-bar { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: end; gap: 8px; }
+.gitlab-app #run { height: 28px; }
 .gitlab-app .message { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .gitlab-app .message:empty { display: none; }
 .gitlab-app .compact-message { max-height: 36px; overflow: auto; line-height: 18px; color: var(--text-secondary); }
-.gitlab-app .info-row { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
-.gitlab-app .info-box { min-width: 0; height: 128px; margin: 0; padding: 8px 10px; border-radius: var(--control-radius); background: var(--bg-muted); overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; }
-.gitlab-app #commit-status { display: block; }
+.gitlab-app .info-box { min-width: 0; height: 128px; margin: 0; padding: 8px; border-radius: var(--control-radius); background: var(--bg-muted); overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; }
+.gitlab-app #commit-status { display: block; height: 64px; margin-top: 8px; }
 .gitlab-app #commit-status:empty::before { content: '输入 Commit 后，这里显示提交标题和完整 SHA。'; color: var(--text-secondary); }
 .gitlab-app .message.error, .gitlab-app .error { color: var(--danger); }
 .gitlab-app .success { color: var(--accent); }
 .gitlab-app .form-help { margin: 0; overflow-wrap: anywhere; font-size: 12px; }
-.gitlab-app .work-area { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
-.gitlab-app .branch-pane, .gitlab-app .results-panel { min-width: 0; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.gitlab-app .work-area { flex: 1; min-height: 0; }
+.gitlab-app .command-pane, .gitlab-app .branch-pane, .gitlab-app .results-panel { min-width: 0; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
 .gitlab-app .branch-pane { display: flex; flex-direction: column; overflow: hidden; }
-.gitlab-app .pane-heading { min-height: 48px; flex: 0 0 auto; padding: 10px 14px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; }
+.gitlab-app .pane-heading { min-height: 48px; flex: 0 0 auto; padding: 8px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; }
 .gitlab-app .count { display: inline-block; color: var(--text-secondary); font-size: 12px; font-weight: 400; }
 .gitlab-app .pane-hint { color: var(--text-secondary); font-size: 11px; }
-.gitlab-app .branch-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; padding: 0 14px 8px; flex: 0 0 auto; }
-.gitlab-app .local-filter { display: flex; align-items: center; gap: 10px; }
+.gitlab-app .project-filters, .gitlab-app .branch-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.gitlab-app .branch-filters { padding: 0 8px 8px; flex: 0 0 auto; }
+.gitlab-app .local-filter { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .gitlab-app .local-filter > input { flex: 1; }
-.gitlab-app #branch-status { margin: 0; padding: 0 14px 8px; max-height: 44px; flex: 0 0 auto; }
+.gitlab-app #branch-status { margin: 0; padding: 0 8px 8px; max-height: 44px; flex: 0 0 auto; }
 .gitlab-app .branch-list { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; border-top: 1px solid var(--border); scrollbar-gutter: stable; }
-.gitlab-app .branch-row { display: flex; flex-direction: row; align-items: flex-start; gap: 9px; padding: 9px 14px; border-bottom: 1px solid var(--bg-muted); cursor: pointer; }
+.gitlab-app .branch-row { display: flex; flex-direction: row; align-items: flex-start; gap: 8px; padding: 8px; border-bottom: 1px solid var(--bg-muted); cursor: pointer; }
 .gitlab-app .branch-row:hover, .gitlab-app .branch-row:has(:checked) { background: var(--accent-soft); }
 .gitlab-app .branch-row:has(:disabled) { color: var(--text-secondary); cursor: default; }
 .gitlab-app .branch-name { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
-.gitlab-app .empty { padding: 18px 14px; margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.8; }
-.gitlab-app .pane-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; flex: 0 0 auto; border-top: 1px solid var(--border); background: var(--bg-secondary); }
-.gitlab-app .lookup-panel { padding: 0 14px 10px; flex: 0 0 auto; }
+.gitlab-app .empty { padding: 8px; margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.8; }
+.gitlab-app .pane-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; flex: 0 0 auto; border-top: 1px solid var(--border); background: var(--bg-secondary); }
+.gitlab-app .lookup-panel { padding: 0 8px 8px; flex: 0 0 auto; }
 .gitlab-app .lookup-fields { display: flex; gap: 6px; }
 .gitlab-app .lookup-fields > input { flex: 1; }
-.gitlab-app .lookup-fields > button { padding-inline: 8px; }
+.gitlab-app .preview-box { flex: 1; min-height: 128px; }
 .gitlab-app .preview-box h2 { margin-bottom: 4px; font-size: 13px; }
 .gitlab-app .preview-box .empty { padding: 4px 0; }
 .gitlab-app .preview { margin: 4px 0 0; padding: 0; list-style: none; white-space: pre-wrap; }
 .gitlab-app .preview:empty { display: none; }
 .gitlab-app .preview li { padding: 2px 0; }
-.gitlab-app .results-panel { flex: 0 0 144px; display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; }
-.gitlab-app .results-heading { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 0 0 auto; }
+.gitlab-app .results-panel { flex: 0 0 144px; display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+.gitlab-app .results-heading { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 0 auto; }
 .gitlab-app .results-heading h2, .gitlab-app #copy-results { flex-shrink: 0; }
 .gitlab-app #run-status { flex: 1; min-width: 0; max-height: 36px; overflow: auto; margin: 0; }
 .gitlab-app #copy-status { margin: 0; }
 .gitlab-app .results { flex: 1; min-height: 0; height: auto; white-space: pre-wrap; }
 .gitlab-app .results:empty::before { content: '执行后，这里按分支显示结果。'; color: var(--text-secondary); }
 .gitlab-app .results p { margin: 0; }
-.gitlab-app .settings-dialog { width: min(500px, calc(100vw - 32px)); padding: 22px; border-radius: 12px; }
-.gitlab-app .dialog-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.gitlab-app .settings-dialog { width: min(500px, calc(100vw - 32px)); padding: 8px; border-radius: 12px; }
+.gitlab-app .dialog-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .gitlab-app .dialog-heading h2 { font-size: 18px; }
-.gitlab-app #connection-fields { display: grid; gap: 14px; }
-.gitlab-app #token-settings { display: grid; gap: 10px; }
-.gitlab-app .merge-setting { padding-top: 14px; border-top: 1px solid var(--border); }
-.gitlab-app .settings-actions { display: flex; justify-content: space-between; gap: 12px; padding-top: 6px; }
+.gitlab-app #connection-fields { display: grid; gap: 8px; }
+.gitlab-app #token-settings { display: grid; gap: 8px; }
+.gitlab-app .merge-setting { padding-top: 8px; border-top: 1px solid var(--border); }
+.gitlab-app .settings-actions { display: flex; justify-content: space-between; gap: 8px; padding-top: 6px; }
 .gitlab-app .settings-dialog .check { white-space: normal; }
 .gitlab-app .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 1100px) {
-  .gitlab-app { padding: 10px 12px 12px; gap: 10px; }
-  .gitlab-app #operation-fields { gap: 10px; }
-  .gitlab-app .command-bar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 145px max-content; gap: 10px; padding-inline: 12px; }
-  .gitlab-app .work-area, .gitlab-app .info-row { gap: 10px; }
-  .gitlab-app .pane-heading, .gitlab-app .pane-footer { padding-inline: 10px; }
   .gitlab-app .pane-footer { gap: 4px; }
-  .gitlab-app .pane-footer button { padding-inline: 8px; }
 }
 @media (max-width: 900px) {
   .gitlab-app { height: auto; min-height: 100dvh; }
-  .gitlab-app .command-bar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .gitlab-app .info-row > .info-box { height: 152px; }
-  .gitlab-app .branch-filters { grid-template-columns: minmax(0, 1fr); }
+  .gitlab-app .preview-box { min-height: 152px; }
+  .gitlab-app .project-filters, .gitlab-app .branch-filters { grid-template-columns: minmax(0, 1fr); }
   .gitlab-app .branch-pane { height: 440px; }
   .gitlab-app .connection-summary { max-width: 38vw; overflow-wrap: anywhere; }
 }
@@ -106,10 +101,9 @@
   .gitlab-app .brand { gap: 6px; }
   .gitlab-app .workspace-account { gap: 6px; }
   .gitlab-app .connection-summary { max-width: 24vw; font-size: 11px; }
-  .gitlab-app .project-control, .gitlab-app .commit-control { grid-column: 1 / -1; }
-  .gitlab-app .work-area, .gitlab-app .info-row { grid-template-columns: minmax(0, 1fr); }
+  .gitlab-app .command-bar, .gitlab-app .work-area { grid-template-columns: minmax(0, 1fr); }
   .gitlab-app .results-panel { flex-basis: 180px; }
-  .gitlab-app .results-heading { flex-wrap: wrap; gap: 6px 10px; }
+  .gitlab-app .results-heading { flex-wrap: wrap; gap: 6px 8px; }
   .gitlab-app #run-status { order: 1; flex-basis: 100%; }
   .gitlab-app #copy-results { margin-left: auto; }
 }

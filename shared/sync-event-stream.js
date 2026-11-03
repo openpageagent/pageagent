@@ -2,7 +2,7 @@
 (function attachSyncEventStream(root, factory) {
   var api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  if (root) root.PageAutomationSyncEventStream = api;
+  if (root) root.PageAgentSyncEventStream = api;
 })(globalThis, function () {
   'use strict';
 

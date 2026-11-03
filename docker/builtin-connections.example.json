@@ -3,7 +3,7 @@
   "connections": [
     {
       "id": "primary",
-      "alias": "配置同步源",
+      "alias": "同步源（读取桶见 .env）与备份目标",
       "url": "wss://config.example.com",
       "password": "REPLACE_WITH_PAIRING_PASSWORD",
       "arpPermissions": {
@@ -12,7 +12,7 @@
         "delete": true,
         "execute": false
       },
-      "bucket": "team-a",
+      "bucket": "instance-backup",
       "autoSync": true,
       "backup": true
     },
@@ -27,7 +27,7 @@
         "delete": false,
         "execute": false
       },
-      "bucket": "team-a",
+      "bucket": "instance-backup",
       "autoSync": false,
       "backup": true
     }

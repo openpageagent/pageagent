@@ -13,7 +13,7 @@ const profiles = [
   { id: 'htmlencode', tool: 'html', title: 'HTML 实体编解码', english: 'HTML Entity Encode / Decode', icon: '&#', group: '编码与解码', sample: '<p>Hello & welcome</p>', decodeSample: '&lt;p&gt;Hello &amp; welcome&lt;/p&gt;' },
   { id: 'backslash', tool: 'backslash', title: '反斜杠转义', english: 'Backslash Escape / Unescape', icon: '\\n', group: '编码与解码', sample: 'Hello "Developer Utils"\nC:\\projects\\demo', decodeSample: 'Hello \\"Developer Utils\\"\\nC:\\\\projects\\\\demo' },
   { id: 'uuidtool', tool: 'uuid', title: 'UUID / ULID 生成与解码', english: 'UUID / ULID Generate / Decode', group: '生成', operation: 'v4', operations: ['v4', 'v1', 'v3', 'v5', 'v6', 'v7', 'ulid', 'nanoId'], sample: '6ba7b810-9dad-11d1-80b4-00c04fd430c8' },
-  { id: 'htmlpreview', local: 'html', title: 'HTML 预览', english: 'HTML Preview', icon: '</>', group: '检查与预览', operations: ['preview'], sample: '<style>body{font:16px system-ui;padding:32px;color:#26344a}article{padding:24px;border:1px solid #dce3ef;border-radius:12px}h1{color:#3478f6}</style>\n<article><h1>Hello, Developer Utils.</h1><p>把灵感变成页面。</p><ul><li>本地预览</li><li>专注内容</li></ul></article>', description: '在隔离的页面中预览静态 HTML 与内联 CSS；脚本、表单、链接跳转和外部资源不会运行。' },
+  { id: 'htmlpreview', local: 'html', title: 'HTML 预览', english: 'HTML Preview', icon: '</>', group: '检查与预览', operations: ['preview'], sample: '<style>body{font:16px system-ui;padding:8px;color:#26344a}article{padding:8px;border:1px solid #dce3ef;border-radius:12px}h1{color:#3478f6}</style>\n<article><h1>Hello, Developer Utils.</h1><p>把灵感变成页面。</p><ul><li>本地预览</li><li>专注内容</li></ul></article>', description: '在隔离的页面中预览静态 HTML 与内联 CSS；脚本、表单、链接跳转和外部资源不会运行。' },
   { id: 'textdiff', tool: 'diffs', title: '文本差异', english: 'Text Diff Checker', icon: '±', group: '检查与预览', sample: 'Hello Developer Utils\nVersion 1\nLocal tools', options: { other: 'Hello Developer Utils\nVersion 2\nLocal tools\nNew layout' }, description: '比较两段文本，支持按行、词或字符计算差异。预览显示删除与新增内容，文本保留差异片段。' },
   { id: 'numberbase', tool: 'radix', title: '进制转换', english: 'Number Base Converter', group: '转换', operations: ['all'], fixed: ['from', 'alphabet'], defaults: { to: 36 }, sample: '255', description: '在任意进制字段输入，其他字段自动更新；支持 2–64 进制。' },
   { id: 'loremipsum', tool: 'loremIpsum', title: 'Lorem Ipsum 生成', english: 'Lorem Ipsum Generator', group: '生成', fixed: ['unit'], sample: '' },
@@ -47,7 +47,7 @@ for (const [from, to, sample] of [
 
 for (const [language, label, sample] of [
   ['html', 'HTML', '<main><h1>Hello Developer Utils</h1><p>Local tools</p></main>'],
-  ['css', 'CSS', '.card{color:#3478f6;padding:16px;margin:0 auto}'],
+  ['css', 'CSS', '.card{color:#3478f6;padding:8px;margin:0 auto}'],
   ['javascript', 'JavaScript', 'const tools=["json","base64"];function greet(name){return `Hello, ${name}`;}'],
   ['erb', 'ERB', '<% posts.each do |post| %>\n<p><%= post.title %></p>\n<% end %>'],
   ['less', 'LESS', '@brand: #3478f6;.card{color:@brand;.title{font-size:18px;}}'],

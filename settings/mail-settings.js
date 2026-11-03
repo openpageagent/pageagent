@@ -2,7 +2,7 @@
 (function (root, factory) {
   var api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.PageAutomationMailSettings = api;
+  else root.PageAgentMailSettings = api;
 })(globalThis, function () {
   'use strict';
 

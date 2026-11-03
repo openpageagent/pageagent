@@ -107,7 +107,7 @@ docker compose --env-file ./docker/.env -f ./docker/compose.yaml \
 
 ### 启用可选环境变量
 
-Compose 通过服务级 `env_file: .env` 将 `docker/.env` 中已启用的变量传入容器，包括配对密码、名称、HTTP 令牌、画面编码、启动同步、内置连接文件和模型密钥。
+Compose 通过服务级 `env_file: .env` 将 `docker/.env` 中已启用的变量传入容器，包括配对密码、名称、HTTP 令牌、Selkies 登录认证、画面编码、启动同步、内置连接文件和模型密钥。
 
 1. 在 `docker/.env` 中填写对应变量。
 2. 按[常用操作](#常用操作)重新创建容器，无需构建镜像。
@@ -138,8 +138,27 @@ Compose 通过服务级 `env_file: .env` 将 `docker/.env` 中已启用的变量
 - 首次启动生成 `data/tls/selkies.crt` 和 `data/tls/selkies.key`，后续复用。
 - 可替换为受信任的证书链和私钥。
 - 通过域名或局域网 IP 访问时，证书 SAN 必须包含实际地址。
-- Selkies 没有独立网页登录密码；访问范围由 Compose 的 `ports` 绑定决定。
-- 需要限制远程访问时，使用已有认证反向代理或 SSH 隧道。
+- Selkies 网页登录认证默认关闭；可按下文启用，也可使用已有认证反向代理或 SSH 隧道限制访问。
+
+### Selkies 网页登录密码
+
+在 `docker/.env` 中配置：
+
+```dotenv
+SELKIES_ENABLE_BASIC_AUTH='true'
+SELKIES_BASIC_AUTH_USER='admin'
+SELKIES_BASIC_AUTH_PASSWORD='替换为你的独立登录密码'
+```
+
+三项一起启用，用户名和密码均需填写。重新创建容器后，打开 Selkies 页面时使用上述用户名和密码登录。
+此密码与 `PAGE_AGENT_PAIRING_PASSWORD`、`PAGE_AGENT_HTTP_BEARER_TOKEN` 独立；修改它不会改变浏览器配对或 MCP 认证。
+
+### 多人或多个标签页访问
+
+直接打开同一地址即可共同查看和操作同一个浏览器；只需观看时使用 `https://localhost:10000/#shared`。它们共享同一桌面，不是独立浏览器会话。
+
+Selkies 2.1.0 的普通共享连接有一处停流恢复遗漏：首个标签进入后台并暂停采集后，新页面加入时仅请求关键帧，没有恢复采集，会停在 `Waiting for stream...`。
+应用镜像通过 [`selkies-2.1.0.patch`](selkies-2.1.0.patch) 在该分支调用已有的恢复采集逻辑。按[日常更新](#日常更新)重建 `app` 镜像并重新创建容器即可应用。
 
 ## 保留数据与迁移
 
@@ -202,7 +221,9 @@ data/
 | --- | --- |
 | `autoSync: true` | 指定自动同步源；额外连接最多一条，替换本机同步源 |
 | `backup: true` | 增加备份目标；可有多条，本机连接仍保留为备份目标 |
-| `bucket` | 指定桶名；单独填写不会开启同步或备份 |
+| `bucket` | 本机备份在此连接上的写入桶；单独填写不会开启同步或备份 |
+
+连接文件中的 `bucket` 是初始备份设置；插件已有保存的备份设置时，以「自动备份」中显示的桶为准，可在该界面修改。容器本机连接的初始备份桶为 `default`。
 
 ## 备份与同步
 
@@ -228,7 +249,7 @@ data/
 2. 等待当前运行任务结束，同步期间暂缓自动任务。
 3. 选择已标记为可同步的版本，点击「同步所选版本」。
 
-失败后在日志中重试；原操作完成前，不要切换同步源或桶。
+失败后在对应连接的「同步和备份日志」中重试。仅在实际应用配置期间暂停其他任务；等待连接、缺失依赖或同步失败不会持续阻断任务。已经部分写入的操作保留恢复状态，需要重试原操作后再切换同步源或备份目标。
 
 ### 容器启动时自动同步
 
@@ -240,29 +261,62 @@ data/
 
 | 变量 | 示例 | 用途 |
 | --- | --- | --- |
-| `PAGE_AGENT_BUCKET` | `project-a` | 与备份版本所在桶一致 |
-| `PAGE_AGENT_SYNC_VERSION` | `v000002` | 指定要加载的版本 |
+| `PAGE_AGENT_AUTO_SYNC_BUCKET` | `shared-config` | 启动同步的读取桶，必须是所选版本所在的桶；不覆盖备份写入桶 |
+| `PAGE_AGENT_AUTO_SYNC_VERSION` | `v000001` | 指定要加载的版本 |
 | `PAGE_AGENT_AUTO_SYNC_ENABLED` | `true` | 默认开启；设为 `false` 可关闭 |
+
+启动同步的环境变量统一使用 `PAGE_AGENT_AUTO_SYNC_*`。已有部署升级时，请将桶名和版本的变量名更新为上表中的名称；旧名称不再读取。
 
 - 未指定版本：不执行启动同步，也不会自动选择最新版本。
 - 每次启动：按设置管理同步源、桶名、版本和开关。
 - 正常连接重连：不会重复同步。
 - 升级、回退或切换桶：修改目标并重新创建容器，保留原 `data/`。
 
+两个桶**不要求相同**。桶属于服务端，相同桶名在不同服务端也不是同一个桶：
+
+| 配置位置 | 方向 | 示例 |
+| --- | --- | --- |
+| `data/builtin-connections.json` 的 `connections[].bucket` | 本机配置 → 该连接服务端的备份桶 | `instance-backup` |
+| `docker/.env` 的 `PAGE_AGENT_AUTO_SYNC_BUCKET` | 同步源服务端的版本 → 本机配置 | `shared-config` |
+
+例如来源实例已在配置服务端的 `shared-config` 桶创建 `v000001` 并标记可同步。容器的额外连接指向该服务端，设置 `autoSync: true`、`backup: true`、`bucket: "instance-backup"`；在 `.env` 中填写：
+
+```dotenv
+PAGE_AGENT_BUILTIN_CONNECTIONS_FILE=/data/builtin-connections.json
+PAGE_AGENT_AUTO_SYNC_BUCKET=shared-config
+PAGE_AGENT_AUTO_SYNC_VERSION=v000001
+PAGE_AGENT_AUTO_SYNC_ENABLED=true
+```
+
+启动时读取该远端的 `shared-config/v000001`；定时备份、手动备份、同步前的保护备份写入远端 `instance-backup`。容器本机连接仍单独备份到本机的 `default` 桶。如果希望读写同一个桶，两处都填 `shared-config` 即可。未填写 `PAGE_AGENT_AUTO_SYNC_BUCKET` 时，沿用同步源连接文件的 `bucket`，再未填写则用 `default`；建议显式填写以免混淆。未设置额外连接的 `autoSync: true` 时，同步源是容器本机服务端。
+
+### 同步日志与旧备份
+
+- 「连接配置 → 自动同步 → 同步源日志」直接显示所选同步源的同步结果、错误全文和告警，不依赖当前选中的备份连接或备份桶。
+- 「自动备份 → 选择连接 → 同步和备份日志」显示此连接的操作及实际桶名，失败操作可点 `Retry`。错误不会只藏在 `index.json` 中。
+- 服务端标准输出记录开始、完成、失败和告警，包含客户端、桶、版本、操作 ID 和错误信息。容器部署可查看 `docker compose --env-file ./docker/.env -f ./docker/compose.yaml logs -f page-agent`；同步源在远端时，查看远端服务端的日志。
+- `archive/index.json` 是一个持久化索引；其中 `operations` 是操作记录，`buckets.*.versions` 才是备份版本。同一客户端内容不变时复用备份版本；同一启动目标反复失败时复用失败操作，避免每次重启新增相同错误记录。成功的实际同步仍记录操作。
+- 旧版本遗漏的 Skill 和 HTTP MCP 服务器配置无法从索引补回。请在配置完整的来源端升级后重新备份，将新版本标记可同步，再更新 `PAGE_AGENT_AUTO_SYNC_VERSION`。读取缺少这些模块的旧备份时保留本机对应配置，跳过缺失的助手 Skill/MCP 引用并显示告警。
+- 当前同步协议为 7，插件和对应 MCP Server 都需更新；旧的格式 7 备份仍可读取。
+
 ### 权限与数据影响
 
 | 操作 | 所需 ARP 权限 |
 | --- | --- |
 | 备份 | 读取 |
-| 同步 | 读取、写入；删除配置时还需删除权限 |
+| 同步 | 读取、写入；有删除权限时清理多余配置，无删除权限时保留并告警 |
 
 | 数据 | 同步或备份行为 |
 | --- | --- |
-| 本地配置 | 同步前先保存备份，再替换；所选版本中不存在的本地配置会被删除 |
+| 本地配置 | 同步前先保存备份，再替换；具有删除权限时清理所选版本之外的可写配置 |
+| 自定义 Skill（含导入的 Skill） | 备份正文、附属资源全文、状态及标签；先恢复 Skill，再恢复助手并映射引用 ID |
+| HTTP MCP 服务器配置 | 备份名称、地址、启用状态、Bearer Token、自定义 Header、浏览器 Cookie 使用开关、超时和协议版本；先恢复服务器，再恢复助手并映射引用 ID |
 | 内置只读资源、话题、消息、附件、运行报告 | 同步时保留 |
-| 模型 API Key、自定义认证 Headers、连接身份、应用和知识库内容 | 不进入配置备份 |
+| 模型 API Key、模型认证 Headers、MCP 连接配对身份、浏览器 Cookie 内容、应用和普通知识库内容 | 不进入配置备份 |
 
-模型密钥可按 `docker/.env.example` 单独注入。配置备份不能代替整个 `data/` 的备份。
+HTTP MCP 的认证字段与手动完整备份保持一致，会写入配置备份。工具目录和连接会话属于运行缓存，不随配置备份；新恢复的服务器可在 HTTP MCP 页面刷新工具目录。模型密钥可按 `docker/.env.example` 单独注入。配置备份不能代替整个 `data/` 的备份。
+
+配置备份是明文 JSON，HTTP MCP 的令牌和 Header 值也在其中；服务端新写入的版本文件权限为 `0600`。`data/` 和实际使用的 `.env` 文件已从 Git、扩展发布包和 Docker 构建上下文中排除，但手动复制、上传这些文件仍会带出凭据。服务端首次自动生成的配对密码和 HTTP Bearer 令牌会进入启动日志；容器配对密码由 `.env` 提供，HTTP 令牌也可通过 `PAGE_AGENT_HTTP_BEARER_TOKEN` 显式提供，避免自动生成时打印明文。Bash 审计默认保存命令原文，命令参数中的密钥也会被记录；服务端可使用 `--audit-command-content hash` 只保存摘要。
 
 ## 构建问题与参考
 
@@ -288,7 +342,7 @@ Project root must contain manifest.json and MCP server source or bundle: <项目
 在源码工作区中，也可以指定已打包的 release 目录，用于验证发布产物：
 
 ```bash
-./docker/build.sh app ./dist/page-agent-extension-1.2.0
+./docker/build.sh app ./dist/page-agent-extension-1.2.1
 ```
 
 第二个参数是应用构建目录，相对路径以执行命令时的当前目录为基准。插件、MCP Server 和容器启动脚本均从该目录复制；release 中已有的 MCP Server 单文件会直接复用。构建时会打印实际使用的目录。

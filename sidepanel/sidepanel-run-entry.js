@@ -3,8 +3,8 @@
   'use strict';
 
   var commonJs = typeof module === 'object' && module.exports;
-  var lifecycleApi = root && root.PageAutomationLifecycle;
-  var resourceClientApi = root && root.PageAutomationResourceClient;
+  var lifecycleApi = root && root.PageAgentLifecycle;
+  var resourceClientApi = root && root.PageAgentResourceClient;
   var runStateApi = root && root.SidepanelRunState;
   if (commonJs && !lifecycleApi) lifecycleApi = require('../ui/lifecycle.js');
   if (commonJs && !resourceClientApi) resourceClientApi = require('../ui/resource-client.js');
@@ -77,11 +77,11 @@
     api = api || {};
     var lifecycleFactory = api.lifecycleApi || LifecycleApi;
     if (!lifecycleFactory || typeof lifecycleFactory.create !== 'function') {
-      throw new Error('PageAutomationLifecycle must load before SidepanelRunEntry');
+      throw new Error('PageAgentLifecycle must load before SidepanelRunEntry');
     }
     var resourceClientFactory = api.resourceClientApi || ResourceClientApi;
     if (!resourceClientFactory || typeof resourceClientFactory.create !== 'function') {
-      throw new Error('PageAutomationResourceClient must load before SidepanelRunEntry');
+      throw new Error('PageAgentResourceClient must load before SidepanelRunEntry');
     }
     if (typeof api.sendMessage !== 'function') {
       throw new Error('SidepanelRunEntry requires sendMessage');
@@ -428,7 +428,7 @@
       return response;
     }
 
-    function buildAutomationRunRequest(target, context, active, options) {
+    function buildAgentRunRequest(target, context, active, options) {
       var groupRun = target.type === 'flowGroup';
       var targetId = target.rawId || target.id || target.value;
       var rawContext = context && typeof context === 'object' && !Array.isArray(context) ? context : {};
@@ -468,13 +468,13 @@
       };
     }
 
-    function runAutomationTarget(action, target, context, options) {
+    function runAgentTarget(action, target, context, options) {
       return activeContext(action, false).then(function (active) {
         if (!active) return staleResult();
         if (active.ok === false) return active;
         if (!isActionCurrent(action)) return staleResult();
         addLog('发送启动请求: ' + (target.label || target.value), 'info');
-        var request = buildAutomationRunRequest(target, context, active, options);
+        var request = buildAgentRunRequest(target, context, active, options);
         return resourceClient.authorizedPost(request.uri, request.body, {
           criteria: { relation: request.relation },
         }).then(resourceStartResponse, function (error) {
@@ -532,7 +532,7 @@
           });
         }
 
-        return runAutomationTarget(action, target, context, opts);
+        return runAgentTarget(action, target, context, opts);
       });
     }
 

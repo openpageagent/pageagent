@@ -1,10 +1,10 @@
 (function attachRecordingArtifactProjector(root, factory) {
   'use strict';
   var commonJs = typeof module === 'object' && module.exports;
-  var contract = commonJs ? require('../shared/recording-contract') : root.PageAutomationRecordingContract;
+  var contract = commonJs ? require('../shared/recording-contract') : root.PageAgentRecordingContract;
   var api = factory(root, contract);
   if (commonJs) module.exports = api;
-  if (root) root.PageAutomationRecordingArtifactProjector = api;
+  if (root) root.PageAgentRecordingArtifactProjector = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, contract) {
   'use strict';
   if (!contract || contract.API_VERSION !== 1) throw new Error('RecordingContract must load before RecordingArtifactProjector');
@@ -184,7 +184,29 @@
     var selected = [];
     var index = offset;
     while (index < items.length && selected.length < query.limit) {
-      var candidate = selected.concat([items[index]]);
+      var item = items[index];
+      var event = key === 'search' ? item.match : item;
+      if (event && event.network && (JSON.stringify(item).length > query.maxChars / 2 || byteLength(item) > MAX_PRIMARY_DATA_BYTES / 2)) {
+        item = clone(item);
+        event = key === 'search' ? item.match : item;
+        var previewFields = [];
+        eventStrings(event, '', previewFields);
+        event.fieldWindows = [];
+        previewFields.forEach(function (entry) {
+          if (entry.value.length <= 256) return;
+          // Keep stored fields intact; the existing seq/field API retrieves their full captured text.
+          var parts = entry.field.split('.');
+          var parent = event;
+          for (var part = 0; part < parts.length - 1; part += 1) {
+            if (!parent || !Object.prototype.hasOwnProperty.call(parent, parts[part])) return;
+            parent = parent[parts[part]];
+          }
+          if (!parent || parent[parts[parts.length - 1]] !== entry.value) return;
+          parent[parts[parts.length - 1]] = entry.value.slice(0, 256);
+          event.fieldWindows.push({ field: entry.field, totalChars: entry.value.length });
+        });
+      }
+      var candidate = selected.concat([item]);
       var candidateIndex = index + 1;
       var candidateHasMore = candidateIndex < items.length;
       var candidateCursor = candidateHasMore

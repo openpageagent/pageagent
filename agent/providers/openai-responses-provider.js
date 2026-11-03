@@ -223,6 +223,7 @@
         stream: true,
         store: false,
       };
+      if (service.serviceTier === 'priority') body.service_tier = 'priority';
       if (input.system) body.instructions = String(input.system);
       var tools = toolDefinitions(input.tools);
       if (tools.length) body.tools = tools;

@@ -176,6 +176,9 @@ mkdir -p "$STAGING_DIR"
 mkdir -p "$(dirname "$ZIP_OUT")"
 
 rsync -a "$ROOT_DIR/" "$STAGING_DIR/" \
+  --include ".env.example" \
+  --exclude ".env" \
+  --exclude ".env.*" \
   --filter=':- .gitignore' \
   --exclude ".git/" \
   --exclude ".gitignore" \

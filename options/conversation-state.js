@@ -69,7 +69,7 @@
   function releaseTopicArtifacts(topicId) {
     topicId = String(topicId || '').trim();
     if (!topicId) return Promise.resolve();
-    var direct = globalThis.PageAutomationImageArtifacts;
+    var direct = globalThis.PageAgentImageArtifacts;
     if (direct && typeof direct.releaseTopic === 'function') {
       return Promise.resolve(direct.releaseTopic(topicId)).catch(function () {});
     }

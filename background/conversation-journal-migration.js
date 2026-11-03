@@ -114,7 +114,7 @@
         'conversation.json': JSON.stringify(portableConversation, null, 2),
         'journal.jsonl': exportedJournal.map(function (event) { return JSON.stringify(event); }).join('\n') + (exportedJournal.length ? '\n' : ''),
         'checkpoints.json': JSON.stringify(data.checkpoints, null, 2),
-        'artifacts/payloads.json': JSON.stringify(data.payloads || [], null, 2),
+        'artifacts/payloads.json': JSON.stringify(data.payloads || []),
       };
       var hashes = {};
       for (var path of Object.keys(files)) hashes[path] = await sha256(files[path], cryptoApi);

@@ -3,7 +3,7 @@
   'use strict';
   var api = factory(root);
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else if (root) root.PageAutomationImageArtifactClient = api;
+  else if (root) root.PageAgentImageArtifactClient = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
@@ -128,8 +128,8 @@
     } catch (_) {}
     if (closeActiveLightbox) closeActiveLightbox();
     var host = root.document.createElement('div');
-    host.id = 'page-automation-image-lightbox';
-    host.setAttribute('data-page-automation-ui', 'image-lightbox');
+    host.id = 'page-agent-image-lightbox';
+    host.setAttribute('data-page-agent-ui', 'image-lightbox');
     host.style.setProperty('position', 'fixed', 'important');
     host.style.setProperty('z-index', '2147483647', 'important');
     host.style.setProperty('inset', '0', 'important');
@@ -139,7 +139,7 @@
     host.style.setProperty('transform', 'none', 'important');
     var shadow = host.attachShadow({ mode: 'closed' });
     var style = root.document.createElement('style');
-    style.textContent = ':host{all:initial}.conversation-image-lightbox{position:absolute;inset:0;display:grid;grid-template-rows:44px minmax(0,1fr) 44px;box-sizing:border-box;background:#3b3b3b;color:#fff;font-family:Arial,sans-serif}.conversation-image-toolbar{display:flex;min-width:0;align-items:center;justify-content:space-between;gap:16px;padding:0 8px 0 14px;background:#090909}.conversation-image-identity,.conversation-image-actions{display:flex;min-width:0;align-items:center}.conversation-image-identity{gap:8px}.conversation-image-identity>svg{width:20px;height:20px;flex:0 0 auto}.conversation-image-title{max-width:min(48vw,560px);overflow:hidden;color:#f4f4f4;font-size:13px;line-height:1;text-overflow:ellipsis;white-space:nowrap}.conversation-image-meta{flex:0 0 auto;color:#a9a9a9;font-size:11px}.conversation-image-actions{gap:2px}.conversation-image-toolbar button{display:grid;width:34px;height:34px;padding:0;place-items:center;border:0;border-radius:3px;appearance:none;background:transparent;color:#f2f2f2;cursor:pointer}.conversation-image-toolbar button:hover{background:#292929}.conversation-image-toolbar button:focus-visible{outline:2px solid #fff;outline-offset:-3px}.conversation-image-toolbar button svg{display:block;width:18px;height:18px;pointer-events:none}.conversation-image-stage{display:grid;min-width:0;min-height:0;place-items:center;overflow:hidden;padding:0 16px;box-sizing:border-box}.conversation-image-stage img{display:block;width:100%;height:100%;object-fit:contain}.conversation-image-footer{background:#090909}';
+    style.textContent = ':host{all:initial}.conversation-image-lightbox{position:absolute;inset:0;display:grid;grid-template-rows:44px minmax(0,1fr) 44px;box-sizing:border-box;background:#3b3b3b;color:#fff;font-family:Arial,sans-serif}.conversation-image-toolbar{display:flex;min-width:0;align-items:center;justify-content:space-between;gap:16px;padding:0 8px;background:#090909}.conversation-image-identity,.conversation-image-actions{display:flex;min-width:0;align-items:center}.conversation-image-identity{gap:8px}.conversation-image-identity>svg{width:20px;height:20px;flex:0 0 auto}.conversation-image-title{max-width:min(48vw,560px);overflow:hidden;color:#f4f4f4;font-size:13px;line-height:1;text-overflow:ellipsis;white-space:nowrap}.conversation-image-meta{flex:0 0 auto;color:#a9a9a9;font-size:11px}.conversation-image-actions{gap:2px}.conversation-image-toolbar button{display:grid;width:34px;height:34px;padding:0;place-items:center;border:0;border-radius:3px;appearance:none;background:transparent;color:#f2f2f2;cursor:pointer}.conversation-image-toolbar button:hover{background:#292929}.conversation-image-toolbar button:focus-visible{outline:2px solid #fff;outline-offset:-3px}.conversation-image-toolbar button svg{display:block;width:18px;height:18px;pointer-events:none}.conversation-image-stage{min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;padding:0 8px;box-sizing:border-box}.conversation-image-stage img{display:block;width:100%;height:auto}.conversation-image-footer{background:#090909}';
     shadow.appendChild(style);
     var overlay = root.document.createElement('div');
     overlay.className = 'conversation-image-lightbox';
@@ -184,7 +184,7 @@
       else if (action.getAttribute('data-lightbox-action') === 'download') downloadPreview();
     });
     shadow.appendChild(overlay);
-    root.document.body.appendChild(host);
+    root.document.documentElement.appendChild(host);
     closeActiveLightbox = close;
     if (root.addEventListener) root.addEventListener('keydown', onKeydown);
   }

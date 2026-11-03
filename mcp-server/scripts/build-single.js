@@ -20,7 +20,7 @@ async function main() {
     format: 'cjs',
     minify: true,
     external: [
-      // Desktop automation loads the platform-specific addon from an adjacent node_modules.
+      // Desktop control loads the platform-specific addon from an adjacent node_modules.
       'robotjs',
       // Optional native speedups used by ws. They are safe to omit in a shared bundle.
       'bufferutil',

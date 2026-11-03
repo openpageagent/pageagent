@@ -65,7 +65,7 @@
 
   function createPageHeartbeat(deps) {
     var chrome = deps.chrome;
-    var pageAutomation = deps.pageAutomation;
+    var pageAgent = deps.pageAgent;
     var addLog = deps.addLog;
     var incognito = deps.incognito === true;
     var activePages = new Map();
@@ -91,7 +91,7 @@
             url: url.href, pageOrigin: new URL(tab.url).origin,
             method: method, headers: headers, body: String(config.body || ''), timeoutMs: timeoutMs,
           };
-          var result = await pageAutomation.executeCommand('evaluate', {
+          var result = await pageAgent.executeCommand('evaluate', {
             tabId: tab.id, mode: 'write', world: 'MAIN', sourceType: 'expression',
             code: '(' + sendHeartbeat.toString() + ')(' + JSON.stringify(request) + ')',
             timeoutMs: timeoutMs + 3000, sensitive: true,
@@ -107,7 +107,7 @@
         } catch (error) {
           addLog('页面会话保活 [' + (page.label || pageId) + '] 失败: ' + String(error && error.message || error), { level: 'warn', tabId: tab.id });
         } finally {
-          await pageAutomation.action.cleanupOwner(owner, { detachImmediately: true }).catch(function (error) {
+          await pageAgent.action.cleanupOwner(owner, { detachImmediately: true }).catch(function (error) {
             addLog('释放会话保活连接失败: ' + String(error && error.message || error), { level: 'warn', tabId: tab.id });
           });
         }

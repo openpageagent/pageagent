@@ -2,32 +2,34 @@
 (function () {
   'use strict';
 
-  if (window.__pageAutomationPageConversationInstalled || window.__pageAutomationPageConversationInitializing) return;
-  if (!window.PageAutomationRuntimeClient || typeof window.PageAutomationRuntimeClient.create !== 'function') {
+  if (window.location.protocol === 'chrome-extension:' && (window !== window.top
+      || !window.AppContract || !window.AppContract.parseUrl(window.location.href, chrome.runtime.getURL('/')))) return;
+  if (window.__pageAgentPageConversationInstalled || window.__pageAgentPageConversationInitializing) return;
+  if (!window.PageAgentRuntimeClient || typeof window.PageAgentRuntimeClient.create !== 'function') {
     throw new Error('ui/runtime-client.js must load before content/page-conversation-entry.js');
   }
-  if (!window.PageAutomationPageConversationMessages
-      || window.PageAutomationPageConversationMessages.API_VERSION !== 1) {
+  if (!window.PageAgentPageConversationMessages
+      || window.PageAgentPageConversationMessages.API_VERSION !== 1) {
     throw new Error('ui/page-conversation-message-contract.js must load before content/page-conversation-entry.js');
   }
-  if (!window.PageAutomationPageConversationPanel
-      || typeof window.PageAutomationPageConversationPanel.create !== 'function') {
+  if (!window.PageAgentPageConversationPanel
+      || typeof window.PageAgentPageConversationPanel.create !== 'function') {
     throw new Error('content/page-conversation-panel.js must load before content/page-conversation-entry.js');
   }
-  if (!window.PageAutomationConversationEventView
-      || window.PageAutomationConversationEventView.API_VERSION !== 1) {
+  if (!window.PageAgentConversationEventView
+      || window.PageAgentConversationEventView.API_VERSION !== 1) {
     throw new Error('ui/conversation-event-view.js must load before content/page-conversation-entry.js');
   }
-  if (!window.PageAutomationConversationListView
-      || window.PageAutomationConversationListView.API_VERSION !== 1) {
+  if (!window.PageAgentConversationListView
+      || window.PageAgentConversationListView.API_VERSION !== 1) {
     throw new Error('ui/conversation-list-view.js must load before content/page-conversation-entry.js');
   }
-  if (!window.PageAutomationConversationShared
-      || window.PageAutomationConversationShared.API_VERSION !== 1) {
+  if (!window.PageAgentConversationShared
+      || window.PageAgentConversationShared.API_VERSION !== 1) {
     throw new Error('ui/conversation-shared.js must load before content/page-conversation-entry.js');
   }
-  var messageContract = window.PageAutomationPageConversationMessages;
-  window.__pageAutomationPageConversationInitializing = true;
+  var messageContract = window.PageAgentPageConversationMessages;
+  window.__pageAgentPageConversationInitializing = true;
   var disposed = false;
   var initialized = false;
   var openRequested = false;
@@ -45,7 +47,7 @@
     var payload = message.payload || {};
     var action = String(payload.action || '');
     if (action === 'hide') {
-      var host = document.getElementById('page-automation-page-conversation');
+      var host = document.getElementById('page-agent-page-conversation');
       var token = 'screenshot_' + (++screenshotVisibilitySequence);
       var previous = host ? {
         value: host.style.getPropertyValue('visibility'),
@@ -60,7 +62,7 @@
     }
     if (action === 'restore') {
       var state = screenshotVisibilityStates[String(payload.token || '')];
-      var restoreHost = document.getElementById('page-automation-page-conversation');
+      var restoreHost = document.getElementById('page-agent-page-conversation');
       if (restoreHost) {
         if (state && state.value) restoreHost.style.setProperty('visibility', state.value, state.priority || '');
         else restoreHost.style.removeProperty('visibility');
@@ -75,7 +77,7 @@
 
   function getVisibilityClient() {
     if (visibilityClient) return visibilityClient;
-    visibilityClient = window.PageAutomationRuntimeClient.create(chrome.runtime, { onInvalidated: destroy });
+    visibilityClient = window.PageAgentRuntimeClient.create(chrome.runtime, { onInvalidated: destroy });
     return visibilityClient;
   }
 
@@ -99,25 +101,25 @@
     var runtime;
     try {
       runtime = chrome.runtime;
-      runtimeClient = window.PageAutomationRuntimeClient.create(runtime, { onInvalidated: destroy });
+      runtimeClient = window.PageAgentRuntimeClient.create(runtime, { onInvalidated: destroy });
     } catch (error) {
-      if (window.PageAutomationRuntimeClient.isContextInvalidatedError(error)) {
+      if (window.PageAgentRuntimeClient.isContextInvalidatedError(error)) {
         destroy();
         return;
       }
       throw error;
     }
-    panel = window.PageAutomationPageConversationPanel.create({
+    panel = window.PageAgentPageConversationPanel.create({
       window: window,
       document: document,
       runtime: runtime,
       runtimeClient: runtimeClient,
-      messageContract: window.PageAutomationPageConversationMessages,
-      eventView: window.PageAutomationConversationEventView,
-      listView: window.PageAutomationConversationListView,
-      conversationShared: window.PageAutomationConversationShared,
-      imageArtifactClient: window.PageAutomationImageArtifactClient,
-      positionController: window.PageAutomationPageElementPositionController,
+      messageContract: window.PageAgentPageConversationMessages,
+      eventView: window.PageAgentConversationEventView,
+      listView: window.PageAgentConversationListView,
+      conversationShared: window.PageAgentConversationShared,
+      imageArtifactClient: window.PageAgentImageArtifactClient,
+      positionController: window.PageAgentPageElementPositionController,
       onClose: close,
     });
     return panel;
@@ -185,7 +187,7 @@
   }
 
   function restoreVisibility() {
-    var revision = visibilityRevision;
+    var revision = ++visibilityRevision;
     return sendVisibility(messageContract.TYPES.GET_VISIBILITY, {}).then(function (response) {
       if (disposed || revision !== visibilityRevision || !response.ok) return false;
       openRequested = !!(response.payload && response.payload.open === true);
@@ -209,6 +211,14 @@
     });
   }
 
+  function handleVisibilityRestore() {
+    if (disposed || document.hidden || !openRequested) return;
+    // 旧标签页和前进/后退缓存中的面板也要遵从已保存的关闭状态。
+    restoreVisibility().catch(function (error) {
+      if (window.PageAgentRuntimeClient.isContextInvalidatedError(error)) destroy();
+    });
+  }
+
   function init() {
     if (disposed || initialized) return;
     if (!document.documentElement || !document.body) {
@@ -218,8 +228,8 @@
       return;
     }
     initialized = true;
-    window.__pageAutomationPageConversationInstalled = true;
-    window.__pageAutomationPageConversationInitializing = false;
+    window.__pageAgentPageConversationInstalled = true;
+    window.__pageAgentPageConversationInitializing = false;
     if (openRequested) createPanel();
     publishState();
   }
@@ -235,13 +245,15 @@
     publishState();
     listeners = [];
     document.removeEventListener('DOMContentLoaded', init);
+    document.removeEventListener('visibilitychange', handleVisibilityRestore);
     window.removeEventListener('pagehide', handlePageHide);
+    window.removeEventListener('pageshow', handleVisibilityRestore);
     chrome.runtime.onMessage.removeListener(handleScreenshotVisibility);
     initialized = false;
     visibilityClient = null;
     screenshotVisibilityStates = Object.create(null);
-    window.__pageAutomationPageConversationInstalled = false;
-    window.__pageAutomationPageConversationInitializing = false;
+    window.__pageAgentPageConversationInstalled = false;
+    window.__pageAgentPageConversationInitializing = false;
   }
 
   function handlePageHide(event) {
@@ -256,13 +268,15 @@
     isOpen: isOpen,
     subscribe: subscribe,
   });
-  window.PageAutomationPageConversationEntry = api;
-  window.__pageAutomationPageConversationDestroy = destroy;
+  window.PageAgentPageConversationEntry = api;
+  window.__pageAgentPageConversationDestroy = destroy;
   chrome.runtime.onMessage.addListener(handleScreenshotVisibility);
+  document.addEventListener('visibilitychange', handleVisibilityRestore);
   window.addEventListener('pagehide', handlePageHide);
+  window.addEventListener('pageshow', handleVisibilityRestore);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
   else init();
   restoreVisibility().catch(function (error) {
-    if (window.PageAutomationRuntimeClient.isContextInvalidatedError(error)) destroy();
+    if (window.PageAgentRuntimeClient.isContextInvalidatedError(error)) destroy();
   });
 })();

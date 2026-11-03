@@ -1,4 +1,4 @@
-// Network evidence provider used only through PagePerceptionEngine/PageAutomationRuntime.
+// Network evidence provider used only through PagePerceptionEngine/PageAgentRuntime.
 (function attachPageNetworkFactProvider(root, factory) {
   'use strict';
   var api = factory(root && root.PageDataContract);

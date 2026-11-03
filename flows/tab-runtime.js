@@ -13,7 +13,7 @@
     var addLog = deps.addLog || (function () {});
     var resolveCanonicalSource = deps.resolveCanonicalSource || (function (source) { return source; });
     var matchesSourceUrlFamily = deps.matchesSourceUrlFamily || (function () { return false; });
-    var getPageAutomation = deps.getPageAutomation || (function () { return deps.pageAutomation || null; });
+    var getPageAgent = deps.getPageAgent || (function () { return deps.pageAgent || null; });
 
     function errorMessage(error) {
       return String(error && error.message || error || '');
@@ -31,8 +31,8 @@
       var shared = Object.assign({}, readSharedState(), patch || {});
       setState({ sharedState: shared });
     }
-    function getAutomationWindowId() { return Number(readSharedState().automationWindowId) || 0; }
-    function setAutomationWindowId(windowId) { updateSharedState({ automationWindowId: Number(windowId) || 0 }); }
+    function getAgentWindowId() { return Number(readSharedState().agentWindowId) || 0; }
+    function setAgentWindowId(windowId) { updateSharedState({ agentWindowId: Number(windowId) || 0 }); }
     function readTabMeta(canonical) { return (readSharedState().tabRegistryMeta || {})[canonical] || null; }
     function writeTabMeta(canonical, tabId, meta) {
       var shared = readSharedState();
@@ -86,31 +86,31 @@
         throw error;
       }) : Promise.resolve(false);
     }
-    function createAutomationTab(properties) {
+    function createAgentTab(properties) {
       var props = Object.assign({}, properties || {});
-      var windowId = getAutomationWindowId();
+      var windowId = getAgentWindowId();
       if (windowId && !props.windowId) props.windowId = windowId;
       return pageLifecycleAction(0, 'createTab', props).then(function (actionResult) {
         var tab = actionResult.derivedFacts && actionResult.derivedFacts.createdTab;
         if (!tab || !(Number(tab.id) > 0)) throw new Error('统一页面动作引擎未返回新建标签页');
-        if (!windowId && tab.windowId) setAutomationWindowId(tab.windowId);
+        if (!windowId && tab.windowId) setAgentWindowId(tab.windowId);
         addLog('已创建自动化 Tab: ' + tab.id + ' url=' + (props.url || '(empty)'), { tabId: tab.id });
         return Object.assign({}, tab, { actionReceipt: actionResult.receipt, actionResult: actionResult });
       });
     }
-    function activateTabForAutomation(tabId, focusWindow) {
+    function activateTabForAgent(tabId, focusWindow) {
       tabId = Number(tabId);
       if (!(tabId > 0)) return Promise.resolve(null);
       return pageLifecycleAction(tabId, 'activateTab', { focusWindow: focusWindow === true });
     }
-    function foregroundTabForAutomation(tabId, options) {
+    function foregroundTabForAgent(tabId, options) {
       options = options || {};
       tabId = Number(tabId);
       if (!(tabId > 0)) return Promise.resolve(tabId);
-      return activateTabForAutomation(tabId, true).then(function () { return tabId; });
+      return activateTabForAgent(tabId, true).then(function () { return tabId; });
     }
     function pageLifecycleAction(tabId, kind, input) {
-      var runtime = getPageAutomation();
+      var runtime = getPageAgent();
       if (!runtime || !runtime.action || typeof runtime.action.act !== 'function') return Promise.reject(new Error('统一页面动作引擎尚未就绪'));
       return runtime.action.act({ source: 'flow', tabId: tabId, kind: kind, input: input || {}, timeoutMs: 30000 }).then(function (result) {
         if (result.receipt.status === 'failed') {
@@ -132,11 +132,11 @@
         return options.returnDetails === true ? Object.assign({ tabId: tabId }, details || {}) : tabId;
       }
       function create() {
-        return createAutomationTab({ url: url || undefined, active: false }).then(function (tab) {
-          return activateTabForAutomation(tab.id, false).then(function (activationResult) {
+        return createAgentTab({ url: url || undefined, active: false }).then(function (tab) {
+          return activateTabForAgent(tab.id, false).then(function (activationResult) {
             registerTab(canonical, tab.id);
             if (foreground) {
-              return activateTabForAutomation(tab.id, true).then(function (focusedActivation) {
+              return activateTabForAgent(tab.id, true).then(function (focusedActivation) {
                 return output(tab.id, { created: true, reused: false, actionResult: tab.actionResult, activationResult: focusedActivation });
               });
             }
@@ -152,12 +152,12 @@
         });
       }
       return chrome.tabs.get(existing).then(function (tab) {
-        return activateTabForAutomation(existing, false).then(function (activationResult) {
+        return activateTabForAgent(existing, false).then(function (activationResult) {
           var operation = Promise.resolve();
           if (url && options.forceReopen === true && sameUrl(tab.url, url)) operation = pageLifecycleAction(existing, 'reload', {});
           else if (url && (options.forceNavigate === true || !sameUrl(tab.url, url))) operation = pageLifecycleAction(existing, 'navigate', { url: url });
           return operation.then(function (actionResult) {
-            var finalActivation = foreground ? activateTabForAutomation(existing, true) : Promise.resolve(activationResult);
+            var finalActivation = foreground ? activateTabForAgent(existing, true) : Promise.resolve(activationResult);
             return finalActivation.then(function (focusedActivation) {
               return output(existing, { created: false, reused: true, actionResult: actionResult || null, activationResult: focusedActivation });
             });
@@ -213,8 +213,8 @@
     }
 
     return {
-      getAutomationWindowId: getAutomationWindowId,
-      setAutomationWindowId: setAutomationWindowId,
+      getAgentWindowId: getAgentWindowId,
+      setAgentWindowId: setAgentWindowId,
       registerTab: registerTab,
       getTabId: getTabId,
       getSourceByTabId: getSourceByTabId,
@@ -222,8 +222,8 @@
       shouldReopenTab: shouldReopenTab,
       isTabAlive: isTabAlive,
       unregisterTab: unregisterTab,
-      createAutomationTab: createAutomationTab,
-      foregroundTabForAutomation: foregroundTabForAutomation,
+      createAgentTab: createAgentTab,
+      foregroundTabForAgent: foregroundTabForAgent,
       reuseOrCreateTab: reuseOrCreateTab,
       adoptOrGetTabId: adoptOrGetTabId,
       rememberSourceLastUrl: rememberSourceLastUrl,

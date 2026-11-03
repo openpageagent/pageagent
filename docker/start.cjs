@@ -123,12 +123,12 @@ async function main() {
   const autoSyncSetting = String(process.env.PAGE_AGENT_AUTO_SYNC_ENABLED || 'true').trim().toLowerCase();
   if (!['true', 'false'].includes(autoSyncSetting)) throw new Error('PAGE_AGENT_AUTO_SYNC_ENABLED must be true or false');
   const autoSyncEnabled = autoSyncSetting === 'true';
-  const syncVersion = String(process.env.PAGE_AGENT_SYNC_VERSION || '').trim();
-  if (syncVersion && !/^v\d{6,}$/.test(syncVersion)) throw new Error('PAGE_AGENT_SYNC_VERSION must be a backup version such as v000001');
-  const bucket = String(process.env.PAGE_AGENT_BUCKET || '').trim();
+  const syncVersion = String(process.env.PAGE_AGENT_AUTO_SYNC_VERSION || '').trim();
+  if (syncVersion && !/^v\d{6,}$/.test(syncVersion)) throw new Error('PAGE_AGENT_AUTO_SYNC_VERSION must be a backup version such as v000001');
+  const bucket = String(process.env.PAGE_AGENT_AUTO_SYNC_BUCKET || '').trim();
   if (bucket && (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(bucket)
       || ['__proto__', 'constructor', 'prototype'].includes(bucket))) {
-    throw new Error('PAGE_AGENT_BUCKET must be a bucket name of 1-80 ASCII letters, digits, underscores or hyphens, starting with a letter or digit; constructor and prototype are reserved');
+    throw new Error('PAGE_AGENT_AUTO_SYNC_BUCKET must be a bucket name of 1-80 ASCII letters, digits, underscores or hyphens, starting with a letter or digit; constructor and prototype are reserved');
   }
   const modelApiKeys = Object.create(null);
   for (const [name, key] of Object.entries(process.env)) {
@@ -147,7 +147,7 @@ async function main() {
     id: 'container-local', alias: String(process.env.PAGE_AGENT_LOCAL_CONNECTION_ALIAS || '').trim() || '容器内 MCP',
     url: 'ws://127.0.0.1:9999', ...(password ? { password } : {}),
     arpPermissions: { read: true, write: true, delete: true, execute: false },
-    bucket: bucket || 'default',
+    bucket: 'default',
     autoSync: !builtin.connections.some(item => item.autoSync === true),
     backup: true,
   };

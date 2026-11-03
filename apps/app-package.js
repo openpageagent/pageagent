@@ -40,7 +40,7 @@
     if (item.name.length > C.limits.nameLength) throw new Error('应用名称最多 ' + C.limits.nameLength + ' 个字符');
     Object.keys(item.slots).forEach(function (slot) {
       if (slot !== 'draft' && slot !== 'published') throw new Error('应用包只允许 draft 和 published 两个槽位');
-      C.validateCode(item.slots[slot], scope);
+      C.validateCode(item.slots[slot], scope, { parameterFiles: item.sourceFiles });
     });
     if (!Array.isArray(item.assets) || !Array.isArray(item.data)) throw new Error('应用资源与数据格式无效');
     if (typeof item.dataIncluded !== 'boolean' || !item.dataIncluded && item.data.length) throw new Error('应用包必须明确是否包含业务数据，未包含时 data 必须为空');
@@ -91,7 +91,10 @@
       var slug = C.slug(item.slug);
       if (slug && slugs.has(slug)) throw new Error('内置应用别名重复: ' + slug);
       if (slug) slugs.add(slug);
-      Object.values(item.slots).forEach(function (code) { C.validateExecutionDependencies(code); });
+      Object.values(item.slots).forEach(function (code) {
+        C.validateParameters(code, { parameterFiles: item.sourceFiles });
+        C.validateExecutionDependencies(code);
+      });
     });
     var resources = {};
     RESOURCE_SECTIONS.forEach(function (section) {

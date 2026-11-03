@@ -4,7 +4,7 @@
   var commonJs = typeof module === 'object' && module.exports;
   var protocol = commonJs ? require('../agent/conversation-protocol') : root.ConversationProtocol;
   var capability = commonJs ? require('../agent/capability-policy') : root.CapabilityPolicy;
-  var conversationListView = commonJs ? require('../ui/conversation-list-view') : root.PageAutomationConversationListView;
+  var conversationListView = commonJs ? require('../ui/conversation-list-view') : root.PageAgentConversationListView;
   var api = factory(root, protocol, capability, conversationListView);
   if (commonJs) module.exports = api;
   else root.ConversationCommandBus = api;
@@ -12,7 +12,7 @@
   'use strict';
 
   var API_VERSION = 1;
-  var RAW_HISTORY_SCAN_SIZE = 500;
+  var RAW_HISTORY_SCAN_SIZE = 50;
   function clone(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }
   function text(value) { return String(value === undefined || value === null ? '' : value).trim(); }
   function extensionPath(chromeApi, path) {
@@ -45,6 +45,8 @@
     else if (/\/options\/options\.html$/.test(normalizedUrl)) type = 'options';
     else if (/\/sidepanel\/sidepanel\.html$/.test(normalizedUrl)) type = 'sidepanel';
     else if (sender.tab && Number(sender.tab.id) > 0 && /^(?:https?|file):/i.test(url)) type = 'page';
+    else if (sender.tab && Number(sender.tab.id) > 0 && sender.frameId === 0
+        && root.AppContract && root.AppContract.parseUrl(url, extensionPath(chromeApi, '/'))) type = 'page';
     if (!type) throw protocolModule.error('INVALID_COMMAND', 'Untrusted Conversation command sender');
     return {
       type: type,
@@ -119,13 +121,12 @@
     var lastPage = null;
     var previousBefore = null;
     for (;;) {
-      var projectedCount = listView.mergeProjected(collected, []).length;
       var page = await queryPage(cursor, RAW_HISTORY_SCAN_SIZE);
       if (!firstPage) firstPage = page;
       lastPage = page;
       var events = page && Array.isArray(page.events) ? page.events : [];
       collected = listView.mergeJournalPages(events, collected);
-      projectedCount = listView.mergeProjected(collected, []).length;
+      var projectedCount = listView.mergeProjected(collected, []).length;
       if (projectedCount >= target || !page || !page.hasMoreBefore || !events.length) break;
       var beforeSequence = page.cursors && page.cursors.beforeSequence
         || events[0] && events[0].sequence;
@@ -170,11 +171,35 @@
       ? options.resolveSurface : function (sender) { return trustedSurfaceFromSender(sender, chromeApi); };
     var ready = options.ready ? Promise.resolve(options.ready) : Promise.resolve();
 
-    async function hydratePage(page) {
+    async function hydratePage(page, view) {
       if (!page || !Array.isArray(page.events)) return page;
       var events = [];
       for (var index = 0; index < page.events.length; index += 1) {
-        var event = clone(page.events[index]);
+        var source = page.events[index];
+        var requestDetail = /^(?:context_injected|model_request_prepared|model_request_started|provider_request_started|provider_response_completed|provider_response_failed|provider_protocol_blocks_stored)$/.test(source.type);
+        if (view !== 'full' && requestDetail) {
+          // Preserve sequence cursors without loading hidden request bodies.
+          var preview = {};
+          if (view === 'trajectory') {
+            var payload = source.payload || {};
+            ['source', 'logicalRequestId', 'purpose', 'provider', 'model', 'attempt', 'startedAt',
+              'maxRetries', 'maxAttempts', 'status', 'durationMs'].forEach(function (key) {
+              if (typeof payload[key] === 'string' || typeof payload[key] === 'number') preview[key] = payload[key];
+            });
+            if (payload.request) {
+              preview.request = {};
+              ['purpose', 'model', 'serviceId', 'maxOutputTokens', 'promptCacheKey'].forEach(function (key) {
+                if (typeof payload.request[key] === 'string' || typeof payload.request[key] === 'number') preview.request[key] = payload.request[key];
+              });
+            }
+          }
+          events.push(Object.assign({}, source, {
+            payload: preview,
+            detailDeferred: true,
+          }));
+          continue;
+        }
+        var event = clone(source);
         if (event.payloadRef && typeof journal.getPayloadBlob === 'function') {
           var blob = await journal.getPayloadBlob(event.payloadRef.payloadId, event.payloadRef.sha256);
           if (blob) event.payload = clone(blob.value);
@@ -227,9 +252,9 @@
             limit: limit, branchId: input.branchId, generationId: input.generationId,
             types: input.types, q: input.q, actorId: input.actorId,
           }));
-          return input.includePayloads ? hydratePage(result) : result;
+          return input.includePayloads ? hydratePage(result, input.view) : result;
         };
-        var page = !filtered && !forward
+        var page = !filtered && !forward && input.view !== 'trajectory'
           ? await collectVisibleEventPage(queryPage, input, conversationListView)
           : await queryPage(input.cursor, input.limit);
         page.streamBuffers = typeof journal.listStreamBuffers === 'function'
@@ -240,7 +265,52 @@
       if (command === protocolModule.COMMANDS.GET_SUMMARY) {
         var conversation = await journal.getMetadata(input.conversationId);
         if (!conversation) throw protocolModule.error('CONVERSATION_NOT_FOUND', 'Conversation does not exist', { conversationId: input.conversationId });
-        return { conversationId: input.conversationId, checkpoint: await journal.getActiveCheckpoint(input.conversationId) };
+        // Read the latest records by type: a bounded conversation page may no
+        // longer contain the request budget or the last summary attempt.
+        var summaryParts = await Promise.all([
+          journal.getActiveCheckpoint(input.conversationId),
+          journal.queryEvents(input.conversationId, { types: ['model_request_prepared'], limit: 1 }).then(function (page) {
+            return hydratePage(page, 'full');
+          }),
+          journal.queryEvents(input.conversationId, { types: ['summary_requested', 'summary_committed', 'summary_failed'], limit: 1 }).then(function (page) {
+            return hydratePage(page, 'full');
+          }),
+          journal.queryEvents(input.conversationId, { types: ['generation_started'], limit: 1 }).then(function (page) {
+            return hydratePage(page, 'full');
+          }),
+        ]);
+        var requestEvent = summaryParts[1].events[0];
+        var trace = requestEvent && requestEvent.payload && requestEvent.payload.contextTrace;
+        var summaryEvent = summaryParts[2].events[0];
+        var generationEvent = summaryParts[3].events[0];
+        var preferences = generationEvent && generationEvent.payload && generationEvent.payload.preferences;
+        var active = conversation.activeGeneration;
+        var summaryStatus = summaryParts[0] ? 'completed' : 'none';
+        if (summaryEvent && summaryEvent.type === 'summary_failed') summaryStatus = 'failed';
+        if (summaryEvent && summaryEvent.type === 'summary_requested') {
+          summaryStatus = active && active.generationId === summaryEvent.generationId
+            && ['starting', 'running', 'waiting_user', 'cancelling'].indexOf(active.state) !== -1
+            ? 'running' : 'interrupted';
+        }
+        return {
+          conversationId: input.conversationId,
+          checkpoint: summaryParts[0],
+          contextCompression: preferences ? preferences.contextCompression || 'auto' : null,
+          context: trace ? {
+            at: requestEvent.at,
+            inputTokens: trace.inputTokens,
+            inputLimit: trace.inputLimit,
+            contextWindow: trace.contextWindow,
+            highWaterRatio: trace.highWaterRatio,
+            outputReserve: trace.buckets && trace.buckets.outputReserve,
+            safetyReserve: trace.buckets && trace.buckets.safetyReserve,
+            estimated: trace.estimated !== false,
+            checkpointId: trace.checkpointId || null,
+          } : null,
+          summaryStatus: summaryStatus,
+          summaryError: summaryEvent && summaryEvent.type === 'summary_failed'
+            ? summaryEvent.payload && (summaryEvent.payload.error || summaryEvent.payload.errorCode) || '' : '',
+        };
       }
       throw protocolModule.error('INVALID_COMMAND', 'Unknown Conversation command');
     }

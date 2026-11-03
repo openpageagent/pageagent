@@ -4,7 +4,7 @@
   var extensionPage = location.protocol === 'chrome-extension:';
   var loading, editorStyles, nextModel = 0, schemas = new Map();
   var defaults = { bg: '#ffffff', 'bg-secondary': '#f9fafb', 'bg-muted': '#eaeef0', text: '#262626', 'text-secondary': '#728e9b', value: '#775351', border: '#d0dbe0', 'border-link': '#ccdadb', accent: '#004849', danger: '#ba554a', success: '#3da67a', transmitting: '#44a3cf', warn: '#cf9f5d' };
-  var style = ':host{display:block;box-sizing:border-box;width:100%;min-width:0;height:var(--code-height,220px);padding:0;border:1px solid var(--control-border,var(--border-link,#ccdadb));border-radius:var(--control-radius,4px);background:var(--bg-secondary,#f9fafb);overflow:hidden;text-align:left;white-space:normal}:host([hidden]){display:none!important}:host(:focus-within){outline:1px solid var(--accent,#004849);outline-offset:-1px}:host([disabled]){opacity:.65}.surface{height:100%;width:100%;min-width:0}.status{padding:10px 12px;color:var(--text-secondary,#728e9b);font:12px/1.5 system-ui}.status button{color:var(--accent,#004849);background:var(--bg-secondary,#f9fafb);border:1px solid var(--border,#d0dbe0);border-radius:4px;padding:4px 8px}iframe{display:block;width:100%;height:100%;border:0}';
+  var style = ':host{display:block;box-sizing:border-box;width:100%;min-width:0;height:var(--code-height,220px);padding:0;border:1px solid var(--control-border,var(--border-link,#ccdadb));border-radius:var(--control-radius,4px);background:var(--bg-secondary,#f9fafb);overflow:hidden;text-align:left;white-space:normal}:host([hidden]){display:none!important}:host(:focus-within){outline:1px solid var(--accent,#004849);outline-offset:-1px}:host([disabled]){opacity:.65}.surface{height:100%;width:100%;min-width:0}.status{padding:8px;color:var(--text-secondary,#728e9b);font:12px/1.5 system-ui}.status button{color:var(--accent,#004849);background:var(--bg-secondary,#f9fafb);border:1px solid var(--border,#d0dbe0);border-radius:4px;padding:4px 8px}iframe{display:block;width:100%;height:100%;border:0}';
   style += ':host([readonly]:not([rows]):not([data-original])){height:min(var(--code-content-height,67px),var(--code-height,220px));}';
   function loadEditorStyles() {
     if (!editorStyles) editorStyles = fetch(base + 'editor/editor.main.css').then(function (response) {
@@ -398,6 +398,8 @@
   }
   // Page content uses an extension frame so the site's CSP, globals and styles cannot own Monaco.
   function attach(container) {
+    // Extension pages use the registered custom element, which owns its shadow root and lifecycle.
+    if (extensionPage) return function () {};
     var mounted = new Map(), known = new WeakMap();
     var visibility = new IntersectionObserver(entries => entries.forEach(function (entry) {
       var state = mounted.get(entry.target); if (!state) return;

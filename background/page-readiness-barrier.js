@@ -39,7 +39,7 @@
   var COMMAND_TIMEOUT_MS = 5000;
   var MAX_ENTRIES = 2000;
   var STALE_ENTRY_MS = 300000;
-  var WORLD_NAME = 'page-automation-readiness';
+  var WORLD_NAME = 'page-agent-readiness';
   var BLOCKING_TYPES = /^(?:Document|Fetch|XHR)$/;
   var PERSISTENT_TYPES = /^(?:WebSocket|EventSource)$/;
 
@@ -85,7 +85,7 @@
       var isExtensionUi = function (node) {
         var element = node && node.nodeType === 1 ? node : (node && node.parentElement) || null;
         while (element && element.nodeType === 1) {
-          if (element.hasAttribute && element.hasAttribute('data-page-automation-ui')) return true;
+          if (element.hasAttribute && element.hasAttribute('data-page-agent-ui')) return true;
           element = element.parentElement;
         }
         return false;

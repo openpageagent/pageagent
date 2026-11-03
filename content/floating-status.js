@@ -1,35 +1,37 @@
-// Page-level floating automation status entry.
+// Page Agent floating status entry.
 (function () {
   'use strict';
 
-  if (window.__pageAutomationFloatingStatusInstalled || window.__pageAutomationFloatingStatusInitializing) return;
-  if (!window.PageAutomationRuntimeClient || typeof window.PageAutomationRuntimeClient.create !== 'function') {
+  if (window.location.protocol === 'chrome-extension:' && (window !== window.top
+      || !window.AppContract || !window.AppContract.parseUrl(window.location.href, chrome.runtime.getURL('/')))) return;
+  if (window.__pageAgentFloatingStatusInstalled || window.__pageAgentFloatingStatusInitializing) return;
+  if (!window.PageAgentRuntimeClient || typeof window.PageAgentRuntimeClient.create !== 'function') {
     throw new Error('ui/runtime-client.js must load before content/floating-status.js');
   }
-  if (!window.PageAutomationPageElementPositionController
-    || typeof window.PageAutomationPageElementPositionController.createDocked !== 'function') {
+  if (!window.PageAgentPageElementPositionController
+    || typeof window.PageAgentPageElementPositionController.createDocked !== 'function') {
     throw new Error('content/page-element-position-controller.js must load before content/floating-status.js');
   }
-  if (!window.PageAutomationSystemSettings
-    || typeof window.PageAutomationSystemSettings.load !== 'function') {
+  if (!window.PageAgentSystemSettings
+    || typeof window.PageAgentSystemSettings.load !== 'function') {
     throw new Error('SystemSettings must load before FloatingStatus');
   }
-  if (!window.PageAutomationPageConversationEntry
-    || window.PageAutomationPageConversationEntry.API_VERSION !== 1
-    || typeof window.PageAutomationPageConversationEntry.toggle !== 'function'
-    || typeof window.PageAutomationPageConversationEntry.subscribe !== 'function') {
+  if (!window.PageAgentPageConversationEntry
+    || window.PageAgentPageConversationEntry.API_VERSION !== 1
+    || typeof window.PageAgentPageConversationEntry.toggle !== 'function'
+    || typeof window.PageAgentPageConversationEntry.subscribe !== 'function') {
     throw new Error('content/page-conversation-entry.js must load before content/floating-status.js');
   }
-  var pageConversationEntry = window.PageAutomationPageConversationEntry;
-  var runtimeClient = window.PageAutomationRuntimeClient.create(chrome.runtime, {
+  var pageConversationEntry = window.PageAgentPageConversationEntry;
+  var runtimeClient = window.PageAgentRuntimeClient.create(chrome.runtime, {
     onInvalidated: destroyFloatingStatus,
   });
-  window.__pageAutomationFloatingStatusInitializing = true;
-  window.__pageAutomationFloatingStatusInstalled = false;
+  window.__pageAgentFloatingStatusInitializing = true;
+  window.__pageAgentFloatingStatusInstalled = false;
 
-  var POSITION_STORAGE_KEY = 'pageAutomationFloatingStatusPosition';
+  var POSITION_STORAGE_KEY = 'pageAgentFloatingStatusPosition';
   var POLL_INTERVAL_MS = 2000;
-  var ACTION_BUTTON_SIZE = 35;
+  var ACTION_BUTTON_SIZE = 36;
   var STACK_GAP = 8;
   var MAIN_BUTTON_WIDTH = 44;
   var MAIN_BUTTON_HEIGHT = 40;
@@ -84,9 +86,8 @@
 
   function iconChat() {
     return createSvgIcon([
-      { attrs: { d: 'M4 5h16v10H8l-4 4V5z' } },
-      { attrs: { d: 'M8 9h8' } },
-      { attrs: { d: 'M8 12h5' } },
+      { attrs: { d: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' } },
+      { attrs: { d: 'M7 7h10M7 11h6' } },
     ]);
   }
 
@@ -105,10 +106,10 @@
 
   function createHost() {
     host = document.createElement('div');
-    host.id = 'page-automation-floating-status';
-    host.setAttribute('data-page-automation-ui', 'floating-status');
+    host.id = 'page-agent-floating-status';
+    host.setAttribute('data-page-agent-ui', 'floating-status');
     host.style.position = 'fixed';
-    host.style.top = window.PageAutomationPageElementPositionController.initialTop(
+    host.style.top = window.PageAgentPageElementPositionController.initialTop(
       window,
       DEFAULT_TOP,
       DOCK_HEIGHT
@@ -133,8 +134,9 @@
       '.float-action{position:relative;width:' + ACTION_BUTTON_SIZE + 'px;height:' + ACTION_BUTTON_SIZE + 'px;border:1px solid rgba(208,219,224,.96);border-radius:50%;background:rgba(255,255,255,.98);color:#435d64;box-shadow:0 12px 28px rgba(10,33,36,.13),0 2px 7px rgba(0,0,0,.10);transition:transform .22s ease,opacity .18s ease,border-color .18s ease,background .18s ease,color .18s ease;}',
       ':host([data-side="right"]) .float-action{margin-right:4px;}',
       ':host([data-side="left"]) .float-action{margin-left:4px;}',
-      '.float-action:hover,.float-action:focus-visible{outline:none;background:#fff;border-color:#aabbc3;color:#004849;}',
-      '.float-action svg{display:block;width:20px;height:20px;}',
+      '.float-action:hover{background:#fff;border-color:#aabbc3;color:#004849;}',
+      '.float-action:focus-visible{outline:2px solid #004849;outline-offset:2px;}',
+      '.float-action svg{display:block;width:18px;height:18px;}',
       '.chat-action.active{border-color:#8ebcb5;background:#f4fbf9;color:#00645f;}',
       '.chat-open-indicator{position:absolute;right:-2px;bottom:-2px;display:inline-flex;width:13px;height:13px;align-items:center;justify-content:center;border:1.5px solid #fff;border-radius:50%;background:#29a565;color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18);}',
       '.chat-open-indicator[hidden]{display:none;}',
@@ -229,7 +231,7 @@
     shadow.appendChild(style);
     shadow.appendChild(stack);
     document.documentElement.appendChild(host);
-    positionController = window.PageAutomationPageElementPositionController.createDocked({
+    positionController = window.PageAgentPageElementPositionController.createDocked({
       window: window,
       document: document,
       storage: chrome.storage && chrome.storage.local,
@@ -347,8 +349,7 @@
       return;
     }
     stopPolling();
-    // 系统开关关闭是全局禁用，不是用户对这个站点说"以后别开"——
-    // 保留每站点的打开偏好，重新启用后面板按原偏好恢复。
+    // 系统开关禁用入口时保留对话显示偏好，重新加载页面时按原偏好恢复。
     if (pageConversationEntry) pageConversationEntry.close({ preservePreference: true });
     if (host) {
       host.hidden = true;
@@ -358,10 +359,10 @@
 
   function handleSystemSettingsChange(changes, area) {
     if (area !== 'local' || !changes
-        || !changes[window.PageAutomationSystemSettings.SETTINGS_KEY]) return;
+        || !changes[window.PageAgentSystemSettings.SETTINGS_KEY]) return;
     systemSettingsRevision += 1;
-    applySystemSettings(window.PageAutomationSystemSettings.normalize(
-      changes[window.PageAutomationSystemSettings.SETTINGS_KEY].newValue
+    applySystemSettings(window.PageAgentSystemSettings.normalize(
+      changes[window.PageAgentSystemSettings.SETTINGS_KEY].newValue
     ));
   }
 
@@ -375,7 +376,7 @@
     } catch (error) {
       return Promise.reject(error);
     }
-    return window.PageAutomationSystemSettings.load(storage, runtime)
+    return window.PageAgentSystemSettings.load(storage, runtime)
       .then(function (settings) {
         if (revision === systemSettingsRevision) applySystemSettings(settings);
       });
@@ -403,8 +404,8 @@
       if (floatingEntryEnabled) ensureHost();
       document.addEventListener('visibilitychange', syncPolling);
       initialized = true;
-      window.__pageAutomationFloatingStatusInstalled = true;
-      window.__pageAutomationFloatingStatusInitializing = false;
+      window.__pageAgentFloatingStatusInstalled = true;
+      window.__pageAgentFloatingStatusInitializing = false;
     } catch (error) {
       destroyFloatingStatus();
       throw error;
@@ -462,27 +463,27 @@
     initialized = false;
     runtimeClient = null;
     pageConversationEntry = null;
-    window.__pageAutomationFloatingStatusInstalled = false;
-    window.__pageAutomationFloatingStatusInitializing = false;
-    if (window.__pageAutomationFloatingStatusDestroy === destroyFloatingStatus) {
-      try { delete window.__pageAutomationFloatingStatusDestroy; } catch (_) {
-        window.__pageAutomationFloatingStatusDestroy = null;
+    window.__pageAgentFloatingStatusInstalled = false;
+    window.__pageAgentFloatingStatusInitializing = false;
+    if (window.__pageAgentFloatingStatusDestroy === destroyFloatingStatus) {
+      try { delete window.__pageAgentFloatingStatusDestroy; } catch (_) {
+        window.__pageAgentFloatingStatusDestroy = null;
       }
     }
   }
 
-  window.__pageAutomationFloatingStatusDestroy = destroyFloatingStatus;
+  window.__pageAgentFloatingStatusDestroy = destroyFloatingStatus;
   window.addEventListener('pagehide', handlePageHide);
   window.addEventListener('pageshow', handlePageShow);
   if (chrome.storage && chrome.storage.onChanged) {
     chrome.storage.onChanged.addListener(handleSystemSettingsChange);
   }
   loadSystemSettings().catch(function (error) {
-    if (window.PageAutomationRuntimeClient.isContextInvalidatedError(error)) {
+    if (window.PageAgentRuntimeClient.isContextInvalidatedError(error)) {
       destroyFloatingStatus();
       return;
     }
-    applySystemSettings(window.PageAutomationSystemSettings.DEFAULTS);
+    applySystemSettings(window.PageAgentSystemSettings.DEFAULTS);
   });
 
   if (document.readyState === 'loading') {

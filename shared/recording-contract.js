@@ -2,13 +2,13 @@
   'use strict';
   var api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  if (root) root.PageAutomationRecordingContract = api;
+  if (root) root.PageAgentRecordingContract = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
   var API_VERSION = 1;
   var SCHEMA_VERSION = 1;
-  var CONSENT_VERSION = 'conversation-recording-consent-v2';
+  var CONSENT_VERSION = 'conversation-recording-consent-v3';
   var LIMITS = Object.freeze({
     MAX_DURATION_MS: 60 * 60 * 1000,
     MAX_CANDIDATE_EVENTS: 2000,
@@ -167,6 +167,16 @@
     if (/^(?:parent|prevSibling|nextSibling)$/.test(text(value.relative))) output.relative = text(value.relative);
     return Object.keys(output).length ? output : null;
   }
+  function normalizeNetworkCapture(value) {
+    if (value === undefined) value = {};
+    assertExactKeys(value, { http: true, websocket: true, sse: true }, 'networkCapture');
+    var output = {};
+    ['http', 'websocket', 'sse'].forEach(function (key) {
+      if (value[key] !== undefined && typeof value[key] !== 'boolean') throw contractError('INVALID_REQUEST', 'networkCapture.' + key + ' must be boolean');
+      output[key] = value[key] === true;
+    });
+    return output;
+  }
   function normalizeRawEvent(value) {
     assertExactKeys(value, { localEventId: true, occurredAt: true, kind: true, payload: true }, 'recording event');
     var localEventId = trimmed(value.localEventId, 180);
@@ -216,7 +226,7 @@
     stableStringify: stableStringify, error: contractError, assertExactKeys: assertExactKeys,
     canonicalRecordingUri: canonicalRecordingUri, recordingIdFromUri: recordingIdFromUri,
     normalizeSha256: normalizeSha256, normalizeRange: normalizeRange, normalizeRanges: normalizeRanges,
-    normalizeLocator: normalizeLocator, normalizeRawEvent: normalizeRawEvent,
+    normalizeLocator: normalizeLocator, normalizeRawEvent: normalizeRawEvent, normalizeNetworkCapture: normalizeNetworkCapture,
     normalizeSelectionDescriptor: normalizeSelectionDescriptor, inRanges: inRanges,
   });
 });

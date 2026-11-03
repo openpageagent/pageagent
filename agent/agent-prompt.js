@@ -8,7 +8,7 @@
   'use strict';
 
   var API_VERSION = 5;
-  var PROMPT_VERSION = 'page-agent-system-core-v75';
+  var PROMPT_VERSION = 'page-agent-system-core-v77';
   var responseLanguage = '中文';
   // The System Core contains only stable identity, authority, execution, and completion rules.
   // Active route contracts and runtime facts are composed per Provider request.
@@ -37,6 +37,11 @@
     var guidelines = [];
     if (input && input.surface && input.surface.assistantInvocationKind === 'runAssistant') {
       guidelines.push(NESTED_ASSISTANT_BOUNDARY);
+    }
+    if (input && input.applicationContext && input.applicationContext.page) {
+      guidelines.push('在 Page Agent 应用页面处理开发请求时，以 runtime_context.application.value.appId 为编辑目标，优先使用应用 ARP，并遵循当前生效的资源契约。'
+        + 'runtime_context.application.value.page 描述正在查看的应用与版本，可能与编辑目标不同。'
+        + '界面问题按需结合源码、页面 DOM 或截图定位；页面临时修改不能代替应用源码保存。');
     }
     if (input && (input.hasAssistantInstructions || input.hasSelectedSkills)) guidelines.push(ASSISTANT_PROFILE_GUIDANCE);
     return guidelines;
@@ -179,7 +184,11 @@
       context.representation = dataOnly('resource-representation', input.representation);
     }
     if (input.recovery) context.recovery = clone(input.recovery);
-    if (input.applicationContext) context.application = dataOnly('current-application-permissions', input.applicationContext);
+    if (input.applicationContext) {
+      var applicationFacts = Object.assign({}, input.applicationContext);
+      delete applicationFacts.guidance;
+      context.application = dataOnly('current-application-permissions', applicationFacts);
+    }
     if (input.remainingBudgets) context.remainingBudgets = clone(input.remainingBudgets);
     if (input.recordingContext && Array.isArray(input.recordingContext.recordings)
         && input.recordingContext.recordings.length) {

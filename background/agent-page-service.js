@@ -95,16 +95,16 @@
     options = options || {};
     var chromeApi = options.chrome || root && root.chrome;
     var cdpSessionManager = options.cdpSessionManager;
-    var pageAutomation = options.pageAutomation;
+    var pageAgent = options.pageAgent;
     var imageArtifactStore = options.imageArtifactStore;
     var fetchImpl = options.fetch || root && root.fetch && root.fetch.bind(root);
     if (!chromeApi || !chromeApi.tabs || typeof chromeApi.tabs.get !== 'function') throw new Error('AgentPageService requires chrome.tabs.get');
     if (!cdpSessionManager || typeof cdpSessionManager.retainOwnerLease !== 'function') {
       throw new Error('AgentPageService requires CdpSessionManager.retainOwnerLease');
     }
-    if (!pageAutomation || !pageAutomation.perception || !pageAutomation.action || !pageAutomation.verification
-        || typeof pageAutomation.evaluateReadCommand !== 'function' || typeof pageAutomation.executeCommand !== 'function') {
-      throw new Error('AgentPageService requires the unified pageAutomation runtime');
+    if (!pageAgent || !pageAgent.perception || !pageAgent.action || !pageAgent.verification
+        || typeof pageAgent.evaluateReadCommand !== 'function' || typeof pageAgent.executeCommand !== 'function') {
+      throw new Error('AgentPageService requires the unified pageAgent runtime');
     }
     if (!imageArtifactStore || typeof imageArtifactStore.put !== 'function') throw new Error('AgentPageService requires imageArtifactStore.put');
     if (typeof fetchImpl !== 'function') throw new Error('AgentPageService requires fetch');
@@ -226,7 +226,7 @@
     function cleanupOwner(owner) {
       owner = String(owner || '');
       if (!owner) return Promise.resolve(0);
-      return pageAutomation.action.cleanupOwner(owner, { detachImmediately: true });
+      return pageAgent.action.cleanupOwner(owner, { detachImmediately: true });
     }
 
     function normalizeError(error) {
@@ -312,7 +312,7 @@
       var signal = context && context.abortSignal || null;
       return retainGenerationLease(context, tabId, timing).then(function () {
         startOperationTiming(timing);
-        return abortable(pageAutomation.perception.observe(tabId, Object.assign({}, projection || {}, {
+        return abortable(pageAgent.perception.observe(tabId, Object.assign({}, projection || {}, {
           timeoutMs: remainingOperationMs(timing),
           signal: signal,
         })), context && context.abortSignal);
@@ -337,7 +337,7 @@
       var signal = context && context.abortSignal || null;
       return retainGenerationLease(context, tabId, timing).then(function () {
         startOperationTiming(timing);
-        return abortable(pageAutomation.perception.perceive({
+        return abortable(pageAgent.perception.perceive({
         tabId: tabId,
         kind: 'getElement',
         locator: locator || {},
@@ -402,12 +402,12 @@
         var before;
         var media;
         var captureProjection = Object.assign({}, projection, { timeoutMs: remainingOperationMs(timing), signal: signal });
-        return abortable(pageAutomation.perception.capture(tabId, captureProjection), context && context.abortSignal).then(function (snapshot) {
+        return abortable(pageAgent.perception.capture(tabId, captureProjection), context && context.abortSignal).then(function (snapshot) {
           before = snapshot;
-          return abortable(pageAutomation.perception.perceive(Object.assign({}, captureProjection, { tabId: tabId, kind: 'media', signal: signal })), signal);
+          return abortable(pageAgent.perception.perceive(Object.assign({}, captureProjection, { tabId: tabId, kind: 'media', signal: signal })), signal);
         }).then(function (result) {
           media = result;
-          return abortable(pageAutomation.perception.capture(tabId, captureProjection), context && context.abortSignal);
+          return abortable(pageAgent.perception.capture(tabId, captureProjection), context && context.abortSignal);
         }).then(function (after) {
           if (before.documentId === after.documentId) return { snapshot: after, media: media };
           if (attempt < 1) return capturePairedEvidence(attempt + 1);
@@ -659,7 +659,7 @@
       if (timing && remaining < 100) {
         throw new PageServiceError('ACTION_TIMEOUT', '页面动作的可选视觉证据已超过统一时限', { performed: 'yes' });
       }
-      var capture = await pageAutomation.perception.captureScreenshot(tabId, {
+      var capture = await pageAgent.perception.captureScreenshot(tabId, {
         targetRef: descriptor && descriptor.targetRef || null,
         selector: descriptor && !descriptor.targetRef ? descriptor.selector || '' : '',
         frameId: descriptor && descriptor.frameId || '',
@@ -685,7 +685,7 @@
       var sourceUrl = String(descriptor.currentSrc || '');
       if (!sourceUrl) throw new PageServiceError('MEDIA_SOURCE_UNREADABLE', 'This media element has no readable original source URL');
       if (/^https?:/i.test(sourceUrl)) {
-        var cached = await pageAutomation.perception.perceive({
+        var cached = await pageAgent.perception.perceive({
           tabId: tabId, kind: 'resourceCacheRead', url: sourceUrl,
           maxBytes: MAX_MEDIA_BYTES, maxTotalBytes: MAX_MEDIA_BYTES, timeoutMs: timing ? remainingOperationMs(timing) : 30000,
           signal: signal || null,
@@ -702,7 +702,7 @@
       try {
         var init = { credentials: 'include', cache: 'force-cache', signal: signal || undefined };
         response = await abortable(/^https?:/i.test(sourceUrl)
-          ? root.PageAutomationUserAgent.fetchSystem(sourceUrl, init, fetchImpl) : fetchImpl(sourceUrl, init), signal);
+          ? root.PageAgentUserAgent.fetchSystem(sourceUrl, init, fetchImpl) : fetchImpl(sourceUrl, init), signal);
       } catch (error) {
         if (signal && signal.aborted) throw cancelledError();
         throw new PageServiceError('MEDIA_SOURCE_UNREADABLE', 'The original media source could not be read by the extension background context');
@@ -909,7 +909,7 @@
           // operation. Its timeout starts when the real command begins, not
           // while it is waiting for the queue.
           input.timeoutMs = timing.timeoutMs;
-          return abortable(pageAutomation.executeCommand('waitForCondition', Object.assign({}, input, {
+          return abortable(pageAgent.executeCommand('waitForCondition', Object.assign({}, input, {
             tabId: tabId,
             locator: waitLocator || {},
           }), {
@@ -970,7 +970,7 @@
         // Start the service timer from the shared action engine's ready point;
         // queue wait and CDP attachment are transport preparation.
         input.timeoutMs = timing.timeoutMs;
-        return pageAutomation.action.act({
+        return pageAgent.action.act({
         source: 'agent', owner: actionOwner(context), tabId: tabId, kind: actionKind,
         targetRef: null,
         locator: locator,
@@ -1032,7 +1032,7 @@
       catch (error) { return Promise.reject(normalizeError(error)); }
       if (String(payload.mode || 'read').toLowerCase() === 'read') {
         return retainGenerationLease(context, tabId).then(function () {
-          return abortable(pageAutomation.evaluateReadCommand({
+          return abortable(pageAgent.evaluateReadCommand({
             tabId: tabId,
             code: String(payload.source || ''),
             sourceType: 'body',
@@ -1061,7 +1061,7 @@
           }, windowed), payload, context) };
         }).catch(function (error) { throw normalizeError(error, 'no'); });
       }
-      return retainGenerationLease(context, tabId).then(function () { return pageAutomation.action.act({
+      return retainGenerationLease(context, tabId).then(function () { return pageAgent.action.act({
         source: 'agent', owner: actionOwner(context), tabId: tabId, kind: 'evaluate',
         input: { code: String(payload.source || ''), sourceType: 'body', world: payload.world || 'MAIN', mode: 'write' },
         timeoutMs: payload.timeoutMs,
@@ -1093,7 +1093,7 @@
       health: function (context) {
         var tabId = resolveContextTabId(context);
         return retainGenerationLease(context, tabId).then(function () {
-          return abortable(pageAutomation.perception.capture(tabId, { signal: context && context.abortSignal || null }), context && context.abortSignal);
+          return abortable(pageAgent.perception.capture(tabId, { signal: context && context.abortSignal || null }), context && context.abortSignal);
         }).then(function (snapshot) { return { ok: true, implementationVersion: PAGE_RUNTIME_IMPLEMENTATION_VERSION, documentId: snapshot.documentId }; });
       },
       beginToolBatch: function (context) {

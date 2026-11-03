@@ -1,10 +1,10 @@
 // Read-only Page entry configuration. All execution mutations use ConversationCommandBus.
 (function attachPageConversationWiring(root, factory) {
   'use strict';
-  var api = factory();
+  var api = factory(root);
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.PageConversationWiring = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
   var API_VERSION = 1;
@@ -15,7 +15,10 @@
   function hasOwn(value, key) { return !!(value && Object.prototype.hasOwnProperty.call(value, key)); }
   function trustedPage(sender) {
     var url = text(sender && (sender.url || sender.tab && sender.tab.url));
-    return !!(sender && sender.tab && Number(sender.tab.id) > 0 && /^(?:https?|file):/i.test(url));
+    if (!sender || !sender.tab || !(Number(sender.tab.id) > 0)) return false;
+    if (/^(?:https?|file):/i.test(url)) return true;
+    return !!(root.chrome && sender.id === root.chrome.runtime.id && sender.frameId === 0
+      && root.AppContract && root.AppContract.parseUrl(url, root.chrome.runtime.getURL('/')));
   }
 
   function create(deps) {
@@ -79,6 +82,7 @@
         loadConversationState(),
         getModelSettings(),
         activePageConversation(sender).catch(function () { return null; }),
+        typeof deps.getApplicationConversations === 'function' ? deps.getApplicationConversations(sender) : [],
       ]);
       var state = values[0];
       var settings = values[1];
@@ -103,6 +107,7 @@
         windowId: Number(sender.tab && sender.tab.windowId) || 0,
         activeConversation: activeConversation,
         activeConversationId: text(activeConversation && activeConversation.conversationId),
+        applicationConversations: values[3],
       };
     }
 

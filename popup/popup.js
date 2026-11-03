@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  var client = window.PageAutomationResourceClient.create(chrome.runtime);
+  var client = window.PageAgentResourceClient.create(chrome.runtime);
   var recentLimit = window.AppContract.limits.recentApps;
   var list = document.getElementById('recent-apps');
   var recentContent = document.getElementById('recent-content');
@@ -37,7 +37,7 @@
     recentContent.setAttribute('aria-busy', 'true');
     status.textContent = '正在加载…'; status.classList.remove('error'); status.hidden = false;
     retry.hidden = true;
-    var settingsContract = window.PageAutomationSystemSettings;
+    var settingsContract = window.PageAgentSystemSettings;
     var layoutKey = 'app_launcher_' + (chrome.extension.inIncognitoContext ? 'incognito' : 'regular');
     var stored = await chrome.storage.local.get([settingsContract.SETTINGS_KEY, layoutKey]);
     var favoritesOnly = settingsContract.normalize(stored[settingsContract.SETTINGS_KEY]).popupAppsFavoritesOnly;

@@ -89,7 +89,7 @@ class Archive {
     const bucket = this.bucket(bucketId);
     if (!context.sourceIdentity) return bucket;
     const client = this.state.clients[context.sourceIdentity.clientId];
-    if (!client || client.bucketId !== bucket.id) fail('当前客户端未选择此备份桶', 'FORBIDDEN');
+    if (!client || ![client.bucketId, client.syncBucketId].includes(bucket.id)) fail('当前客户端未选择此备份或同步桶', 'FORBIDDEN');
     return bucket;
   }
   publicBucket(bucket) {
@@ -100,7 +100,7 @@ class Archive {
     if (context.sourceIdentity) await this.connected(context.sourceIdentity.clientId, false);
     const clientId = context.sourceIdentity && context.sourceIdentity.clientId;
     const client = clientId && this.state.clients[clientId];
-    return { buckets: Object.values(this.state.buckets).filter(bucket => !clientId || client && client.bucketId === bucket.id).map(bucket => this.publicBucket(bucket)),
+    return { buckets: Object.values(this.state.buckets).filter(bucket => !clientId || client && [client.bucketId, client.syncBucketId].includes(bucket.id)).map(bucket => this.publicBucket(bucket)),
       clients: Object.values(this.state.clients).filter(item => !clientId || item.id === clientId),
       operations: Object.values(this.state.operations).filter(item => !clientId || item.clientId === clientId)
         .sort((a, b) => Number(b.clientId === clientId) - Number(a.clientId === clientId) || b.createdAt - a.createdAt).slice(0, 50) };
@@ -171,8 +171,10 @@ class Archive {
     return deployment.compatibility && deployment.compatibility.compatible === true
       && !contract.configurationCompatibility({ ...contract.CONFIGURATION, version: SERVER_VERSION }, deployment.protocol);
   }
-  canApply(deployment, operationId, versionId) {
+  canApply(deployment, operationId, versionId, bucketId) {
+    const source = deployment.syncBinding;
     return this.compatible(deployment) && (deployment.autoSync && deployment.autoSyncEnabled && !!deployment.syncVersion
+      && !!source && (!bucketId || source.bucketId === bucketId)
       && (!versionId || versionId === deployment.syncVersion)
       || !!operationId && deployment.manualOperationId === operationId);
   }
@@ -193,31 +195,36 @@ class Archive {
         }
       }
       if (!deployment || !deployment.enabled || !deployment.binding || this.closed) return;
-      if (!this.compatible(deployment)) return;
+      if (!this.compatible(deployment)) {
+        if (resume) console.error('Archive synchronization unavailable: ' + JSON.stringify({ clientId,
+          reason: deployment.compatibility && deployment.compatibility.reason || 'VERSION_INCOMPATIBLE' }));
+        return;
+      }
       const bucketId = id(deployment.binding.bucketId); contract.id(deployment.bootId);
+      const syncBucketId = deployment.syncBinding ? id(deployment.syncBinding.bucketId) : null;
       const record = this.server.resolveExtensionClient({ clientId });
       if (!Object.hasOwn(this.state.buckets, bucketId)) {
         try { await this.createBucket({ id: bucketId }, {}); }
         catch (error) { if (error.code !== 'RESOURCE_CONFLICT' || !Object.hasOwn(this.state.buckets, bucketId)) throw error; }
       }
       const previous = this.state.clients[clientId];
-      let pending = Object.values(this.state.operations).find(item => item.clientId === clientId && item.bucketId === bucketId
-        && item.status === 'interrupted' && (item.kind === 'apply' ? this.canApply(deployment, item.id, item.versionId) : item.reason !== 'scheduled' || deployment.backupEnabled));
+      let pending = Object.values(this.state.operations).find(item => item.clientId === clientId && [bucketId, syncBucketId].includes(item.bucketId)
+        && item.status === 'interrupted' && (item.kind === 'apply' ? this.canApply(deployment, item.id, item.versionId, item.bucketId) : item.reason !== 'scheduled' || deployment.backupEnabled));
       if (deployment.recoveryPending && deployment.operation) {
         const recovery = this.state.operations[deployment.operation.id];
-        if (!recovery || recovery.clientId !== clientId || recovery.bucketId !== bucketId || recovery.kind !== 'apply') fail('找不到待恢复的配置操作: ' + deployment.operation.id);
+        if (!recovery || recovery.clientId !== clientId || ![bucketId, syncBucketId].includes(recovery.bucketId) || recovery.kind !== 'apply') fail('找不到待恢复的配置操作: ' + deployment.operation.id);
         pending = recovery;
       }
       await this.mutate(state => {
         const current = state.clients[clientId];
         const sameBucket = current && current.bucketId === bucketId ? current : undefined;
-        state.clients[clientId] = { ...sameBucket, id: clientId, bucketId,
+        state.clients[clientId] = { ...sameBucket, id: clientId, bucketId, syncBucketId,
           autoSync: deployment.autoSync === true, backupEnabled: deployment.backupEnabled === true,
           ...this.policy(deployment.binding, sameBucket),
           name: record.clientInfo.clientName, bootId: deployment.bootId };
       });
       if (pending) {
-        if (resume && (pending.kind !== 'apply' || this.canApply(deployment, pending.id, pending.versionId))) this.launch(pending.id);
+        if (resume && (pending.kind !== 'apply' || this.canApply(deployment, pending.id, pending.versionId, pending.bucketId))) this.launch(pending.id);
         return;
       }
       // Reading status registers the client without starting a synchronization.
@@ -236,29 +243,35 @@ class Archive {
     this.server.resolveExtensionClient({ clientId });
     if (!['backup', 'apply'].includes(body.kind)) fail('无效的配置操作', 'INVALID_REQUEST');
     const deployment = await this.rpc(clientId, 'GET', '/config/deployment');
-    const bucketId = deployment.binding && deployment.binding.bucketId;
-    if (!deployment.enabled || !bucketId) fail('此连接尚未配置同步和备份', 'FORBIDDEN');
+    const backupBucketId = deployment.binding && deployment.binding.bucketId;
+    if (!deployment.enabled || !backupBucketId) fail('此连接尚未配置同步和备份', 'FORBIDDEN');
+    const bucketId = body.kind === 'apply' && body.reason === 'startup' ? deployment.syncBinding && deployment.syncBinding.bucketId : backupBucketId;
+    id(bucketId);
     if (!this.compatible(deployment)) fail('Sync protocol or application version is incompatible', 'VERSION_INCOMPATIBLE');
     const versionId = body.versionId || deployment.syncVersion;
     if (body.kind === 'apply') id(versionId);
-    if (body.kind === 'apply' && !this.canApply(deployment, body.operationId, versionId)) fail('此连接未获得指定版本的同步授权', 'FORBIDDEN');
+    if (body.kind === 'apply' && !this.canApply(deployment, body.operationId, versionId, bucketId)) fail('此连接未获得指定版本的同步授权', 'FORBIDDEN');
     if (body.reason === 'scheduled' && !deployment.backupEnabled) fail('此连接未开启自动备份', 'FORBIDDEN');
     if (body.operationId !== undefined) contract.id(body.operationId);
     if (deployment.recoveryPending) fail('上次配置应用未完成，请重试原操作: ' + (deployment.operation && deployment.operation.id || ''), 'RESOURCE_BUSY');
-    this.bucket(bucketId);
+    this.bucket(backupBucketId);
     const operation = await this.mutate(state => {
-      const bucket = state.buckets[bucketId];
-      if (Object.values(state.operations).some(item => item.clientId === clientId && item.bucketId === bucketId
+      if (Object.values(state.operations).some(item => item.clientId === clientId
           && ['pending', 'running', 'interrupted'].includes(item.status))) fail('此客户端已有配置操作，请等待或恢复该操作', 'RESOURCE_BUSY');
       const previous = state.clients[clientId];
-      const sameBucket = previous && previous.bucketId === bucketId ? previous : undefined;
-      state.clients[clientId] = { ...sameBucket, id: clientId, bucketId,
+      const sameBucket = previous && previous.bucketId === backupBucketId ? previous : undefined;
+      state.clients[clientId] = { ...sameBucket, id: clientId, bucketId: backupBucketId,
+        syncBucketId: deployment.syncBinding && deployment.syncBinding.bucketId || null,
         autoSync: deployment.autoSync, backupEnabled: deployment.backupEnabled, bootId: deployment.bootId,
         ...this.policy(deployment.binding, sameBucket) };
-      const operation = { id: body.operationId || randomUUID(), kind: body.kind, reason: body.reason || 'manual', clientId, bucketId: bucket.id,
+      // Retry the same failed startup target without growing the index on every restart.
+      const failedStartup = body.reason === 'startup' && Object.values(state.operations).find(item => item.clientId === clientId
+        && item.bucketId === bucketId && item.versionId === versionId && item.kind === 'apply' && item.reason === 'startup' && item.status === 'failed');
+      const operation = { id: body.operationId || failedStartup && failedStartup.id || randomUUID(), kind: body.kind, reason: body.reason || 'manual', clientId, bucketId,
+        ...(body.kind === 'apply' ? { backupBucketId } : {}),
         versionId: body.kind === 'apply' ? versionId : null, bootId: deployment.bootId, status: 'pending', createdAt: Date.now(),
         initiator: initiator(context) };
-      if (state.operations[operation.id]) fail('操作 ID 已存在', 'RESOURCE_CONFLICT');
+      if (state.operations[operation.id] && (!failedStartup || operation.id !== failedStartup.id)) fail('操作 ID 已存在', 'RESOURCE_CONFLICT');
       state.operations[operation.id] = operation;
       if (body.kind === 'backup') state.clients[clientId].lastBackupAttemptAt = operation.createdAt;
       const finished = Object.values(state.operations).filter(item => ['complete', 'failed'].includes(item.status)).sort((a, b) => b.createdAt - a.createdAt);
@@ -288,7 +301,7 @@ class Archive {
     this.server.resolveExtensionClient({ clientId: operation.clientId });
     await this.authorizeOperation({ ...operation, reason: 'manual' });
     await this.mutate(state => {
-      if (Object.values(state.operations).some(item => item.clientId === operation.clientId && item.bucketId === operation.bucketId && item.id !== operationId
+      if (Object.values(state.operations).some(item => item.clientId === operation.clientId && item.id !== operationId
           && ['pending', 'running', 'interrupted'].includes(item.status))) fail('此客户端已有配置操作', 'RESOURCE_BUSY');
       state.operations[operationId].status = 'pending';
       state.operations[operationId].reason = 'manual';
@@ -302,21 +315,22 @@ class Archive {
     const checksum = digest(captured.backup);
     if (checksum !== captured.fingerprint) fail('备份校验失败');
     if (Buffer.byteLength(JSON.stringify(captured.backup)) > 1024 * 1024) fail('备份超过 1 MiB', 'PAYLOAD_TOO_LARGE');
-    const bucket = this.bucket(operation.bucketId);
+    const bucketId = operation.backupBucketId || operation.bucketId;
+    const bucket = this.bucket(bucketId);
     const previous = [...bucket.versions].reverse().find(item => item.sourceClientId === operation.clientId && item.checksum === checksum);
     if (previous) {
       await this.mutate(state => { if (state.clients[operation.clientId]) state.clients[operation.clientId].lastBackupAt = Date.now(); });
       return { versionId: previous.id, fingerprint: checksum };
     }
     const versionId = await this.mutate(state => {
-      const bucket = state.buckets[operation.bucketId];
+      const bucket = state.buckets[bucketId];
       return 'v' + String(bucket.nextVersion++).padStart(6, '0');
     });
-    const directory = path.join(this.directory, operation.bucketId);
+    const directory = path.join(this.directory, bucketId);
     await fs.mkdir(directory, { recursive: true, mode: 0o700 });
     await atomicJson(path.join(directory, versionId + '.json'), captured.backup);
     await this.mutate(state => {
-      state.buckets[operation.bucketId].versions.push({ id: versionId, sourceClientId: operation.clientId, createdAt: Date.now(), checksum,
+      state.buckets[bucketId].versions.push({ id: versionId, sourceClientId: operation.clientId, createdAt: Date.now(), checksum,
         reason, syncable: false, formatVersion: 7, extensionVersion: captured.backup.extensionVersion });
       if (state.clients[operation.clientId]) state.clients[operation.clientId].lastBackupAt = Date.now();
     });
@@ -330,8 +344,10 @@ class Archive {
   }
   async authorizeOperation(operation) {
     const deployment = await this.rpc(operation.clientId, 'GET', '/config/deployment');
-    if (!deployment.enabled || !this.compatible(deployment) || !deployment.binding || deployment.binding.bucketId !== operation.bucketId
-        || (operation.kind === 'apply' ? !this.canApply(deployment, operation.id, operation.versionId) : operation.reason === 'scheduled' && !deployment.backupEnabled)) {
+    const buckets = [deployment.binding && deployment.binding.bucketId, deployment.syncBinding && deployment.syncBinding.bucketId];
+    if (!deployment.enabled || !this.compatible(deployment) || !deployment.binding
+        || (operation.kind === 'apply' ? !buckets.includes(operation.bucketId) || !this.canApply(deployment, operation.id, operation.versionId, operation.bucketId)
+          : deployment.binding.bucketId !== operation.bucketId || operation.reason === 'scheduled' && !deployment.backupEnabled)) {
       fail('同步源或备份目标已变更，此操作不再允许执行', 'FORBIDDEN');
     }
     if (operation.kind === 'apply' && !this.bucket(operation.bucketId).versions.some(item => item.id === operation.versionId && item.syncable)) {
@@ -348,25 +364,36 @@ class Archive {
     await this.mutate(state => {
       state.operations[operationId].status = 'running';
       delete state.operations[operationId].error; delete state.operations[operationId].errorCode; delete state.operations[operationId].completedAt;
+      delete state.operations[operationId].warnings;
       delete state.operations[operationId].audit;
     });
+    console.log('Archive operation: ' + JSON.stringify({ status: 'running', operationId, kind: operation.kind,
+      reason: operation.reason, clientId: operation.clientId, bucketId: operation.bucketId, versionId: operation.versionId }));
     try {
-      await this.authorizeOperation(operation);
+      const deployment = await this.authorizeOperation(operation);
+      operation.bootId = deployment.bootId;
+      await this.mutate(state => { state.operations[operationId].bootId = operation.bootId; });
       const target = operation.kind === 'apply' ? await this.version(operation.bucketId, operation.versionId) : null;
       auditContext.parameters.targetPairingId = this.server.resolveExtensionClient({ clientId: operation.clientId }).identity.pairingId;
       if (target) auditContext.parameters.sourceClientId = target.metadata.sourceClientId;
       await this.server.audit.write('execution.intent', auditContext);
       startedAt = new Date().toISOString();
-      if (!operation.backupVersionId) {
+      if (!operation.backupVersionId || operation.kind === 'apply' && !deployment.recoveryPending) {
+        if (operation.kind === 'apply') operation.backupBucketId = deployment.binding.bucketId;
         const backup = await this.backup(operation, operation.kind === 'apply' ? 'before-apply' : operation.reason);
         operation.backupVersionId = backup.versionId; operation.expectedFingerprint = backup.fingerprint;
-        await this.mutate(state => { Object.assign(state.operations[operationId], { backupVersionId: backup.versionId, expectedFingerprint: backup.fingerprint }); });
+        await this.mutate(state => { Object.assign(state.operations[operationId], { backupVersionId: backup.versionId, expectedFingerprint: backup.fingerprint,
+          ...(operation.backupBucketId ? { backupBucketId: operation.backupBucketId } : {}) }); });
       }
       if (target) {
-        await this.rpc(operation.clientId, 'POST', '/config/restorations', {
+        const result = await this.rpc(operation.clientId, 'POST', '/config/restorations', {
           operationId, versionId: operation.versionId, bucketId: operation.bucketId,
           expectedFingerprint: operation.expectedFingerprint, backup: target.backup, bootId: operation.bootId,
         }, operationId);
+        if (result.operation && result.operation.warnings && result.operation.warnings.length) {
+          await this.mutate(state => { state.operations[operationId].warnings = result.operation.warnings; });
+          console.warn('Archive operation warnings: ' + JSON.stringify({ operationId, clientId: operation.clientId, bucketId: operation.bucketId, warnings: result.operation.warnings }));
+        }
       }
       await this.mutate(state => {
         Object.assign(state.operations[operationId], { status: 'complete', completedAt: Date.now() });
@@ -379,6 +406,8 @@ class Archive {
       await this.mutate(state => {
         Object.assign(state.operations[operationId], { status, error: error.message, errorCode, completedAt: Date.now() });
       });
+      console.error('Archive operation: ' + JSON.stringify({ status, operationId, kind: operation.kind, reason: operation.reason,
+        clientId: operation.clientId, bucketId: operation.bucketId, versionId: operation.versionId, errorCode, error: error.message }));
       return;
     } finally {
       const unknown = status === 'interrupted';
@@ -390,15 +419,19 @@ class Archive {
       });
       await this.mutate(state => { if (state.operations[operationId]) state.operations[operationId].audit = { recorded }; });
     }
+    console.log('Archive operation: ' + JSON.stringify({ status, operationId, clientId: operation.clientId, bucketId: operation.bucketId,
+      versionId: operation.versionId, backupBucketId: operation.backupBucketId || operation.bucketId, backupVersionId: operation.backupVersionId }));
     await this.prune(operation.bucketId);
+    if (operation.backupBucketId && operation.backupBucketId !== operation.bucketId) await this.prune(operation.backupBucketId);
     if (operation.kind === 'apply' && this.state.clients[operation.clientId]
         && operation.bootId !== this.state.clients[operation.clientId].bootId) await this.connected(operation.clientId);
   }
   async prune(bucketId) {
     const removed = await this.mutate(state => {
       const bucket = state.buckets[bucketId], protectedIds = new Set(bucket.versions.filter(item => item.syncable).map(item => item.id));
-      Object.values(state.operations).filter(item => item.bucketId === bucketId && item.status !== 'complete').forEach(item => {
-        protectedIds.add(item.versionId); protectedIds.add(item.backupVersionId);
+      Object.values(state.operations).filter(item => item.status !== 'complete').forEach(item => {
+        if (item.bucketId === bucketId) protectedIds.add(item.versionId);
+        if ((item.backupBucketId || item.bucketId) === bucketId) protectedIds.add(item.backupVersionId);
       });
       const counts = {}, removed = [];
       bucket.versions = [...bucket.versions].reverse().filter(item => {

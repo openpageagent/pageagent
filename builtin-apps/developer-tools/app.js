@@ -5,6 +5,12 @@ import { receiveToolInput } from './tool-input.js';
 import { createDragPreview } from './drag-preview.js';
 import './sort-layout.js';
 
+let parameterReceiver;
+export async function applyParameters(input) {
+  if (!parameterReceiver) throw new Error('工具目录尚未就绪，无法应用启动参数。');
+  await parameterReceiver(input);
+}
+
 // Page features and API operations are different: a page can combine several operations.
 const defaultCommon = ['hash', 'json', 'base64', 'url', 'time', 'qrCode', 'pinyin', 'code', 'unicode', 'text', 'randomString', 'diffs', 'dockerCompose'];
 const categories = [
@@ -94,7 +100,6 @@ export async function mountDeveloperTools() {
   let result = null, hasResult = false, previewUrl = null, busy = false, revision = 0, loading = false, closed = false;
   let autoTimer = null, autoPending = false;
   let icons;
-  let launchHandled = false;
   let uuidRaw = '';
   let qrSection = 'common';
   let qrHex = null;
@@ -235,7 +240,7 @@ export async function mountDeveloperTools() {
     choices.algorithm.addEventListener('change', update); update();
     const actions = document.createElement('div'), cancel = document.createElement('button'), generate = document.createElement('button'); actions.className = 'app-actions';
     cancel.type = 'button'; cancel.textContent = '取消'; cancel.addEventListener('click', () => dialog.close()); generate.type = 'submit'; generate.textContent = '生成';
-    actions.append(cancel, generate); form.append(actions); dialog.append(heading, form); toolbox.append(dialog);
+    actions.append(generate, cancel); form.append(actions); dialog.append(heading, form); toolbox.append(dialog);
     form.addEventListener('submit', event => {
       event.preventDefault(); fields.get('algorithm').control.value = choices.algorithm.value; fields.get('curve').control.value = choices.curve.value; fields.get('bits').control.value = choices.bits.value;
       const options = { algorithm: choices.algorithm.value, curve: choices.curve.value, bits: choices.bits.value };
@@ -1230,42 +1235,41 @@ export async function mountDeveloperTools() {
       const tool = categoryItems('common')[0];
       if (tool) selectTool(tool); else { renderNavigation(); controls(); message('可在「管理常用」中选择常用工具。'); }
       renderSearch();
-      void receiveLaunch();
+      parameterReceiver = receiveLaunch;
     } finally { loading = false; }
   }
-  async function receiveLaunch() {
-    if (launchHandled || closed) return;
-    launchHandled = true;
+  async function receiveLaunch(input) {
+    if (closed) throw new Error('应用已关闭，无法应用启动参数。');
     const entries = tools.filter(tool => categories.some(item => item.tools?.includes(tool.id))).map(tool => ({
       id: tool.id,
       operations: views.supports(tool.id) ? views.inputOperations(tool.id) : tool.id === 'crontab' ? ['next']
         : tool.id === 'base64Image' ? ['decode'] : tool.id === 'uuid' ? ['v3', 'v5'] : tool.id === 'regex' ? ['match']
         : tool.operations.filter(value => inputKind(tool.id, value) !== 'none')
     })).filter(entry => entry.operations.length);
-    try {
-      await receiveToolInput(PageAgent.apps.input, entries, payload => {
-        if (closed) return;
-        const tool = tools.find(tool => tool.id === payload.toolId);
-        if (inputKind(tool.id, payload.operation) === 'line' && /[\r\n]/.test(payload.input)) throw new Error('此工具只接收单行文本，请选择其他工具。');
-        category = common.includes(tool.id) ? 'common' : categories.find(item => item.tools?.includes(tool.id)).id;
-        selectTool(tool);
-        if (views.supports(tool.id)) views.loadInput(payload.input, payload.operation);
-        else if (tool.id === 'crontab') cron.loadInput(payload.input);
-        else {
-          selectOperation(payload.operation);
-          if (tool.id === 'qrCode' && operation === 'parse') { fields.get('inputEncoding').control.value = 'base64'; updateForm(); }
-          primary().value = tool.id === 'qrCode' && operation === 'parse' ? payload.input.replace(/^data:image\/[^;,]+;base64,/i, '') : payload.input;
-          if (tool.id === 'diffs') diffContainer.querySelector('page-code-editor').setAttribute('data-original', payload.input);
-          invalidateResult(); scheduleAuto();
-        }
-        message('已接收内容。');
-      });
-    } catch (error) { if (!closed) message('无法接收内容：' + error.message, true); }
+    await receiveToolInput(input, entries, payload => {
+      const tool = tools.find(tool => tool.id === payload.toolId);
+      if (inputKind(tool.id, payload.operation) === 'line' && /[\r\n]/.test(payload.input)) throw new Error('此工具只接收单行文本，请选择其他工具。');
+      category = common.includes(tool.id) ? 'common' : categories.find(item => item.tools?.includes(tool.id)).id;
+      selectTool(tool);
+      if (views.supports(tool.id)) views.loadInput(payload.input, payload.operation);
+      else if (tool.id === 'crontab') cron.loadInput(payload.input);
+      else {
+        selectOperation(payload.operation);
+        if (tool.id === 'qrCode' && operation === 'parse') { fields.get('inputEncoding').control.value = 'base64'; updateForm(); }
+        primary().value = tool.id === 'qrCode' && operation === 'parse' ? payload.input.replace(/^data:image\/[^;,]+;base64,/i, '') : payload.input;
+        if (tool.id === 'diffs') diffContainer.querySelector('page-code-editor').setAttribute('data-original', payload.input);
+        invalidateResult(); scheduleAuto();
+      }
+      message('已接收内容。');
+    });
   }
   try {
     await PageAgent.ready;
     await PageAgent.ui.load('code-editor');
     icons = await PageAgent.ui.load('icons');
+    const titleIcon = icons.create('fa-wrench');
+    titleIcon.className = 'toolbox-icon';
+    toolbox.querySelector('h1').prepend(titleIcon);
     await loadCatalog();
     PageAgent.onChange(event => {
       if (['disconnected', 'deleted', 'imported'].includes(event.change)) { closed = true; cron.close(); views.close(); invalidateResult(); controls(); message('应用连接或内容已变化，请重新加载页面。', true); }

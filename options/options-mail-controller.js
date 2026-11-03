@@ -6,7 +6,7 @@
   function init(options) {
     var form = document.getElementById('mail-settings-form');
     if (!form) return;
-    var settings = root.PageAutomationMailSettings;
+    var settings = root.PageAgentMailSettings;
     var fields = document.getElementById('mail-settings-fields');
     var status = document.getElementById('mail-settings-status');
     var connectionCard = document.getElementById('mail-connection-card');
@@ -240,8 +240,8 @@
       document.getElementById('drawer-title').textContent = '发送测试邮件';
       document.getElementById('drawer-content').replaceChildren(input('test-template').content.cloneNode(true));
       document.getElementById('drawer-actions').innerHTML =
-        '<button type="button" class="btn-secondary" data-action="cancel-drawer">关闭</button>'
-        + '<button id="mail-test-send" type="submit" form="mail-test-form" class="btn-primary">发送测试邮件</button>';
+        '<button id="mail-test-send" type="submit" form="mail-test-form" class="btn-primary">发送测试邮件</button>'
+        + '<button type="button" class="btn-secondary" data-action="cancel-drawer">关闭</button>';
       input('test-form').addEventListener('submit', sendTest);
       showStatus(testResult.message, testResult.error, input('test-status'));
       input('test-connection-status').textContent = input('connection-status').textContent;

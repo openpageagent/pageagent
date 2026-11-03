@@ -4,15 +4,15 @@
 })(globalThis, function () {
   'use strict';
 
-  var conversationEventView = globalThis.PageAutomationConversationEventView;
-  var imageArtifactClient = globalThis.PageAutomationImageArtifactClient;
+  var conversationEventView = globalThis.PageAgentConversationEventView;
+  var imageArtifactClient = globalThis.PageAgentImageArtifactClient;
   var toolResultProjection = globalThis.AgentToolResultProjection;
-  var zipStore = globalThis.PageAutomationZipStore;
-  var conversationShared = globalThis.PageAutomationConversationShared;
-  var conversationListView = globalThis.PageAutomationConversationListView;
-  var syncEventStream = globalThis.PageAutomationSyncEventStream
-    && globalThis.PageAutomationSyncEventStream.create
-    ? globalThis.PageAutomationSyncEventStream.create({ runtime: chrome.runtime })
+  var zipStore = globalThis.PageAgentZipStore;
+  var conversationShared = globalThis.PageAgentConversationShared;
+  var conversationListView = globalThis.PageAgentConversationListView;
+  var syncEventStream = globalThis.PageAgentSyncEventStream
+    && globalThis.PageAgentSyncEventStream.create
+    ? globalThis.PageAgentSyncEventStream.create({ runtime: chrome.runtime })
     : null;
   if (!conversationEventView || conversationEventView.API_VERSION !== 1) {
     throw new Error('Conversation event view must load before Conversation');
@@ -113,11 +113,13 @@
   var trajectoryItemsByTopic = Object.create(null);
   var trajectoryPageByTopic = Object.create(null);
   var trajectoryRequestByTopic = Object.create(null);
+  var trajectoryRequestDetail = null;
   var conversationEventsCompleteByTopic = Object.create(null);
   /* `topic.events` is the rendered projection consumed by the DOM. Keep the
      Journal rows that feed that projection separately; mixing the two shapes
      makes the next incremental read lose tool/reasoning/assistant rows. */
   var rawConversationEventsByTopic = Object.create(null);
+  var contextGovernanceByTopic = Object.create(null);
   var trajectoryFollowsTail = true;
   var trajectoryScrollTopicId = '';
   var trajectoryVirtualState = null;
@@ -147,11 +149,11 @@
 
   function optionsResourceClient() {
     if (arpResourceClient) return arpResourceClient;
-    if (!globalThis.PageAutomationResourceClient
-        || typeof globalThis.PageAutomationResourceClient.create !== 'function') {
-      throw new Error('PageAutomationResourceClient 未初始化');
+    if (!globalThis.PageAgentResourceClient
+        || typeof globalThis.PageAgentResourceClient.create !== 'function') {
+      throw new Error('PageAgentResourceClient 未初始化');
     }
-    arpResourceClient = globalThis.PageAutomationResourceClient.create();
+    arpResourceClient = globalThis.PageAgentResourceClient.create();
     return arpResourceClient;
   }
 
@@ -899,13 +901,46 @@
     });
   }
 
+  function readConversationEventPage(input) {
+    return new Promise(function (resolve, reject) {
+      var port = chrome.runtime.connect({ name: 'page-agent-conversation-events' });
+      var chunks = [];
+      var settled = false;
+      function finish(error, response) {
+        if (settled) return;
+        settled = true;
+        chunks = [];
+        port.disconnect();
+        if (error) reject(error);
+        else resolve(response);
+      }
+      port.onDisconnect.addListener(function () {
+        var error = chrome.runtime.lastError;
+        finish(new Error(error && error.message || '事件传输中断，请重新打开运行轨迹'));
+      });
+      port.onMessage.addListener(function (message) {
+        if (settled) return;
+        try {
+          if (message && message.error) {
+            finish(null, { ok: false, error: message.error });
+            return;
+          }
+          if (!message || typeof message.chunk !== 'string' || typeof message.done !== 'boolean') {
+            throw new Error('无效的事件分块响应');
+          }
+          chunks.push(message.chunk);
+          if (message.done) finish(null, JSON.parse(chunks.join('')));
+          else port.postMessage({ next: true });
+        } catch (error) { finish(error); }
+      });
+      try { port.postMessage({ input: input || {} }); }
+      catch (error) { finish(error); }
+    });
+  }
+
   function sendConversationCommand(command, input) {
     return new Promise(function (resolve, reject) {
-      chrome.runtime.sendMessage({
-        type: 'CONVERSATION_COMMAND',
-        payload: { command: command, input: input || {} },
-      }, function (response) {
-        if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
+      function receiveResponse(response) {
         if (!response || response.ok !== true) {
           var detail = response && response.error || {};
           var error = new Error(detail.message || 'Conversation command failed');
@@ -915,6 +950,17 @@
           return;
         }
         resolve(response.result);
+      }
+      if (command === 'GET_EVENTS') {
+        readConversationEventPage(input).then(receiveResponse, reject);
+        return;
+      }
+      chrome.runtime.sendMessage({
+        type: 'CONVERSATION_COMMAND',
+        payload: { command: command, input: input || {} },
+      }, function (response) {
+        if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
+        receiveResponse(response);
       });
     });
   }
@@ -1209,6 +1255,7 @@
       provider: String(eventPayload.provider || eventPayload.request && eventPayload.request.provider || messageSource.provider || ''),
       durationMs: Math.max(0, Number(eventPayload.durationMs) || 0),
       error: eventError ? String(eventError.message || eventError) : '',
+      detailDeferred: record.detailDeferred === true,
       payload: eventPayload,
     };
   }
@@ -1219,8 +1266,10 @@
     delete trajectoryEventsByTopic[topicId];
     delete trajectoryItemsByTopic[topicId];
     delete trajectoryPageByTopic[topicId];
+    if (trajectoryRequestDetail && trajectoryRequestDetail.topicId === topicId) trajectoryRequestDetail = null;
     delete conversationEventsCompleteByTopic[topicId];
     delete rawConversationEventsByTopic[topicId];
+    delete contextGovernanceByTopic[topicId];
     delete incrementalConversationTopicById[topicId];
   }
 
@@ -1235,6 +1284,7 @@
         conversationId: topicId,
         limit: conversationListView.DEFAULT_PAGE_SIZE,
         includePayloads: true,
+        view: 'conversation',
       }).then(function (page) {
         var events = Array.isArray(page && page.events) ? page.events.slice() : [];
         rawConversationEventsByTopic[topicId] = events;
@@ -1260,6 +1310,7 @@
       cursor: { afterSequence: lastSequence },
       limit: conversationListView.DEFAULT_PAGE_SIZE,
       includePayloads: true,
+      view: 'conversation',
     }).then(function (page) {
       var events = page && Array.isArray(page.events) ? page.events : [];
       var merged = conversationListView.mergeJournalPages(existingRaw, events);
@@ -1279,39 +1330,22 @@
     });
   }
 
-  function loadAllTrajectoryEvents(topicId, afterSequence) {
-    var allEvents = [];
-    var total = 0;
-    function loadNext(cursor) {
-      return sendConversationCommand('GET_EVENTS', {
-        conversationId: topicId,
-        cursor: { afterSequence: cursor },
-        limit: 500,
-        includePayloads: true,
-      }).then(function (page) {
-        var events = page && Array.isArray(page.events) ? page.events : [];
-        allEvents = conversationListView.mergeJournalPages(allEvents, events);
-        total = Math.max(total, Number(page && page.total) || 0, allEvents.length);
-        var nextCursor = events.length
-          ? Number(events[events.length - 1].sequence) || cursor
-          : cursor;
-        if (page && page.hasMoreAfter && nextCursor > cursor) return loadNext(nextCursor);
-        return { events: allEvents, total: total };
-      });
-    }
-    return loadNext(Math.max(0, Number(afterSequence) || 0));
+  function loadTrajectoryPage(topicId, cursor) {
+    return sendConversationCommand('GET_EVENTS', {
+      conversationId: topicId, cursor: cursor || {}, limit: 100,
+      includePayloads: true, view: 'trajectory',
+    });
   }
 
   function loadTopicTrajectory(topicId, force) {
     topicId = String(topicId || '').trim();
     if (!topicId) return Promise.resolve([]);
-    var cachedItems = trajectoryItemsByTopic[topicId];
     if (!force && Object.prototype.hasOwnProperty.call(trajectoryItemsByTopic, topicId)) {
       return Promise.resolve(trajectoryItemsByTopic[topicId]);
     }
     var pending = trajectoryRequestByTopic[topicId];
     if (pending) return pending.promise;
-    var request = loadAllTrajectoryEvents(topicId, 0).then(function (result) {
+    var request = loadTrajectoryPage(topicId).then(function (result) {
       var allEvents = result && Array.isArray(result.events) ? result.events : [];
       allEvents.sort(function (a, b) { return Number(a && a.sequence || 0) - Number(b && b.sequence || 0); });
       var records = projectTrajectoryCells(allEvents.map(adaptTrajectoryEvent));
@@ -1324,8 +1358,8 @@
         end: lastSequence,
         total: Math.max(0, Number(result && result.total) || allEvents.length),
         pageSize: Math.max(1, allEvents.length),
-        hasOlder: false,
-        hasNewer: false,
+        hasOlder: !!(result && result.hasMoreBefore),
+        hasNewer: !!(result && result.hasMoreAfter),
       };
       return records;
     }).catch(function (error) {
@@ -1345,8 +1379,7 @@
     return request;
   }
 
-  /* Incremental refresh starts after the newest loaded Journal sequence, then
-     folds the complete event set again so lifecycle cells stay coherent. */
+  /* Each refresh fetches one bounded page; never drain the full Journal. */
   function loadLatestTopicTrajectory(topicId, force) {
     topicId = String(topicId || '').trim();
     if (!topicId) return Promise.resolve([]);
@@ -1360,7 +1393,7 @@
     var lastSequence = cachedEvents.reduce(function (latest, event) {
       return Math.max(latest, Number(event && event.sequence) || 0);
     }, 0);
-    var request = loadAllTrajectoryEvents(topicId, lastSequence).then(function (pageResult) {
+    var request = loadTrajectoryPage(topicId, { afterSequence: lastSequence }).then(function (pageResult) {
       var events = pageResult && Array.isArray(pageResult.events) ? pageResult.events : [];
       events.sort(function (a, b) { return Number(a && a.sequence || 0) - Number(b && b.sequence || 0); });
       var bySequence = Object.create(null);
@@ -1380,9 +1413,10 @@
       trajectoryPageByTopic[topicId] = {
         start: start, end: end, total: Math.max(total, end),
         pageSize: Math.max(1, mergedEvents.length),
-        hasOlder: false,
-        hasNewer: false,
+        hasOlder: knownPage.hasOlder === true,
+        hasNewer: !!(pageResult && pageResult.hasMoreAfter),
       };
+      if (pageResult && pageResult.hasMoreAfter && end > lastSequence) scheduleJournalRefresh(topicId);
       return records;
     }).catch(function (error) {
       if (error && error.code === 'CONVERSATION_NOT_FOUND') {
@@ -1396,6 +1430,36 @@
       if (trajectoryRequestByTopic[topicId] && trajectoryRequestByTopic[topicId].promise === request) delete trajectoryRequestByTopic[topicId];
     });
     trajectoryRequestByTopic[topicId] = { start: Number.MAX_SAFE_INTEGER, promise: request };
+    return request;
+  }
+
+  function loadOlderTopicTrajectory(topicId) {
+    var page = trajectoryPageByTopic[topicId];
+    if (!page || !page.hasOlder) return Promise.resolve();
+    var pending = trajectoryRequestByTopic[topicId];
+    if (pending) return pending.promise;
+    var selectedRequest = (trajectoryItemsByTopic[topicId] || []).find(function (cell) {
+      return cell.requestNumber === selectedTrajectoryRequestNumber && cell.requestInfo;
+    });
+    var selectedRequestId = selectedRequest && selectedRequest.requestInfo.requestId;
+    var request = loadTrajectoryPage(topicId, { beforeSequence: page.start }).then(function (result) {
+      var events = conversationListView.mergeJournalPages(trajectoryEventsByTopic[topicId] || [], result.events || []);
+      trajectoryEventsByTopic[topicId] = events;
+      var cells = projectTrajectoryCells(events.map(adaptTrajectoryEvent));
+      trajectoryItemsByTopic[topicId] = cells;
+      trajectoryPageByTopic[topicId] = Object.assign({}, page, {
+        start: events.length ? Number(events[0].sequence) : page.start,
+        total: Math.max(page.total, Number(result.total) || 0),
+        pageSize: events.length, hasOlder: !!result.hasMoreBefore,
+      });
+      if (selectedRequestId) {
+        var selected = cells.find(function (cell) { return cell.requestInfo && cell.requestInfo.requestId === selectedRequestId; });
+        selectedTrajectoryRequestNumber = selected ? selected.requestNumber : 0;
+      }
+    }).finally(function () {
+      if (trajectoryRequestByTopic[topicId] && trajectoryRequestByTopic[topicId].promise === request) delete trajectoryRequestByTopic[topicId];
+    });
+    trajectoryRequestByTopic[topicId] = { start: page.start, promise: request };
     return request;
   }
 
@@ -1495,10 +1559,10 @@
   }
 
   function loadSystemSettings() {
-    if (!globalThis.PageAutomationSystemSettings) {
+    if (!globalThis.PageAgentSystemSettings) {
       return Promise.resolve(applyConversationSettings({}));
     }
-    return globalThis.PageAutomationSystemSettings.load(chrome.storage && chrome.storage.local, chrome.runtime)
+    return globalThis.PageAgentSystemSettings.load(chrome.storage && chrome.storage.local, chrome.runtime)
       .then(applyConversationSettings);
   }
 
@@ -1519,14 +1583,202 @@
       || defaultModelServiceId(topic ? assistantForTopicRun(topic, selectedAssistant()) : selectedAssistant()) || '').trim();
   }
 
-  function renderContextGovernanceStatus() {
-    var title = '完整事实保留在 Journal；ContextBuilder 在每次模型请求前重新预算并按需推进 SummaryCheckpoint';
-    return '<span class="conversation-chat-log-btn conversation-context-governance-status" title="' + esc(title) + '">自动摘要</span>';
+  function loadContextGovernance(topicId, metadata, events) {
+    var cached = contextGovernanceByTopic[topicId];
+    events = Array.isArray(events) ? events : [];
+    var sequence = events.length ? Number(events[events.length - 1].sequence) || 0 : 0;
+    var responseCompleted = false;
+    var summaryEvent = null;
+    var generationEvent = null;
+    // Inspect only newly received Journal rows. Streaming and tool events do
+    // not trigger another context read; one completed model response does.
+    for (var index = events.length - 1; cached && index >= 0; index -= 1) {
+      var event = events[index];
+      if (Number(event.sequence) <= (cached.sequence || 0)) break;
+      if (event.type === 'model_response_completed') responseCompleted = true;
+      if (!summaryEvent && /^(?:summary_requested|summary_committed|summary_failed)$/.test(event.type)) summaryEvent = event;
+      if (!generationEvent && event.type === 'generation_started') generationEvent = event;
+    }
+    if (cached && !responseCompleted) {
+      cached.sequence = Math.max(cached.sequence || 0, sequence);
+      var active = metadata.activeGeneration;
+      var running = active && ['starting', 'running', 'waiting_user', 'cancelling'].indexOf(active.state) !== -1;
+      var interrupted = cached.data && cached.data.summaryStatus === 'running' && !running;
+      if (summaryEvent || generationEvent || interrupted) {
+        var data = Object.assign({}, cached.data || {});
+        if (interrupted) data.summaryStatus = 'interrupted';
+        if (generationEvent) data.contextCompression = generationEvent.payload && generationEvent.payload.preferences
+          && generationEvent.payload.preferences.contextCompression || 'auto';
+        if (summaryEvent) {
+          var payload = summaryEvent.payload || {};
+          data.summaryStatus = summaryEvent.type === 'summary_requested'
+            ? (running && active.generationId === summaryEvent.generationId ? 'running' : 'interrupted')
+            : summaryEvent.type === 'summary_failed' ? 'failed' : 'completed';
+          data.summaryError = summaryEvent.type === 'summary_failed' ? payload.error || payload.errorCode || '' : '';
+          if (summaryEvent.type === 'summary_committed' && payload.summary) {
+            // GET_EVENTS already hydrates committed summaries. Reuse that
+            // projection for the badge and details without another request.
+            data.checkpoint = {
+              checkpointId: payload.checkpointId,
+              summary: payload.summary,
+              createdAt: summaryEvent.at,
+              provider: { resolvedSummaryModel: payload.resolvedSummaryModel },
+            };
+          }
+        }
+        contextGovernanceByTopic[topicId] = { sequence: cached.sequence, data: data, error: cached.error };
+      }
+      return Promise.resolve();
+    }
+    return sendConversationCommand('GET_SUMMARY', { conversationId: topicId }).then(function (data) {
+      contextGovernanceByTopic[topicId] = { sequence: sequence, data: data };
+    }).catch(function (error) {
+      contextGovernanceByTopic[topicId] = { sequence: sequence, error: resourceErrorText(error) };
+    });
+  }
+
+  function contextGovernanceData(topic) {
+    var cached = topic && contextGovernanceByTopic[topic.topicId];
+    return cached && cached.data || {};
+  }
+
+  function contextSummaryStatus(data) {
+    var label = conversationShared.contextSummaryStatus(data);
+    return data.contextCompression === 'off' ? '自动摘要已关闭 · ' + label : label;
+  }
+
+  function renderContextGovernanceStatus(topic) {
+    var data = contextGovernanceData(topic);
+    var context = data.context;
+    var cached = topic && contextGovernanceByTopic[topic.topicId];
+    var hasUsage = context && !(cached && cached.error)
+      && Number.isFinite(context.inputTokens) && context.inputTokens >= 0
+      && Number.isFinite(context.inputLimit) && context.inputLimit > 0;
+    var percent = hasUsage ? context.inputTokens / context.inputLimit * 100 : 0;
+    var highWaterPercent = hasUsage && context.highWaterRatio > 0 && context.highWaterRatio < 1
+      ? context.highWaterRatio * 100 : 85;
+    var hasThreshold = hasUsage && data.contextCompression !== 'off'
+      && context.highWaterRatio > 0 && context.highWaterRatio < 1;
+    var tone = !hasUsage ? ' is-unknown' : percent >= highWaterPercent ? ' is-high'
+      : percent >= 70 ? ' is-warning' : percent >= 50 ? ' is-moderate' : ' is-low';
+    var usageStatus = percent >= 100 ? '输入预算已满' : percent >= highWaterPercent ? '高占用'
+      : percent >= 70 ? '占用偏高' : percent >= 50 ? '使用过半' : '余量充足';
+    var value = hasUsage ? percent.toFixed(0) + '%' : '—';
+    var label = hasUsage ? '上下文占用' + (context.estimated ? '约 ' : ' ') + percent.toFixed(1) + '%'
+      : cached && cached.error ? '上下文用量读取失败' : '上下文用量暂无数据';
+    var title = label + (hasUsage ? '（' + usageStatus + '）' : '');
+    if (hasUsage) title += '；最近请求输入 ' + Number(context.inputTokens).toLocaleString()
+      + ' / ' + Number(context.inputLimit).toLocaleString() + ' tokens（可用输入预算）';
+    if (hasThreshold) {
+      var remaining = Math.floor(context.inputLimit * context.highWaterRatio) - context.inputTokens;
+      title += '；刻度为自动摘要检查阈值 ' + (context.highWaterRatio * 100).toFixed(0) + '%'
+        + (remaining >= 0 ? '，距阈值约 ' + remaining.toLocaleString() + ' tokens' : '，已超过阈值');
+    }
+    if (data.summaryStatus) title += '；' + contextSummaryStatus(data);
+    title += '。点击查看详细用量和摘要结果。';
+    var showStatus = data.contextCompression === 'off' || data.summaryStatus && data.summaryStatus !== 'none';
+    return '<span class="conversation-context-governance-status"><button type="button" class="conversation-context-meter' + tone + '" data-conversation-action="open-context-governance"'
+      + (topic && topic.topicId ? '' : ' disabled')
+      + ' style="--context-usage:' + Math.min(100, percent) + '%;'
+      + (hasThreshold ? '--context-threshold:' + highWaterPercent + '%;' : '') + '"'
+      + ' aria-label="' + esc(title) + '" title="' + esc(title) + '">'
+      + '<span class="conversation-context-meter-caption" aria-hidden="true"><span>上下文占用：</span><span class="conversation-context-meter-value">' + esc(value) + '</span></span>'
+      + '<span class="conversation-context-meter-track" aria-hidden="true"><span class="conversation-context-meter-fill"></span>'
+      + (hasThreshold ? '<span class="conversation-context-meter-threshold"></span>' : '') + '</span></button>'
+      + (showStatus ? '<span class="badge' + (data.summaryStatus === 'running' ? ' is-summarizing' : '') + '" role="status">' + esc(contextSummaryStatus(data)) + '</span>' : '') + '</span>';
+  }
+
+  function renderContextGovernanceDetails(topic) {
+    var cached = topic && contextGovernanceByTopic[topic.topicId];
+    if (!cached) return '<p>正在读取上下文信息…</p>';
+    if (cached.error) return '<p>读取失败：' + esc(cached.error) + '</p>';
+    var data = cached.data || {};
+    var context = data.context;
+    var checkpoint = data.checkpoint;
+    var html = '';
+    function row(label, value) {
+      html += '<div class="conversation-config-row conversation-config-row-wide"><b>' + esc(label) + '</b><div>'
+        + esc(value).replace(/\n/g, '<br>') + '</div></div>';
+    }
+    conversationShared.contextUsageRows(data).forEach(function (item) {
+      row(item[0], item[1]);
+    });
+    if (context && context.inputLimit > 0 && checkpoint && context.checkpointId !== checkpoint.checkpointId) {
+      row('用量时点', '该用量来自最新摘要生效前的请求；下一次模型响应完成后更新。');
+    }
+    html += '<p class="form-help">用量来自最近一次主模型请求的预算，包含提示词、工具定义和消息；不是累计消耗，也不包含此后新增的消息或正在生成的输出。进度条在每次模型响应完成后更新，也可手动刷新。自动摘要会保留最近两轮及未完成的交互，完整历史仍保留。</p>';
+    if (data.summaryError) row('失败原因', data.summaryError);
+    if (!checkpoint) {
+      row('摘要结果', '暂无成功提交的摘要。');
+      return html;
+    }
+    row('最近成功', checkpoint.createdAt ? new Date(checkpoint.createdAt).toLocaleString() : '未知');
+    if (checkpoint.provider) row('摘要模型', checkpoint.provider.resolvedSummaryModel || checkpoint.provider.model || '未知');
+    html += '<h3>当前生效的累计摘要</h3><p class="form-help">这是最近一次成功生成的摘要，合并此前摘要与新增旧对话；摘要失败或中断时继续保留上次成功结果。</p>';
+    var summary = checkpoint.summary || {};
+    [
+      ['objective', '目标'], ['constraints', '约束'], ['decisions', '决定'], ['verifiedFacts', '已验证事实'],
+      ['completedActions', '已完成动作'], ['pendingItems', '待办'], ['failuresAndDoNotRepeat', '失败与禁忌'], ['resourceRefs', '资源引用'],
+    ].forEach(function (field) {
+      var value = summary[field[0]];
+      row(field[1], Array.isArray(value) ? value.join('\n') || '无' : value || '无');
+    });
+    return html;
+  }
+
+  function refreshContextGovernanceView(topic) {
+    var topicId = topic && topic.topicId || '';
+    var cached = contextGovernanceByTopic[topicId];
+    var status = $('#conversation-root .conversation-context-governance-status');
+    if (status && (status._contextGovernance !== cached || status._contextTopicId !== topicId)) {
+      status._contextGovernance = cached;
+      status._contextTopicId = topicId;
+      var staging = document.createElement('div');
+      staging.innerHTML = renderContextGovernanceStatus(topic);
+      var button = status.querySelector('button');
+      var nextButton = staging.querySelector('button');
+      if (button.innerHTML !== nextButton.innerHTML) button.innerHTML = nextButton.innerHTML;
+      if (button.className !== nextButton.className) button.className = nextButton.className;
+      if (button.style.cssText !== nextButton.style.cssText) button.style.cssText = nextButton.style.cssText;
+      if (button.getAttribute('aria-label') !== nextButton.getAttribute('aria-label')) button.setAttribute('aria-label', nextButton.getAttribute('aria-label'));
+      if (button.title !== nextButton.title) button.title = nextButton.title;
+      if (button.disabled !== nextButton.disabled) button.disabled = nextButton.disabled;
+      var badge = status.querySelector('.badge');
+      var nextBadge = staging.querySelector('.badge');
+      if (badge && nextBadge) {
+        if (badge.className !== nextBadge.className) badge.className = nextBadge.className;
+        if (badge.textContent !== nextBadge.textContent) badge.textContent = nextBadge.textContent;
+      }
+      else if (badge) badge.remove();
+      else if (nextBadge) status.appendChild(nextBadge);
+    }
+    var details = $('#conversation-context-details');
+    if (details && topic && details.dataset.topicId === topic.topicId && details._contextGovernance !== cached) {
+      details._contextGovernance = cached;
+      var body = renderContextGovernanceDetails(topic);
+      if (details.innerHTML !== body) details.innerHTML = body;
+    }
+  }
+
+  async function openContextGovernance() {
+    var topic = displayedTopic();
+    if (!topic || !topic.topicId || !await confirmEditorLeave()) return;
+    discardEditor();
+    openConversationDrawer('上下文与自动摘要', '<div id="conversation-context-details" data-topic-id="' + esc(topic.topicId) + '">'
+      + renderContextGovernanceDetails(topic) + '</div>',
+      '<button class="btn-secondary" data-conversation-action="open-context-governance">刷新</button>'
+      + '<button class="btn-secondary" data-conversation-action="close-conversation-drawer">关闭</button>');
+    delete contextGovernanceByTopic[topic.topicId];
+    try {
+      await hydrateTopicFromJournal(state, topic.topicId);
+      if (displayedTopic() && displayedTopic().topicId === topic.topicId) refreshContextGovernanceView(topic);
+    } catch (error) {
+      toast(resourceErrorText(error), true);
+    }
   }
 
   function renderGeneratorServiceSelect(disabled, topic) {
     var selectedId = currentConversationServiceId(topic);
-    var traceButton = renderTopicTrajectoryButton(topic);
     var services = modelServiceResources || [];
     var options = services.map(function (service) {
       var label = String(service.name || service.id || '模型服务');
@@ -1542,8 +1794,7 @@
       + '<label class="conversation-composer-service-label" title="' + (disabled ? '对话运行中不可切换服务' : '切换对话服务') + '">'
       + '<select id="conversation-service" aria-label="模型服务" title="' + (disabled ? '对话运行中不可切换服务' : '切换对话服务') + '" ' + (disabled ? 'disabled' : '') + '>' + options + '</select>'
       + '</label>'
-      + traceButton
-      + renderContextGovernanceStatus()
+      + renderContextGovernanceStatus(topic)
       + '</div>';
   }
 
@@ -1572,6 +1823,7 @@
     if (!topic || !topic.topicId) return true;
     if (topicIsRunning(topic) || topicTrajectoryItems(topic).length) return false;
     var page = trajectoryPageByTopic[topic.topicId];
+    if (page && (page.hasOlder || page.hasNewer)) return false;
     // 对话新增事件后，旧的空轨迹缓存不能继续禁用入口。
     return topic.eventTotal === 0
       || (Object.prototype.hasOwnProperty.call(trajectoryItemsByTopic, topic.topicId)
@@ -1835,6 +2087,7 @@
       if (requestId) {
         var requestInfo = requestById[requestId] || (requestById[requestId] = {
           requestId: requestId, startSequence: Number(event.sequence) || 0,
+          topicId: String(event.conversationId || ''),
           generationId: generationId,
           startedAt: null, completedAt: null, status: 'running',
         });
@@ -1842,6 +2095,8 @@
         requestInfo.startSequence = Math.min(requestInfo.startSequence || Number(event.sequence) || 0,
           Number(event.sequence) || requestInfo.startSequence || 0);
         if (type === 'model_request_started') {
+          requestInfo.detailSequence = Number(event.sequence) || 0;
+          requestInfo.detailDeferred = event.detailDeferred;
           requestInfo.startedAt = trajectoryEventTime(payload.startedAt) || event.at || requestInfo.startedAt;
           requestInfo.provider = String(payload.provider || requestInfo.provider || '');
           requestInfo.model = String(payload.model || request.model || requestInfo.model || '');
@@ -1851,6 +2106,10 @@
               : payload.maxAttempts !== undefined ? Math.max(0, Number(payload.maxAttempts) - 1 || 0) : requestInfo.maxRetries;
           requestInfo.config = Object.assign({}, requestInfo.config || {}, request);
         } else if (type === 'context_injected') {
+          if (!requestInfo.detailSequence) {
+            requestInfo.detailSequence = Number(event.sequence) || 0;
+            requestInfo.detailDeferred = event.detailDeferred;
+          }
           requestInfo.config = Object.assign({}, requestInfo.config || {}, {
             purpose: payload.purpose,
             system: payload.system,
@@ -2658,6 +2917,37 @@
     return '<div class="' + detailClass + '"><div class="drawer-header"><div><h3 class="conversation-trace-detail-kind ' + esc(cell.kind) + '">' + esc(trajectoryCellLabel(cell.kind)) + '</h3><span>' + esc(meta) + '</span></div><div><i class="conversation-trace-status ' + status.className + '">' + esc(status.label) + '</i><button type="button" class="drawer-close conversation-trajectory-detail-close" data-conversation-action="trajectory-close-inspector" aria-label="关闭详情" title="关闭详情"><span class="conversation-trace-icon conversation-trace-icon-close" aria-hidden="true"></span></button></div></div>' + tabHtml + '<div class="conversation-trajectory-detail-body drawer-body">' + sections.join('') + '</div></div>';
   }
 
+  function loadSelectedTrajectoryRequestDetail() {
+    var topic = displayedTopic();
+    if (!topic || !selectedTrajectoryRequestNumber) return;
+    var cell = topicTrajectoryItems(topic).find(function (item) {
+      return item.requestNumber === selectedTrajectoryRequestNumber && item.requestInfo;
+    });
+    var request = cell && cell.requestInfo;
+    if (!request || !request.detailDeferred || !request.detailSequence) return;
+    if (trajectoryRequestDetail && trajectoryRequestDetail.topicId === topic.topicId
+        && trajectoryRequestDetail.sequence === request.detailSequence
+        && (trajectoryRequestDetail.loading || trajectoryRequestDetail.config)) return;
+    var detail = { topicId: topic.topicId, sequence: request.detailSequence, loading: true };
+    // Keep at most one expanded request outside the lightweight page cache.
+    trajectoryRequestDetail = detail;
+    sendConversationCommand('GET_EVENTS', {
+      conversationId: topic.topicId, cursor: { afterSequence: request.detailSequence - 1 },
+      limit: 1, includePayloads: true, view: 'full',
+    }).then(function (page) {
+      var record = page && page.events && page.events[0];
+      if (!record || Number(record.sequence) !== request.detailSequence
+          || record.modelRequestId !== request.requestId) throw new Error('请求详情与轨迹不匹配');
+      var payload = record.payload || {};
+      detail.config = payload.request || payload;
+    }).catch(function (error) {
+      detail.error = error.message || String(error);
+    }).finally(function () {
+      detail.loading = false;
+      if (trajectoryRequestDetail === detail && displayedTopic() && displayedTopic().topicId === detail.topicId) refreshOpenTraceViewer(true);
+    });
+  }
+
   function renderTrajectoryRequestDetail(request, allCells) {
     var tabs = [
       { id: 'overview', label: '概述' }, { id: 'options', label: '选项' },
@@ -2669,6 +2959,9 @@
     var usage = request.usage || null;
     var cumulative = request.cumulativeUsage || null;
     var config = request.config || {};
+    var loadedDetail = trajectoryRequestDetail && trajectoryRequestDetail.topicId === request.topicId
+      && trajectoryRequestDetail.sequence === request.detailSequence ? trajectoryRequestDetail : null;
+    if (loadedDetail && loadedDetail.config) config = Object.assign({}, config, loadedDetail.config);
     var options = {
       purpose: config.purpose || '', serviceId: config.serviceId || '', model: config.model || request.model || '',
       maxOutputTokens: config.maxOutputTokens === undefined ? null : config.maxOutputTokens,
@@ -2714,10 +3007,13 @@
       var hasRequestContent = config.system !== undefined || Array.isArray(config.messages) || Array.isArray(config.tools);
       body = '<section class="conversation-trajectory-detail-section">'
         + (hasRequestContent ? PageAgentCodeEditor.html(trajectoryJson(requestContent), 'json')
-          : '<span class="conversation-trace-empty">未记录请求内容</span>') + '</section>';
+          : '<span class="conversation-trace-empty">' + esc(loadedDetail && loadedDetail.error
+            || (loadedDetail && loadedDetail.loading ? '正在加载本次请求内容…'
+              : request.detailDeferred ? '请求内容按需加载，请重新选择此标签重试'
+                : '本页未包含请求起点，可加载更早轨迹')) + '</span>') + '</section>';
     } else if (activeTab === 'usage') {
       body = '<section class="conversation-trajectory-detail-section"><h4>本次请求</h4>' + usageRows(usage)
-        + '<h4>会话累计</h4>' + usageRows(cumulative) + '</section>';
+        + '<h4>已加载轨迹累计</h4>' + usageRows(cumulative) + '</section>';
     } else {
       var assistantCell = result && result.assistantMetrics || {};
       var ttft = assistantCell.firstTokenTime && request.startedAt
@@ -2966,7 +3262,7 @@
     if (!cells.length && topicTrajectoryIsLoading(topic)) {
       return trajectoryLoadingHtml();
     }
-    if (!cells.length) {
+    if (!cells.length && !topicTrajectoryPage(topic).hasOlder) {
       return trajectoryStatusHtml('暂无轨迹');
     }
     var filtered = trajectoryFilteredCells(cells);
@@ -2992,9 +3288,11 @@
     var allAssistantsCollapsed = assistantCollapseTargets.length > 0 && assistantCollapseTargets.every(function (id) {
       return trajectoryCollapsedAssistantIds[id] === true;
     });
-    /* History is a bounded visible-card window. Older rows are pulled by the
-       scroll boundary, so the viewer needs no separate load-more button. */
-    var paginationHtml = '<div class="conversation-trace-history-boundary conversation-trace-history-boundary-empty" aria-hidden="true"></div>';
+    var page = topicTrajectoryPage(topic);
+    var paginationHtml = '<div class="conversation-trace-history-boundary">'
+      + '<span>已加载事件 ' + esc(page.start) + '–' + esc(page.end) + ' / ' + esc(page.total) + '；搜索与统计仅含已加载部分</span>'
+      + (page.hasOlder ? '<button type="button" data-conversation-action="trajectory-load-older"'
+        + (topicTrajectoryIsLoading(topic) ? ' disabled' : '') + '>加载更早轨迹</button>' : '') + '</div>';
     var timelineSelectionHtml = '<div class="conversation-trace-timeline-selection" style="display:none" aria-hidden="true"></div>';
     if (timelineModel && trajectoryTimelineRange) {
       var selectionStart = Math.max(timelineDomain.start, Math.min(timelineDomain.end, Number(trajectoryTimelineRange.start)));
@@ -3646,8 +3944,8 @@
     return '<section class="conversation-user-input" data-request-id="' + esc(pending.requestId) + '" data-topic-id="' + esc(topic.topicId) + '">'
       + questions
       + '<div class="conversation-user-input-actions">'
-      + '<button type="button" class="btn-danger" data-conversation-action="stop-topic">停止</button>'
       + '<button type="button" class="btn-primary" data-conversation-action="submit-user-input">提交回答</button>'
+      + '<button type="button" class="btn-danger" data-conversation-action="stop-topic">停止</button>'
       + '</div></section>';
   }
 
@@ -3666,15 +3964,11 @@
     var stopping = topic && (topic.phase === 'stopping' || topic.status === 'cancelling');
     return 'composer:' + (running ? (stopping ? 'stopping' : 'running') : 'idle')
       + ':' + currentConversationServiceId(topic)
-      + ':' + (anyConversationRunning() ? 'locked' : 'unlocked')
-      + ':' + (topicTrajectoryIsEmpty(topic) ? 'trace-empty' : 'trace-available');
+      + ':' + (anyConversationRunning() ? 'locked' : 'unlocked');
   }
 
   function renderStream(topic, assistant, eventsHtml, controlledElsewhere) {
     var archived = !!(topic && topic.archived);
-    var archivedLogAction = archived && topic && topic.topicId
-      ? renderTopicTrajectoryButton(topic)
-      : '';
     var running = topicIsRunning(topic);
     var serviceSwitchLocked = running || anyConversationRunning();
     var stopping = topic && (topic.phase === 'stopping' || topic.status === 'cancelling');
@@ -3688,11 +3982,11 @@
       + '<div class="conversation-chat-title"><b>' + esc(assistant && assistant.name || '助手') + '</b><span>' + esc(title) + '</span></div>'
       + '<div class="conversation-chat-actions">'
       + (!archived && !controlledElsewhere ? capabilityGapBadgeHtml(topic) : '')
-      + archivedLogAction
+      + (archived ? '<span class="badge conversation-archived-badge">已归档</span>' : (topic ? '<span class="badge status-' + conversationStatusBadgeTone(topic.status) + '">' + esc(statusLabel(topic.status)) + '</span>' : ''))
+      + renderTopicTrajectoryButton(topic)
       + (topic ? '<button class="conversation-chat-log-btn" data-conversation-action="export-topic-archive" data-topic-id="' + esc(topic.topicId) + '" title="导出对话 JSON、Markdown 和图片 ZIP">导出</button>' : '')
       + '<button class="conversation-chat-log-btn" data-conversation-action="import-topic-archive" title="从完整对话 ZIP 恢复对话与图片">导入</button>'
-      + (archived ? '<span class="badge conversation-archived-badge">已归档</span>' : (topic ? '<span class="badge status-' + conversationStatusBadgeTone(topic.status) + '">' + esc(statusLabel(topic.status)) + '</span>' : ''))
-      + (archived ? '' : '<button class="conversation-chat-config-btn" data-conversation-action="open-topic-config" aria-label="配置产物和运行" title="' + (controlledElsewhere ? '运行期间仅可查看对话' : '配置产物和运行') + '"' + (controlledElsewhere ? ' disabled' : '') + '><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h9m4 0h3M4 17h3m4 0h9M13 4v6M7 14v6"></path></svg></button>')
+      + (archived ? '' : '<button class="conversation-chat-config-btn" data-conversation-action="open-topic-config" aria-label="配置产物和运行" title="' + (controlledElsewhere ? '运行期间仅可查看对话' : '配置产物和运行') + '"' + (controlledElsewhere ? ' disabled' : '') + '>配置</button>')
       + '</div>'
       + '</div>'
       + (subtitle ? '<div class="conversation-chat-subtitle">' + esc(subtitle) + '</div>' : '')
@@ -4040,6 +4334,7 @@
       }
     }
     stream.classList.toggle('conversation-event-stream-readonly', !!controlledElsewhere || !!(topic && topic.archived));
+    refreshContextGovernanceView(topic);
     patchEventStream(topic);
     lastRenderKey = renderKeyFor(assistant, topic) + (controlledElsewhere ? '\u001fcontrolledElsewhere' : '');
     return true;
@@ -4051,6 +4346,7 @@
     var assistant = selectedAssistant();
     var topic = displayedTopic();
     if (topic && topic.archived && !archivedTopicById[topic.topicId]) loadDisplayedArchivedTopic(topic);
+    refreshContextGovernanceView(topic);
     var streamAssistant = topic ? assistantForTopicRun(topic, assistant) : assistant;
     var controlledElsewhere = topicControlledElsewhere(topic);
     syncReadonlySnapshotRefresh(topic, controlledElsewhere);
@@ -4254,10 +4550,11 @@
         };
       }
       setTopicControlAccess(topicId, { control: 'owner', running: topic.active, canControl: true, ownedByOtherPage: false });
-      return snapshot;
+      return loadContextGovernance(topicId, metadata, parts[1] && parts[1].events).then(function () { return snapshot; });
     }).catch(function (error) {
       if (error && error.code === 'CONVERSATION_NOT_FOUND') {
         topic.eventTotal = 0;
+        contextGovernanceByTopic[topicId] = { data: { summaryStatus: 'none' } };
         return snapshot;
       }
       throw error;
@@ -4577,7 +4874,7 @@
       await render();
       var app = null;
       if (appId) {
-        var response = await globalThis.PageAutomationResourceClient.create(chrome.runtime).get('/apps/' + encodeURIComponent(appId));
+        var response = await globalThis.PageAgentResourceClient.create(chrome.runtime).get('/apps/' + encodeURIComponent(appId));
         if (response.error) throw new Error(response.error.message);
         app = response.primary.data;
       }
@@ -4618,7 +4915,7 @@
         if (!result || result.error) throw new Error(result && result.error && result.error.message || '绑定应用失败');
         appBindings[topic.topicId] = result.result;
       }
-      var prompt = app ? '继续修改应用“' + app.name + '”（/apps/' + appId + '）。请先读取最新草稿与权限。我的修改需求：' : '请帮我创建一个应用。我的需求：';
+      var prompt = app ? '继续修改应用“' + app.name + '”（/apps/' + appId + '）。请先读取最新摘要与权限，按需读取待改草稿片段。我的修改需求：' : '请帮我创建一个应用。我的需求：';
       var draftKey = currentDraftKey(topic, assistant);
       var existingDraft = composerDrafts[draftKey] || '';
       if (existingDraft.indexOf(prompt) === -1) composerDrafts[draftKey] = existingDraft.trim() ? existingDraft + '\n\n' + prompt : prompt;
@@ -4952,6 +5249,7 @@
 
   function closeTopicTrajectory() {
     trajectoryViewOpen = false;
+    trajectoryRequestDetail = null;
     selectedTrajectoryCellId = '';
     selectedTrajectoryRequestNumber = 0;
     trajectoryTimelineRange = null;
@@ -4991,49 +5289,51 @@
     options = options || {};
     cancelConversationConfirm();
     return new Promise(function (resolve) {
-      var overlay = document.createElement('div');
+      var dialog = document.createElement('dialog');
+      var previous = document.activeElement;
       var danger = options.danger !== false;
       var detailHtml = options.detail !== undefined && options.detail !== null && options.detail !== ''
         ? PageAgentCodeEditor.html(options.detail, 'auto', { 'aria-label': '操作详情' })
         : '';
       var settled = false;
-      confirmDialogEl = overlay;
-      overlay.className = 'conversation-confirm-overlay';
-      overlay.innerHTML = '<div class="conversation-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="conversation-confirm-title">'
-        + '<div class="conversation-confirm-header"><h3 id="conversation-confirm-title">' + esc(options.title || '确认操作') + '</h3></div>'
-        + '<div class="conversation-confirm-body"><p>' + esc(options.message || '确认继续？') + '</p>' + detailHtml + '</div>'
+      confirmDialogEl = dialog;
+      dialog.className = 'conversation-confirm-dialog';
+      dialog.setAttribute('aria-labelledby', 'conversation-confirm-title');
+      dialog.setAttribute('aria-describedby', 'conversation-confirm-message');
+      dialog.innerHTML = '<header class="conversation-confirm-header"><h3 id="conversation-confirm-title">' + esc(options.title || '确认操作') + '</h3></header>'
+        + '<div class="conversation-confirm-body"><p id="conversation-confirm-message">' + esc(options.message || '确认继续？') + '</p>' + detailHtml + '</div>'
         + '<div class="conversation-confirm-actions">'
-        + '<button class="btn-secondary" type="button" data-conversation-confirm="cancel">' + esc(options.cancelText || '取消') + '</button>'
         + '<button class="' + (danger ? 'btn-danger' : 'btn-primary') + '" type="button" data-conversation-confirm="ok">' + esc(options.okText || '确认') + '</button>'
-        + '</div>'
+        + '<button class="btn-secondary" type="button" data-conversation-confirm="cancel">' + esc(options.cancelText || '取消') + '</button>'
         + '</div>';
       function finish(value) {
         if (settled) return;
         settled = true;
-        document.removeEventListener('keydown', onKeydown, true);
-        if (confirmDialogEl) {
-          confirmDialogEl.remove();
-          confirmDialogEl = null;
-        }
+        dialog.close();
+        dialog.remove();
+        confirmDialogEl = null;
         confirmDialogFinish = null;
+        if (previous && previous.isConnected) previous.focus({ preventScroll: true });
         resolve(value);
       }
       confirmDialogFinish = finish;
-      function onKeydown(event) {
-        if (event.key === 'Escape') finish(false);
-      }
-      overlay.addEventListener('click', function (event) {
-        event.stopPropagation();
-        if (event.target === overlay) finish(false);
+      dialog.addEventListener('cancel', function (event) {
+        event.preventDefault();
+        finish(false);
       });
-      overlay.querySelector('[data-conversation-confirm="cancel"]').addEventListener('click', function () { finish(false); });
-      overlay.querySelector('[data-conversation-confirm="ok"]').addEventListener('click', function () { finish(true); });
-      document.addEventListener('keydown', onKeydown, true);
-      document.body.appendChild(overlay);
-      setTimeout(function () {
-        var cancelBtn = overlay.querySelector('[data-conversation-confirm="cancel"]');
-        if (cancelBtn) cancelBtn.focus();
-      }, 0);
+      dialog.addEventListener('click', function (event) {
+        event.stopPropagation();
+        if (event.target !== dialog) return;
+        var bounds = dialog.getBoundingClientRect();
+        if (event.clientX < bounds.left || event.clientX > bounds.right
+            || event.clientY < bounds.top || event.clientY > bounds.bottom) finish(false);
+      });
+      var cancelButton = dialog.querySelector('[data-conversation-confirm="cancel"]');
+      cancelButton.addEventListener('click', function () { finish(false); });
+      dialog.querySelector('[data-conversation-confirm="ok"]').addEventListener('click', function () { finish(true); });
+      document.body.appendChild(dialog);
+      dialog.showModal();
+      cancelButton.focus({ preventScroll: true });
     });
   }
 
@@ -5296,16 +5596,16 @@
       + '</section>'
       + '</div>';
     openConversationDrawer(assistantEditorDraft.mode === 'edit' ? '编辑助手' : '新建助手', body,
-      '<button class="btn-secondary" data-conversation-action="cancel-assistant-editor">取消</button>'
-      + '<button class="btn-primary" data-conversation-action="save-assistant-editor">保存</button>');
+      '<button class="btn-primary" data-conversation-action="save-assistant-editor">保存</button>'
+      + '<button class="btn-secondary" data-conversation-action="cancel-assistant-editor">取消</button>');
     applyAssistantSkillTreeChecks();
   }
 
   function openTopicConfigDrawer() {
     topicConfigTab = topicConfigTab === 'permissions' ? 'permissions' : 'run';
     openConversationDrawer('配置产物与运行', renderConfigPanelContent(displayedTopic()),
-      '<button class="btn-secondary" data-conversation-action="close-conversation-drawer">关闭</button>'
-      + '<button class="btn-primary" data-conversation-action="save-topic-permissions">保存模式和权限</button>');
+      '<button class="btn-primary" data-conversation-action="save-topic-permissions">保存</button>'
+      + '<button class="btn-secondary" data-conversation-action="close-conversation-drawer">关闭</button>');
     topicPermissionsBaseline = topicPermissionsSignature();
   }
 
@@ -6392,15 +6692,40 @@
       openTopicTrajectory();
       return;
     }
+    if (action === 'open-context-governance') {
+      event.preventDefault();
+      event.stopPropagation();
+      openContextGovernance();
+      return;
+    }
     if (action === 'close-topic-trajectory') {
       event.preventDefault();
       event.stopPropagation();
       closeTopicTrajectory();
       return;
     }
+    if (action === 'trajectory-load-older') {
+      event.preventDefault();
+      var olderTopic = displayedTopic();
+      if (!olderTopic) return;
+      var olderPane = trajectoryTablePane();
+      var olderHeight = olderPane && olderPane.scrollHeight || 0;
+      var olderTop = olderPane && olderPane.scrollTop || 0;
+      trajectoryFollowsTail = false;
+      var olderRequest = loadOlderTopicTrajectory(olderTopic.topicId);
+      refreshOpenTraceViewer(true);
+      olderRequest.then(function () {
+        if (!displayedTopic() || displayedTopic().topicId !== olderTopic.topicId) return;
+        refreshOpenTraceViewer(true);
+        var pane = trajectoryTablePane();
+        if (pane) pane.scrollTop = olderTop + pane.scrollHeight - olderHeight;
+      }).catch(function (error) { refreshOpenTraceViewer(true); toast(error.message || String(error), true); });
+      return;
+    }
     if (action === 'trajectory-inspector-tab') {
       event.preventDefault();
       trajectoryInspectorTab = target.dataset.tab || 'overview';
+      if (trajectoryInspectorTab === 'request' || trajectoryInspectorTab === 'options') loadSelectedTrajectoryRequestDetail();
       refreshOpenTraceViewer(true);
       return;
     }
@@ -6961,6 +7286,7 @@
         cursor: { beforeSequence: beforeSequence },
         limit: conversationListView.DEFAULT_PAGE_SIZE,
         includePayloads: true,
+        view: 'conversation',
       }).then(function (page) {
         var current = displayedTopic();
         if (!current || current.topicId !== topicId) return;
@@ -7109,10 +7435,10 @@
       chrome.storage.onChanged.addListener(function (changes, area) {
         if (area === 'local' && changes[globalThis.ModelSettings.SETTINGS_KEY]) refresh();
         if (area === 'local' && changes[appBindingKey]) { appBindings = changes[appBindingKey].newValue || {}; if (conversationSectionVisible()) { lastRenderKey = ''; renderLoaded(); } }
-        if (area === 'local' && globalThis.PageAutomationSystemSettings
-            && changes[globalThis.PageAutomationSystemSettings.SETTINGS_KEY]) {
-          applyConversationSettings(globalThis.PageAutomationSystemSettings.normalize(
-            changes[globalThis.PageAutomationSystemSettings.SETTINGS_KEY].newValue
+        if (area === 'local' && globalThis.PageAgentSystemSettings
+            && changes[globalThis.PageAgentSystemSettings.SETTINGS_KEY]) {
+          applyConversationSettings(globalThis.PageAgentSystemSettings.normalize(
+            changes[globalThis.PageAgentSystemSettings.SETTINGS_KEY].newValue
           ));
         }
       });

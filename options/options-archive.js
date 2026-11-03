@@ -4,7 +4,7 @@
   var panel = element('panel'), root = element('controls');
   var autoPanel = element('auto-panel'), autoRoot = element('auto-controls');
   var latest = null, bucket = null, busy = false, autoDirty = false, connectionDirty = false;
-  var selectedConnectionId = null, renderedConnectionId = null, logSignature = '', cleared = new Set();
+  var selectedConnectionId = null, renderedConnectionId = null, logSignature = '', autoLogSignature = '', cleared = new Set();
   var editorOpen = false, connectionsSignature = '';
   var selectedSourceId = null, sourcesSignature = '', selectedVersionId = null, versionsSignature = '';
   var statusSequence = 0;
@@ -78,7 +78,6 @@
     element('save-auto').disabled = busy || !latest.autoSyncAvailable || !!latest.syncTarget || !autoDirty;
     setText('save-auto', autoDirty ? '保存（未保存）' : '保存');
     ['bucket', 'auto-backup', 'interval', 'retain'].forEach(function (id) { element(id).disabled = busy || !current; });
-    if (latest.syncTarget && latest.syncTarget.connectionId === selectedConnectionId) element('bucket').disabled = true;
     element('interval').disabled = element('interval').disabled || !element('auto-backup').checked;
     element('save').disabled = busy || !current || !connectionDirty && !!latest.target;
     setText('save', connectionDirty ? '保存（未保存）' : '保存');
@@ -243,41 +242,41 @@
     setText('log-bucket', latest.target && latest.target.connectionId === selectedConnectionId ? '桶 ' + latest.target.bucketId : '');
     element('log-identity').title = [current.alias, current.url].filter(Boolean).join(' · ');
   }
-  function renderLogs(operations) {
-    var target = latest.target;
+  function renderLogs(operations, automatic) {
+    var target = automatic ? { connectionId: latest.settings.syncConnectionId } : latest.target;
     var entries = (operations || []).filter(function (item) {
-      return target && item.clientId === latest.clientId && item.bucketId === target.bucketId
-        && !cleared.has(target.connectionId + ':' + item.id);
+      return target && item.clientId === latest.clientId
+        && (automatic || !cleared.has(target.connectionId + ':' + item.id));
     }).sort(function (a, b) { return (a.completedAt || a.createdAt) - (b.completedAt || b.createdAt); });
-    var signature = JSON.stringify([selectedConnectionId, target, entries]);
-    if (signature === logSignature) return;
-    logSignature = signature;
-    var viewport = element('log-list'), follow = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 8;
+    var signature = JSON.stringify([target, entries, automatic && latest.syncError]);
+    if (signature === (automatic ? autoLogSignature : logSignature)) return;
+    if (automatic) autoLogSignature = signature; else logSignature = signature;
+    var viewport = element(automatic ? 'auto-log-list' : 'log-list'), follow = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 8;
     var rows = document.createDocumentFragment();
     entries.forEach(function (operation) {
-      var level = operation.status === 'failed' ? 'error' : operation.status === 'interrupted' ? 'warn' : 'info';
-      var row = node('div', 'mcp-log-entry mcp-log-' + (operation.status === 'complete' ? 'success' : level));
+      var warnings = operation.warnings || [];
+      var level = operation.status === 'failed' ? 'error' : operation.status === 'interrupted' || warnings.length ? 'warn' : 'info';
+      var row = node('div', 'mcp-log-entry mcp-log-' + (operation.status === 'complete' && !warnings.length ? 'success' : level));
       var text = (operation.kind === 'apply' ? 'sync' : 'backup') + ' ' + (operation.status === 'complete' ? 'completed' : operation.status)
-        + ' trigger=' + operation.reason;
+        + ' trigger=' + operation.reason + ' bucket=' + operation.bucketId;
       if (operation.versionId) text += ' version=' + operation.versionId;
-      if (operation.backupVersionId) text += ' backup=' + operation.backupVersionId;
+      if (operation.backupVersionId) text += ' backup=' + (operation.backupBucketId || operation.bucketId) + '/' + operation.backupVersionId;
+      if (warnings.length) text += ' warnings=' + warnings.length;
       text += ' operation=' + operation.id;
       if (operation.error) text += ' error=' + (/^[A-Z_]+$/.test(operation.errorCode || '') ? operation.errorCode : 'OPERATION_FAILED');
       row.append(node('span', 'mcp-log-time', time(operation.completedAt || operation.createdAt)), document.createTextNode(' '),
         node('span', 'mcp-log-level', level), document.createTextNode(' '), node('span', 'mcp-log-message', text));
-      if (operation.error) {
-        var detail = node('button', 'btn-small', 'Details'); detail.type = 'button';
-        detail.addEventListener('click', function () { message(operation.error); }); row.appendChild(detail);
-      }
-      if (['failed', 'interrupted'].includes(operation.status)) {
+      if (operation.error || warnings.length) row.appendChild(node('span', 'mcp-log-detail', ' ' + [operation.error].concat(warnings).filter(Boolean).join('；')));
+      if (!automatic && ['failed', 'interrupted'].includes(operation.status)) {
         var retry = node('button', 'btn-small', 'Retry'); retry.type = 'button'; retry.dataset.retry = operation.id;
         retry.addEventListener('click', function () { run(function () { return operate('retry', { operationId: operation.id }); }); });
         row.appendChild(retry);
       }
       rows.appendChild(row);
     });
-    if (!entries.length) rows.appendChild(node('div', 'mcp-log-empty', 'No events'));
-    element('operations').replaceChildren(rows);
+    if (automatic && latest.syncError) rows.appendChild(node('div', 'mcp-log-empty', latest.syncError));
+    else if (!entries.length) rows.appendChild(node('div', 'mcp-log-empty', '暂无日志'));
+    element(automatic ? 'auto-operations' : 'operations').replaceChildren(rows);
     if (follow) viewport.scrollTop = viewport.scrollHeight;
   }
   function render(value) {
@@ -311,7 +310,7 @@
       summary = '启动同步目标：' + (sourceConnection ? sourceConnection.alias || sourceConnection.url : value.syncTarget.connectionId)
         + ' / 桶 ' + value.syncTarget.bucketId + ' / ' + value.syncVersion + '。由容器启动设置管理。' + summary;
     }
-    if (value.recoveryPending) summary += ' 有未完成的同步，请到对应连接的日志中重试。';
+    if (value.recoveryPending) summary += ' 有未完成的同步，可到对应连接的日志中重试；不阻断其他任务。';
     if (selectedSourceId && !value.connections.some(function (item) { return item.id === selectedSourceId; })) summary += ' 原同步源连接已删除，请重新选择。';
     setText('summary', summary);
     var negotiation = value.compatibility;
@@ -328,7 +327,7 @@
     if (changed) selectedVersionId = null;
     if (versionsOpen) renderVersions();
     renderedConnectionId = selectedConnectionId;
-    renderIdentity(); renderLogs(value.archive ? value.archive.operations : []); controls();
+    renderIdentity(); renderLogs(value.archive ? value.archive.operations : []); renderLogs(value.syncOperations || [], true); controls();
   }
   function isEditing() {
     return (root.contains(document.activeElement) || autoRoot.contains(document.activeElement))
@@ -376,6 +375,7 @@
     }
     await reload();
     if (operation.status !== 'complete') throw new Error(operation.error || '操作尚未完成，请在日志中查看后续结果。');
+    if (operation.warnings && operation.warnings.length) { message('同步完成，存在告警：' + operation.warnings.join('；')); return; }
     message('操作完成');
   }
   element('auto-sync').addEventListener('change', function () { autoDirty = true; controls(); });
@@ -469,7 +469,9 @@
   });
   element('apply').addEventListener('click', function () {
     var versionId = selectedVersionId;
-    if (!window.confirm('将从「' + connection().alias + '」同步 ' + versionId + '，覆盖本地配置并删除版本中不存在的配置。同步前会先备份。继续？')) return;
+    if (!window.confirm('将从「' + connection().alias + '」同步 ' + versionId + '，覆盖本地配置。'
+      + (connection().arpPermissions.delete ? '版本中不存在的可写配置会被删除。' : '未开放删除权限，将保留版本之外的本地配置。')
+      + '缺失的助手 Skill/MCP 引用会跳过并记录告警。同步前会先备份。继续？')) return;
     run(function () { return operate('apply', { versionId: versionId }); });
   });
   element('syncable').addEventListener('click', function () { run(async function () {
@@ -481,7 +483,7 @@
   ['reload', 'log-reload'].forEach(function (id) { element(id).addEventListener('click', function () { run(reload); }); });
   element('log-clear').addEventListener('click', function () {
     if (!latest.target || !latest.archive) return;
-    latest.archive.operations.forEach(function (item) { if (item.clientId === latest.clientId && item.bucketId === latest.target.bucketId && item.status === 'complete') cleared.add(selectedConnectionId + ':' + item.id); });
+    latest.archive.operations.forEach(function (item) { if (item.clientId === latest.clientId && item.status === 'complete') cleared.add(selectedConnectionId + ':' + item.id); });
     renderLogs(latest.archive.operations); controls();
   });
   element('log-identity').addEventListener('click', function (event) {

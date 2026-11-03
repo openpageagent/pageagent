@@ -14,7 +14,10 @@
     function target(connectionId) {
       return settings.targets.find(function (item) { return item.connectionId === connectionId; }) || null;
     }
-    function binding() { return target(settings.syncConnectionId); }
+    function binding() {
+      var source = target(settings.syncConnectionId);
+      return source && syncTarget ? Object.assign({}, source, syncTarget) : source;
+    }
     function validateSettings(value, connections) {
       c.fields(value, ['autoSyncEnabled', 'autoSyncDisabledReason', 'syncConnectionId', 'targets'], ['syncConnectionId', 'targets']);
       if (value.autoSyncEnabled !== undefined && typeof value.autoSyncEnabled !== 'boolean') throw new Error('自动同步开关无效');
@@ -111,11 +114,12 @@
         syncTarget = { connectionId: source.connectionId, bucketId: file.syncTarget.bucketId };
         var policy = target(source.connectionId) || source;
         settings.targets = settings.targets.filter(function (item) { return item.connectionId !== source.connectionId; });
-        settings.targets.push(Object.assign({}, policy, { bucketId: syncTarget.bucketId }));
+        settings.targets.push(policy);
         settings.syncConnectionId = source.connectionId;
         settings.autoSyncEnabled = environmentAllowsSync;
         delete settings.autoSyncDisabledReason;
         settings = validateSettings(settings);
+        validateSettings({ syncConnectionId: source.connectionId, targets: [Object.assign({}, policy, syncTarget)] });
       }
       await options.onLoaded();
       initialized = true;
@@ -185,8 +189,8 @@
       saveConfiguration: async function (value) {
         if (syncTarget) {
           var source = value && Array.isArray(value.targets) && value.targets.find(function (item) { return item.connectionId === syncTarget.connectionId; });
-          if (!source || source.bucketId !== syncTarget.bucketId || value.syncConnectionId !== syncTarget.connectionId
-              || value.autoSyncEnabled !== environmentAllowsSync) throw new Error('同步源、桶名和开关由容器启动设置管理，请修改环境变量后重建容器');
+          if (!source || value.syncConnectionId !== syncTarget.connectionId
+              || value.autoSyncEnabled !== environmentAllowsSync) throw new Error('同步源和开关由容器启动设置管理，请修改环境变量后重建容器；备份桶可单独修改');
         }
         var connections = (await options.runtime.store.load()).connections;
         var disablingOnly = value && value.autoSyncEnabled === false && value.syncConnectionId === settings.syncConnectionId

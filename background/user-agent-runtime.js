@@ -10,7 +10,7 @@
 
   function create(chromeApi, options) {
     options = options || {};
-    var settingsApi = root.PageAutomationSystemSettings;
+    var settingsApi = root.PageAgentSystemSettings;
     var profileApi = root.UserAgentProfile;
     var rulesApi = chromeApi.declarativeNetRequest;
     var queue = Promise.resolve();

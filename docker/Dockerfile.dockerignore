@@ -19,6 +19,7 @@ docs
 docker/*
 !docker/start.cjs
 !docker/selkies.cjs
+!docker/selkies-2.1.0.patch
 mcp-server/**
 !mcp-server/*.js
 !mcp-server/package.json

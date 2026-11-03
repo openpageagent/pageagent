@@ -5,6 +5,12 @@ import { receiveToolInput } from './tool-input.js';
 import { notify } from './feedback.js';
 import '/utilities/catalog.js';
 
+let parameterReceiver;
+export async function applyParameters(input) {
+  if (!parameterReceiver) throw new Error('工具编辑器尚未就绪，无法应用启动参数。');
+  await parameterReceiver(input);
+}
+
 const labels = {
   digest: '计算摘要', encrypt: '加密', decrypt: '解密', keypair: '生成密钥对', sign: '签名', verify: '验证', hash: '生成哈希', checksum: '计算校验码',
   encode: '编码', decode: '解码', format: '格式化 / 校验', minify: '压缩', sort: '排序', escape: '转义', unescape: '反转义', repair: '修复',
@@ -26,7 +32,6 @@ export async function mountDeveloperUtils() {
   let selected = null, fields = new Map(), values = {}, result = null;
   let busy = false, loading = false, revision = 0, previewUrl = null, markdownView = null, editorReady = false, closed = false;
   let editorError = '';
-  let launchHandled = false;
   let automaticTimer = null, pending = false, generatedText = '', qrReadInput = '', hashFile = null;
   const actionBar = $('operation').parentElement;
   $('subtitle')?.remove();
@@ -702,7 +707,7 @@ export async function mountDeveloperUtils() {
     } else if (entry.local) filename = entry.id + (entry.local === 'html' ? '.html' : '.md');
     else if (entry.tool === 'markdown') {
       const theme = getComputedStyle(document.documentElement);
-      const css = 'body{max-width:900px;margin:40px auto;padding:0 24px;line-height:1.7;background:' + theme.getPropertyValue('--bg') + ';color:' + theme.getPropertyValue('--text') + ';font-family:system-ui,sans-serif}pre{overflow:auto;padding:16px}code{font-family:monospace}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid;padding:6px 12px}blockquote{border-left:3px solid;padding-left:16px}';
+      const css = 'body{max-width:900px;margin:8px auto;padding:0 8px;line-height:1.7;background:' + theme.getPropertyValue('--bg') + ';color:' + theme.getPropertyValue('--text') + ';font-family:system-ui,sans-serif}pre{overflow:auto;padding:8px}code{font-family:monospace}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid;padding:6px 8px}blockquote{border-left:3px solid;padding-left:8px}';
       content = '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:; base-uri \'none\'; form-action \'none\'"><title>Markdown</title><style>' + css + '</style></head><body>' + text + '</body></html>';
       filename = 'markdown.html'; mime = 'text/html;charset=utf-8';
     }
@@ -727,7 +732,7 @@ export async function mountDeveloperUtils() {
       if (closed) return;
       editorReady = true; bindEditors();
       invalidate(permitted() || selected.local ? '就绪 · 输入内容或载入示例。' : '工具目录已加载，执行工具前请恢复应用权限。');
-      void receiveLaunch();
+      parameterReceiver = receiveLaunch;
     } catch (error) { editorError = '编辑器加载失败：' + error.message + '。点击「重新加载」重试。'; message(editorError, true); }
     finally { loading = false; controls(); }
   }
@@ -739,25 +744,19 @@ export async function mountDeveloperUtils() {
     } catch (error) { message(error.message, true); }
   }
 
-  async function receiveLaunch() {
-    if (launchHandled || closed) return;
-    launchHandled = true;
-    try {
-      await PageAgent.ready;
-      if (closed) return;
-      const receivers = entries.filter(entry => !['randomRecipe', 'loremIpsum'].includes(entry.tool));
-      await receiveToolInput(PageAgent.apps.input, receivers, payload => {
-        if (closed) return;
-        const entry = entries.find(entry => entry.id === payload.toolId);
-        if (['compact', 'color', 'radix'].includes(layoutFor(entry)) && /[\r\n]/.test(payload.input)) throw new Error('此工具只接收单行文本，请选择其他工具。');
-        selectTool(entry);
-        $('operation').value = payload.operation;
-        setInput(payload.input);
-        if (selected.id === 'numberbase') radixFields.update({ 10: payload.input });
-        renderFields(); updateLayout(); updateLanguage(); renderActions();
-        invalidate('已接收内容。');
-      });
-    } catch (error) { if (!closed) message('无法接收内容：' + error.message, true); }
+  async function receiveLaunch(input) {
+    if (closed) throw new Error('应用已关闭，无法应用启动参数。');
+    const receivers = entries.filter(entry => !['randomRecipe', 'loremIpsum'].includes(entry.tool));
+    await receiveToolInput(input, receivers, payload => {
+      const entry = entries.find(entry => entry.id === payload.toolId);
+      if (['compact', 'color', 'radix'].includes(layoutFor(entry)) && /[\r\n]/.test(payload.input)) throw new Error('此工具只接收单行文本，请选择其他工具。');
+      selectTool(entry);
+      $('operation').value = payload.operation;
+      setInput(payload.input);
+      if (selected.id === 'numberbase') radixFields.update({ 10: payload.input });
+      renderFields(); updateLayout(); updateLanguage(); renderActions();
+      invalidate('已接收内容。');
+    });
   }
 
   $('search').addEventListener('input', renderNavigation);

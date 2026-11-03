@@ -1,4 +1,4 @@
-// ARP/1 BrowserResourceAdapter for browser lifecycle and CDP automation.
+// ARP/1 BrowserResourceAdapter for browser lifecycle and CDP commands.
 (function attachBrowserResourceAdapter(root, factory) {
   'use strict';
   var commonJs = typeof module === 'object' && module.exports;
@@ -461,9 +461,9 @@
     options = options || {};
     var chromeApi = options.chrome || root && root.chrome;
     var cdpSessionManager = options.cdpSessionManager;
-    var pageAutomation = options.pageAutomation;
+    var pageAgent = options.pageAgent;
     if (!chromeApi || !chromeApi.tabs || !chromeApi.windows) throw new Error('createBrowserResourceAdapter requires chrome tabs and windows APIs');
-    if (!pageAutomation || !pageAutomation.action) throw new Error('BrowserResourceAdapter requires PageAutomationRuntime');
+    if (!pageAgent || !pageAgent.action) throw new Error('BrowserResourceAdapter requires PageAgentRuntime');
     ['query', 'get', 'create', 'update', 'remove'].forEach(function (name) {
       if (typeof chromeApi.tabs[name] !== 'function') throw new Error('BrowserResourceAdapter requires chrome.tabs.' + name);
     });
@@ -696,7 +696,7 @@
       var body = request.body || {};
       if (template === '/browser/tabs') {
         var createOwner = actionOwner(context);
-        return pageAutomation.action.act({ source: 'agent', owner: createOwner, signal: context.abortSignal, tabId: 0, kind: 'createTab', input: body }).then(function (result) {
+        return pageAgent.action.act({ source: 'agent', owner: createOwner, signal: context.abortSignal, tabId: 0, kind: 'createTab', input: body }).then(function (result) {
           var tab = result.derivedFacts.createdTab;
           if (!tab || !(Number(tab.id) > 0)) throw new Error('PageActionEngine did not return the created tab');
           var representation = tabRepresentation(tab);
@@ -716,9 +716,9 @@
         var navigationId = randomId('navigation', cryptoObject);
         var navigationTabId = Number(request.params.tabId);
         var owner = actionOwner(context);
-        return pageAutomation.action.act({ source: 'agent', owner: owner, signal: context.abortSignal, tabId: navigationTabId, kind: 'navigate', input: { url: body.url } }).then(function (result) {
+        return pageAgent.action.act({ source: 'agent', owner: owner, signal: context.abortSignal, tabId: navigationTabId, kind: 'navigate', input: { url: body.url } }).then(function (result) {
           var activation = body.active === true
-            ? pageAutomation.action.act({ source: 'agent', owner: owner, signal: context.abortSignal, tabId: navigationTabId, kind: 'activateTab', input: {} })
+            ? pageAgent.action.act({ source: 'agent', owner: owner, signal: context.abortSignal, tabId: navigationTabId, kind: 'activateTab', input: {} })
             : Promise.resolve(null);
           return activation.then(function (activationResult) {
           return chromeCall(chromeApi.tabs, 'get', [navigationTabId]).then(function (tab) {
@@ -825,7 +825,7 @@
         var patchTabId = Number(request.params.tabId);
         var patchOwner = actionOwner(context);
         var activation = patchValue.active === true
-          ? pageAutomation.action.act({ source: 'agent', owner: patchOwner, signal: context.abortSignal, tabId: patchTabId, kind: 'activateTab', input: {} })
+          ? pageAgent.action.act({ source: 'agent', owner: patchOwner, signal: context.abortSignal, tabId: patchTabId, kind: 'activateTab', input: {} })
           : Promise.resolve(null);
         var remainingPatch = Object.assign({}, patchValue);
         if (remainingPatch.active === true) delete remainingPatch.active;
@@ -856,7 +856,7 @@
       if (template === '/browser/tabs/{tabId}') {
         var closeTabId = Number(request.params.tabId);
         var closeOwner = actionOwner(context);
-        return pageAutomation.action.act({ source: 'agent', owner: closeOwner, signal: context.abortSignal, tabId: closeTabId, kind: 'closeTab', input: {} }).then(function (result) {
+        return pageAgent.action.act({ source: 'agent', owner: closeOwner, signal: context.abortSignal, tabId: closeTabId, kind: 'closeTab', input: {} }).then(function (result) {
           var actionReceipt = result.receipt;
           return {
             statusCode: 204,

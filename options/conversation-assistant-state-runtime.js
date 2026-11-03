@@ -33,7 +33,8 @@
     var profileSchema = options.profileSchema;
     if (!schemaApi || typeof schemaApi.safeMerge !== 'function'
         || typeof schemaApi.safeShallowMerge !== 'function'
-        || typeof schemaApi.sameValue !== 'function') {
+        || typeof schemaApi.sameValue !== 'function'
+        || typeof schemaApi.upgradeAppDeveloperPrompt !== 'function') {
       throw new Error('ConversationAssistantStateRuntime requires schemaApi');
     }
     if (!profileSchema || typeof profileSchema.normalizeProfile !== 'function'
@@ -83,6 +84,7 @@
           return;
         }
         var normalized = profileSchema.normalizeProfile(current, { id: id });
+        normalized.prompt = schemaApi.upgradeAppDeveloperPrompt(normalized.prompt);
         if (!schemaApi.sameValue(current, normalized)) markStateNeedsPersist(state);
         state.assistants[id] = normalized;
       });
@@ -129,7 +131,12 @@
         markStateNeedsPersist(state);
         return topic;
       }
-      var normalized = profileSchema.normalizeSnapshot(topic.assistantSnapshot, { id: topic.assistantId });
+      var snapshotInput = topic.assistantSnapshot;
+      var upgradedPrompt = schemaApi.upgradeAppDeveloperPrompt(snapshotInput.prompt);
+      if (!topic.archived && upgradedPrompt !== snapshotInput.prompt && assistant.prompt === upgradedPrompt) {
+        snapshotInput = schemaApi.safeMerge(snapshotInput, { prompt: upgradedPrompt });
+      }
+      var normalized = profileSchema.normalizeSnapshot(snapshotInput, { id: topic.assistantId });
       if (!schemaApi.sameValue(topic.assistantSnapshot, normalized)) {
         topic.assistantSnapshot = normalized;
         markStateNeedsPersist(state);

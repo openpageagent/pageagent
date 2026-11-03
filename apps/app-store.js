@@ -1,4 +1,4 @@
-// Applications are content, never part of automation_config. Opening is lazy.
+// Applications are content, never part of page_agent_config. Opening is lazy.
 (function (root) {
   'use strict';
   var C = root.AppContract;
@@ -101,7 +101,7 @@
     function codeRecord(appId, slot, revision, code) {
       return { appId: appId, slot: slot, revision: revision, code: code, bytes: new Blob([code.html, code.css, code.javascript, code.themeCss, JSON.stringify(Object.assign({}, code, { html: '', css: '', javascript: '', themeCss: '' }))]).size };
     }
-    function summarySlot(record) { return { revision: record.revision, bytes: record.bytes, description: record.code.description, files: Object.keys(record.code.files || {}), capabilities: record.code.capabilities, declarations: C.declarations(record.code), dependencies: record.code.dependencies, customBehavior: record.code.customBehavior, externalResources: record.code.externalResources }; }
+    function summarySlot(record) { return { revision: record.revision, bytes: record.bytes, description: record.code.description, parameters: record.code.parameters ?? C.noParameters(), files: Object.keys(record.code.files || {}), capabilities: record.code.capabilities, declarations: C.declarations(record.code), dependencies: record.code.dependencies, customBehavior: record.code.customBehavior, externalResources: record.code.externalResources }; }
     function metadata(input, old) {
       var name = String(input.name === undefined && old ? old.name : input.name || '').trim();
       if (!name) throw C.error('SCHEMA_VALIDATION_FAILED', '应用名称不能为空');
@@ -291,7 +291,9 @@
           var cursor = request.result;
           if (!cursor) { t.result(result); return; }
           if (items.length === limit) { result.nextCursor = JSON.stringify({ sort: sort, prefix: prefix, key: lastKey }); t.result(result); return; }
-          items.push(cursor.value); lastKey = cursor.key; cursor.continue();
+          var meta = cursor.value;
+          Object.values(meta.slots).forEach(function (slot) { slot.parameters = slot.parameters ?? C.noParameters(); });
+          items.push(meta); lastKey = cursor.key; cursor.continue();
         };
       });
     }

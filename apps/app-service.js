@@ -190,6 +190,7 @@
         t.get('app_meta', appId, function (meta) { t.get('app_permissions', appId, function (permission) { t.result([meta, permission]); }); });
       });
       var meta = store.required(values[0]), p = values[1];
+      Object.values(meta.slots).forEach(function (slot) { slot.parameters = slot.parameters ?? C.noParameters(); });
       var defaults = meta.__builtin && meta.__builtinDefaultPermissions;
       return Object.assign({}, meta, { permissions: {
         appId: appId, generationScope: p.generationScope, enabled: p.enabled, resources: p.resources || [],
@@ -394,10 +395,23 @@
       bindingWrites = operation;
       return operation;
     }
-    async function conversationContext(conversationId) {
+    async function conversationContext(conversationId, pageUrl) {
       var stored = await chrome.storage.local.get(bindingKey), binding = stored[bindingKey] && stored[bindingKey][conversationId];
-      if (!binding || binding.active === false) return null;
-      try { return Object.assign(await summary(binding.appId), { editingSlot: 'draft' }); } catch (error) { return { appId: binding.appId, name: binding.name, unavailable: error.message }; }
+      var entry = C.parseUrl(pageUrl, chrome.runtime.getURL('/')), page = null;
+      if (entry) {
+        try {
+          var meta = store.required(entry.appId ? await store.get('app_meta', entry.appId) : await store.findBySlug(entry.slug));
+          page = { appId: meta.appId, name: meta.name, slot: entry.slot };
+        } catch (error) {
+          page = { appId: entry.appId || null, name: entry.slug || entry.appId, slot: entry.slot, unavailable: error.message };
+        }
+      }
+      var target = binding && binding.active !== false ? binding : page;
+      if (!target) return null;
+      var context = { editingSlot: 'draft' };
+      if (page) context.page = page;
+      try { return Object.assign(await summary(target.appId), context); }
+      catch (error) { return Object.assign({ appId: target.appId, name: target.name, unavailable: target.unavailable || error.message }, context); }
     }
     async function preflightImport(item, modules, scope, plan, rebindConnections) {
       store.assertEditable(await store.get('app_meta', item.appId));
@@ -513,6 +527,11 @@
       slot = slot || (meta.slots.published ? 'published' : 'draft');
       if (!meta.slots[slot]) throw C.error(slot === 'draft' ? 'DRAFT_NOT_FOUND' : 'NOT_PUBLISHED', slot === 'draft' ? '此应用只有发布内容，请编辑并保存草稿后预览' : '请先发布应用');
       if (expectedRevision && meta.slots[slot].revision !== expectedRevision) throw C.error('DEPENDENCY_CHANGED', '目标应用在依赖检查后已更新，请重新读取依赖');
+      if (input !== undefined) {
+        var record = store.required(await store.get('app_code', [appId, slot]));
+        if (record.revision !== meta.slots[slot].revision) throw C.error('CONTENT_CHANGED', '应用已更新，请重新读取');
+        C.validateLaunchInput(record.code, input);
+      }
       var url = chrome.runtime.getURL(C.path(appId, slot, meta.slug).slice(1)), legacyUrl = chrome.runtime.getURL(C.path(appId, slot).slice(1));
       if (input !== undefined) url += C.launchHash(input);
       var sessionTabs = root.PageAgentAppBridge ? root.PageAgentAppBridge.tabIds(appId, slot) : [];
@@ -568,8 +587,9 @@
         var state = await summary(appId), current = state.slots[inherited ? 'published' : slot];
         if (!current || current.revision !== record.revision || inherited && state.slots.draft) throw C.error('REVISION_CONFLICT', '读取期间应用已变化，请重新读取最新源码');
         if (query.revision && query.revision !== state.revision) throw C.error('REVISION_CONFLICT', '源码读取版本已变化，请重新搜索或读取');
+        var code = Object.assign({}, record.code, { parameters: record.code.parameters ?? C.noParameters() });
         if (field !== undefined) {
-          var source = record.code[field], data;
+          var source = code[field], data;
           if (field === 'files') {
             var files = record.code.files || {};
             if (fileName === undefined) {
@@ -593,7 +613,7 @@
           } else data = readCodeLines(source, query);
           return Object.assign({ appId: appId, revision: state.revision, slot: slot, field: field, inheritedFromPublished: inherited }, fileName === undefined ? {} : { fileName: fileName }, data);
         }
-        return Object.assign({}, state, { code: record.code, slot: slot, inheritedFromPublished: inherited });
+        return Object.assign({}, state, { code: code, slot: slot, inheritedFromPublished: inherited });
       }
     };
   }

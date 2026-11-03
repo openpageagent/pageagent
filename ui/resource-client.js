@@ -1,13 +1,13 @@
-(function attachPageAutomationResourceClient(root, factory) {
+(function attachPageAgentResourceClient(root, factory) {
   'use strict';
 
-  var runtimeClient = root && root.PageAutomationRuntimeClient;
+  var runtimeClient = root && root.PageAgentRuntimeClient;
   if (typeof module === 'object' && module.exports) {
     runtimeClient = runtimeClient || require('./runtime-client.js');
   }
   var api = factory(runtimeClient);
   if (typeof module === 'object' && module.exports) module.exports = api;
-  if (root) root.PageAutomationResourceClient = api;
+  if (root) root.PageAgentResourceClient = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (RuntimeClient) {
   'use strict';
 
@@ -443,7 +443,7 @@
     var transport = options.transport;
     if (typeof transport !== 'function') {
       if (!RuntimeClient || typeof RuntimeClient.create !== 'function') {
-        throw new Error('PageAutomationRuntimeClient must load before PageAutomationResourceClient');
+        throw new Error('PageAgentRuntimeClient must load before PageAgentResourceClient');
       }
       transport = RuntimeClient.create(runtime).send;
     }

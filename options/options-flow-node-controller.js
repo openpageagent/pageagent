@@ -13,7 +13,7 @@
     return;
   }
 
-  var lifecycleApi = root && root.PageAutomationLifecycle;
+  var lifecycleApi = root && root.PageAgentLifecycle;
   if (commonJs && !lifecycleApi) lifecycleApi = require('../ui/lifecycle.js');
   var sortLayoutApi = root && root.PageAgentSortLayout;
   if (commonJs && !sortLayoutApi) sortLayoutApi = require('../builtin-apps/shared/sort-layout.js');
@@ -176,7 +176,7 @@
     options = options || {};
     var lifecycleFactory = options.lifecycleApi || LifecycleApi;
     if (!lifecycleFactory || typeof lifecycleFactory.create !== 'function') {
-      throw new Error('PageAutomationLifecycle must load before OptionsFlowNodeController');
+      throw new Error('PageAgentLifecycle must load before OptionsFlowNodeController');
     }
 
     var windowRef = options.window || (typeof globalThis !== 'undefined' ? globalThis : {});

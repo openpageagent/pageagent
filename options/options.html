@@ -418,7 +418,7 @@ return result                                          // 返回值写入节点�
             <summary>备份说明</summary>
             <div class="mcp-info">
               <p><b>备份设置：</b>各连接独立设置开关、间隔和保留数，保存后生效，支持同时备份。关闭自动备份仍可「立即备份」。</p>
-              <p><b>范围与保留：</b>不含密钥、连接身份和对话记录；使用中的版本额外保留。</p>
+              <p><b>范围与保留：</b>包含 Skill 和 HTTP MCP 服务器配置（含 Bearer Token、自定义 Header）；不含模型密钥、连接配对身份、浏览器 Cookie 内容和对话记录。使用中的版本额外保留。</p>
             </div>
           </details>
           <p id="archive-status" role="status" aria-live="polite" hidden></p>
@@ -428,9 +428,9 @@ return result                                          // 返回值写入节点�
               <h3 id="archive-editor-title">备份配置</h3>
               <p id="archive-connection-status" class="section-desc"></p>
               <div class="setting-item">
-                <label for="archive-bucket">桶</label>
+                <label for="archive-bucket">备份写入桶</label>
                 <input id="archive-bucket" type="text" maxlength="80" value="default" required pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,79}" placeholder="例如 project-a" spellcheck="false" autocapitalize="none" aria-describedby="archive-bucket-hint">
-                <small id="archive-bucket-hint">用于归集备份版本。必填，1–80 个字符，以英文字母或数字开头，仅允许英文字母、数字、下划线和连字符，不允许中文；不能使用保留名称 constructor、prototype。Docker 自动同步的 PAGE_AGENT_BUCKET 须填写相同桶名。</small>
+                <small id="archive-bucket-hint">本机备份写入此连接的这个桶。Docker 的 PAGE_AGENT_AUTO_SYNC_BUCKET 是启动同步读取桶，可与此处不同；它必须指向所选同步版本所在的桶。必填，1–80 个字符，以英文字母或数字开头，仅允许英文字母、数字、下划线和连字符；不能使用 constructor、prototype。</small>
               </div>
               <div class="setting-item">
                 <label class="switch-label"><input id="archive-auto-backup" type="checkbox" role="switch"><span class="switch-slider" aria-hidden="true"></span><span class="switch-text">自动备份</span></label>
@@ -473,13 +473,17 @@ return result                                          // 返回值写入节点�
             <summary>同步说明</summary>
             <div class="mcp-info">
               <p><b>启动同步：</b>下次启动时加载指定的可同步版本，未指定则跳过。</p>
-              <p><b>同步条件：</b>运行设置允许、连接就绪且版本兼容；容器指定的目标同步完成前暂缓任务执行。</p>
-              <p><b>配置替换：</b>覆盖同步范围内的配置，删除版本中缺少的项；执行前保留恢复副本。手动同步见「备份版本」。</p>
+              <p><b>同步条件：</b>运行设置允许、连接就绪且版本兼容；仅在实际应用配置期间暂停任务，等待连接或同步失败不阻断其他任务。</p>
+              <p><b>配置替换：</b>覆盖同步范围内的配置，具有删除权限时删除版本中缺少的可写项，否则保留并告警；执行前保留恢复副本。缺失的助手 Skill/MCP 引用跳过并告警。手动同步见「备份版本」。</p>
               <p><b>历史保留：</b>保留话题、消息、附件和运行报告；助手缺失时话题暂不可见，恢复相同 ID 的助手后重新显示。</p>
             </div>
           </details>
           <p id="archive-summary" class="section-desc" role="status"></p>
           <p id="archive-auto-status" class="section-desc" role="status" aria-live="polite" hidden></p>
+          <div class="mcp-log-panel" role="region" aria-labelledby="archive-auto-log-title">
+            <div class="mcp-log-header"><h4 id="archive-auto-log-title">同步源日志</h4></div>
+            <div id="archive-auto-log-list" class="mcp-log-list"><div id="archive-auto-operations"><div class="mcp-log-empty">正在读取同步日志…</div></div></div>
+          </div>
           <div id="archive-auto-controls" hidden>
             <div id="archive-sources-list" class="item-list" role="radiogroup" aria-label="自动同步源" aria-describedby="archive-auto-description"></div>
             <label class="switch-label"><input id="archive-auto-sync" type="checkbox" role="switch"><span class="switch-slider" aria-hidden="true"></span><span class="switch-text">启动时自动同步</span></label>
@@ -642,6 +646,14 @@ return result                                          // 返回值写入节点�
                 </select>
               </div>
               <div class="form-row">
+                <label for="model-service-tier">服务等级</label>
+                <select id="model-service-tier" aria-describedby="model-service-tier-help">
+                  <option value="auto">默认</option>
+                  <option value="priority">Fast（优先处理）</option>
+                </select>
+                <small id="model-service-tier-help" class="form-help">仅适用于 OpenAI 协议；需服务商与模型支持，可能增加费用或额度消耗。</small>
+              </div>
+              <div class="form-row">
                 <label for="model-max-retries">请求重试次数</label>
                 <input type="number" id="model-max-retries" min="0" max="50" step="1" inputmode="numeric" placeholder="15">
               </div>
@@ -743,6 +755,16 @@ return result                                          // 返回值写入节点�
           </div>
         </details>
         <div class="help-doc">
+
+          <h3>v1.2.1</h3>
+          <ul>
+            <li><b>模型服务</b>：新增 Fast 优先处理，优化请求重试。</li>
+            <li><b>页面录制</b>：支持网络事件录制、搜索与分类筛选。</li>
+            <li><b>应用开发</b>：支持源码局部编辑、启动参数和应用内对话。</li>
+            <li><b>对话体验</b>：新增上下文与摘要查看，优化对话与轨迹加载。</li>
+            <li><b>界面交互</b>：优化面板布局与内置应用体验。</li>
+            <li><b>备份同步</b>：完善配置恢复，提升同步稳定性。</li>
+          </ul>
 
           <h3>v1.2.0</h3>
           <ul>

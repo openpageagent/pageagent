@@ -253,6 +253,14 @@
     if (!match) return null;
     try { return { slug: slug(match[1]), slot: match[2] ? 'draft' : 'published' }; } catch (_) { return null; }
   }
+  function parseUrl(value, extensionUrl) {
+    try {
+      var url = new URL(value), extension = new URL(extensionUrl);
+      if (url.protocol !== 'chrome-extension:' || url.protocol !== extension.protocol
+          || url.host !== extension.host || url.search) return null;
+      return parsePath(url.pathname);
+    } catch (_) { return null; }
+  }
   function launchHash(input) {
     var hash = '#page-agent-input=' + encodeURIComponent(json(input));
     if (hash.length > 16384) throw error('RESOURCE_BUSY', '应用启动参数编码后不能超过 16 KiB，请传入业务记录 ID');
@@ -309,6 +317,50 @@
     if (unsupportedNodes.includes(node.type)) throw error('UNSUPPORTED_CAPABILITY', '应用 SDK 尚未开放节点 ' + node.type + ' 的授权范围；请调整绑定流程');
   }
   function object(properties, required) { return { type: 'object', properties: properties, required: required || [], additionalProperties: false }; }
+  var parameterSchema = object({
+    mode: { type: 'string', enum: ['form', 'module', 'none'] },
+    description: { type: 'string', minLength: 1 },
+    schema: { type: 'object' }, example: { type: 'object' },
+    bindings: { type: 'object', additionalProperties: { type: 'string', minLength: 1 } },
+    module: { type: 'string', pattern: '\\.js$' }
+  }, ['mode', 'description', 'schema', 'example']);
+  function noParameters() {
+    return { mode: 'none', description: '无启动参数，不执行参数处理。', schema: object({}), example: {} };
+  }
+  function validateParameters(code, options) {
+    var parameters = code.parameters ?? noParameters();
+    var validation = root.AgentResourceProtocol.validateJsonSchema(parameterSchema, parameters);
+    if (!validation.valid) throw error('SCHEMA_VALIDATION_FAILED', validation.errors.join('; '));
+    if (!parameters.description.trim()) throw error('SCHEMA_VALIDATION_FAILED', '启动参数必须说明处理方式或无参数状态');
+    var schema = parameters.schema, properties = schema.properties;
+    if (schema.type !== 'object' || schema.additionalProperties !== false || !properties || typeof properties !== 'object' || Array.isArray(properties)) throw error('SCHEMA_VALIDATION_FAILED', '启动参数 schema 必须是声明 properties 且 additionalProperties=false 的 object');
+    var names = Object.keys(properties);
+    if (parameters.mode !== 'none' && !names.length) throw error('SCHEMA_VALIDATION_FAILED', '接收参数时须声明实际字段；无参数需求请使用 mode=none');
+    names.forEach(function (name) {
+      var field = properties[name];
+      if (['__proto__', 'constructor', 'prototype'].includes(name) || !field || typeof field !== 'object' || Array.isArray(field) || typeof field.description !== 'string' || !field.description.trim()) throw error('SCHEMA_VALIDATION_FAILED', '启动参数须逐项说明用途：' + name);
+    });
+    if (schema.required !== undefined && (!Array.isArray(schema.required) || schema.required.some(function (name) { return !names.includes(name); }))) throw error('SCHEMA_VALIDATION_FAILED', '启动参数 required 必须引用已声明字段');
+    if (parameters.mode === 'form') {
+      var bindings = parameters.bindings;
+      if (parameters.module !== undefined || !bindings || Object.keys(bindings).length !== names.length || names.some(function (name) { return !Object.prototype.hasOwnProperty.call(bindings, name) || !['string', 'number', 'integer', 'boolean'].includes(properties[name].type); })) throw error('SCHEMA_VALIDATION_FAILED', '表单映射须为每个标量参数声明 bindings，值为控件 ID');
+      if (new Set(Object.values(bindings)).size !== names.length) throw error('SCHEMA_VALIDATION_FAILED', '表单映射的控件 ID 不能重复');
+    } else if (parameters.mode === 'module') {
+      sourceFileName(parameters.module);
+      if (parameters.bindings !== undefined || !parameters.module.endsWith('.js') || !Object.prototype.hasOwnProperty.call(code.files || {}, parameters.module) && !Object.prototype.hasOwnProperty.call(options && options.parameterFiles || {}, parameters.module)) throw error('SCHEMA_VALIDATION_FAILED', '模块适配须引用 code.files 中导出 applyParameters(input) 的 JS 文件');
+    } else if (names.length || parameters.bindings !== undefined || parameters.module !== undefined) throw error('SCHEMA_VALIDATION_FAILED', '不接收参数时 schema.properties 必须为空，不声明 bindings 或 module');
+    validation = root.AgentResourceProtocol.validateJsonSchema(schema, parameters.example);
+    if (!validation.valid) throw error('SCHEMA_VALIDATION_FAILED', '启动参数示例不符合 schema：' + validation.errors.join('; '));
+    launchHash(parameters.example);
+    return parameters;
+  }
+  function validateLaunchInput(code, input) {
+    if (input === undefined) return;
+    launchHash(input);
+    var parameters = validateParameters(code);
+    var validation = root.AgentResourceProtocol.validateJsonSchema(parameters.schema, input);
+    if (!validation.valid) throw error('SCHEMA_VALIDATION_FAILED', '启动参数不符合应用声明：' + validation.errors.join('; '));
+  }
   var dependency = object({ uri: { type: 'string' }, fingerprint: { type: 'string' } }, ['uri', 'fingerprint']);
   var action = object({
     name: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9_-]*$' }, purpose: { type: 'string' },
@@ -326,15 +378,18 @@
   var codeSchema = object({
     html: { type: 'string' }, css: { type: 'string' }, javascript: { type: 'string' }, themeCss: { type: 'string' },
     files: { type: 'object', additionalProperties: { type: 'string' }, description: '应用自有 JS/CSS 文件，键为不含目录的文件名，值为完整源码。JavaScript 用相对 import，HTML/CSS 用 app-file:文件名。随草稿、发布、复制和导出保存。' },
-    description: { type: 'string' }, customBehavior: { type: 'array', items: { type: 'string' } },
+    description: { type: 'string' }, parameters: parameterSchema, customBehavior: { type: 'array', items: { type: 'string' } },
     networkPolicy: { type: 'string', enum: ['offline'] },
     capabilities: { type: 'array', uniqueItems: true, items: { type: 'string', enum: CAPABILITIES } },
     actions: { type: 'array', items: action }, dependencies: { type: 'array', items: dependency },
     externalResources: { type: 'array', items: object({ url: { type: 'string' }, purpose: { type: 'string' }, kind: { type: 'string', enum: ['image', 'font', 'css', 'script'] } }, ['url', 'purpose', 'kind']) }
   }, ['html', 'css', 'javascript', 'themeCss', 'description', 'capabilities', 'actions', 'dependencies', 'customBehavior', 'externalResources']);
-  function validateCode(code, scope) {
-    var validation = root.AgentResourceProtocol.validateJsonSchema(codeSchema, code);
+  parameterSchema.description = '启动参数声明；省略时平台使用 mode=none 的空参数默认值，不执行参数处理。有业务参数时声明实际字段、示例与处理方式。';
+  codeSchema.description = 'HTML、CSS、JavaScript、themeCss 和 files 保存可维护的源码：新建或重写时使用正常换行和缩进，不压成单行；局部修改沿用周围格式，不重排无关内容。保存按提交内容存储，不自动格式化。';
+  function validateCode(code, scope, options) {
+    var validation = root.AgentResourceProtocol.validateJsonSchema(codeSchema, code.parameters == null ? Object.assign({}, code, { parameters: noParameters() }) : code);
     if (!validation.valid) throw error('SCHEMA_VALIDATION_FAILED', validation.errors.join('; '));
+    validateParameters(code, options);
     Object.keys(code.files || {}).forEach(sourceFileName);
     if (code.files) [code.html, code.css, code.themeCss].forEach(function (source) { resolveSourceFiles(source, '', code.files); });
     if (!Array.isArray(scope) || scope.some(function (item) { return CAPABILITIES.indexOf(item) === -1; })) throw error('SCHEMA_VALIDATION_FAILED', '应用能力范围包含 SDK 未提供的能力');
@@ -398,13 +453,15 @@
   }
   root.AppContract = Object.freeze({
     VERSION: VERSION, PORT: 'PAGE_AGENT_APP_V1', CAPABILITIES: Object.freeze(CAPABILITIES), ICONS: Object.freeze(ICONS),
-    codeSchema: codeSchema, object: object, error: error, id: id, slug: slug, path: path, parsePath: parsePath, launchHash: launchHash, launchInput: launchInput,
+    codeSchema: codeSchema, parameterSchema: parameterSchema, noParameters: noParameters, validateParameters: validateParameters, validateLaunchInput: validateLaunchInput,
+    parameterGuidance: '应用统一通过 code.parameters 声明启动参数。生成源码时直接复用 /apps/capabilities 的 defaults.parameters：mode=none、空 properties 和 example；省略 input 或传 {} 均正常打开，不执行参数处理，非空参数被拒绝。旧应用缺少声明或值为 null 时也自动使用此默认值，读取和编辑直接展示默认对象，无需手动补齐即可保存、发布。仅按当前业务需要声明实际字段、说明、example 与处理方式，不为接入机制额外添加 query 等示例字段或控件。简单赋值可选 form，按 bindings 映射到真实控件 ID；需要联动时使用 module，指向 code.files 中导出 applyParameters(input) 的文件，宿主等待入口初始化完成后调用一次。模块示例见 /apps/capabilities；详细生成规则按需读取最新 builtin_app_generation_guide。调用方先 GET /apps/{appId} 查看 slots.published.parameters，不猜测参数；/open 成功只确认打开标签页，不证明参数处理或业务执行成功。',
+    object: object, error: error, id: id, slug: slug, path: path, parsePath: parsePath, parseUrl: parseUrl, launchHash: launchHash, launchInput: launchInput,
     normalizeName: normalizeName, revision: revision, sourceFileName: sourceFileName, sourceBase: sourceBase, resolveSourceFiles: resolveSourceFiles, validateCode: validateCode, declarations: declarations, json: json,
     codeDependencies: codeDependencies, validateExecutionDependencies: validateExecutionDependencies,
     assetReferences: assetReferences, validateAssets: validateAssets,
     unsupportedNodes: unsupportedNodes, assertNode: assertNode,
     checkPermission: checkPermission,
-    guidance: '创建、修改或修复应用前，先读取 /apps 或目标应用资源，再完整 GET /knowledge/builtin_app_generation_guide；摘要或检索片段不能代替正文。__builtin=true 的应用只读；编辑前带 If-Match 调用 POST /apps/{appId}/copy，后续修改返回的应用副本。内置应用声明的本地 JS/CSS 存入 code.files，复制、发布和导出携带原文；GET /apps/{appId}/{slot}/files 列出文件，GET /apps/{appId}/{slot}/files/{fileName} 按行读取或搜索，slot 为 draft 或 published，无需访问插件安装目录。',
+    guidance: '创建、修改或修复应用前，读取 /apps 或目标应用资源；当前上下文缺少完整生成指引或已知指引更新时，完整 GET /knowledge/builtin_app_generation_guide，摘要或检索片段不能代替正文。同一对话复用已读指引，不因新一轮输入、继续或后台重启而重读。__builtin=true 的应用只读；编辑前带 If-Match 调用 POST /apps/{appId}/copy，后续修改返回的应用副本。内置应用声明的本地 JS/CSS 存入 code.files，复制、发布和导出携带原文；GET /apps/{appId}/{slot}/files 列出文件，GET /apps/{appId}/{slot}/files/{fileName} 按行读取或搜索，slot 为 draft 或 published，无需访问插件安装目录。局部源码修改优先 POST /apps/{appId}/draft/edits，body 为 {edits:[{field,oldText,newText}]}，文件编辑另带 fileName 且 field=files；只读和提交所需片段，携带最新应用 ETag 和幂等键，无需重传整段源码。',
     limits: Object.freeze({ recentApps: 5, nameLength: 32, messageBytes: 256 * 1024, inFlight: 8, requestsPerSecond: 30, timeoutMs: 60000 })
   });
 })(globalThis);

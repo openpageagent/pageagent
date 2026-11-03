@@ -1,7 +1,7 @@
 (function attachConversationJournalMaterializer(root, factory) {
   'use strict';
   var commonJs = typeof module === 'object' && module.exports;
-  var contract = commonJs ? require('../shared/recording-contract') : root.PageAutomationRecordingContract;
+  var contract = commonJs ? require('../shared/recording-contract') : root.PageAgentRecordingContract;
   var api = factory(contract);
   if (commonJs) module.exports = api;
   else root.ConversationJournalMaterializer = api;
@@ -101,28 +101,45 @@
       throw new TypeError('ConversationJournalMaterializer requires ConversationJournalStore');
     }
 
-    async function materializeEvent(value) {
+    async function materializeEvent(value, options) {
+      options = options || {};
       var event = clone(value || {});
-      if (!event.payloadRef) return event;
-      var blob = await journal.getPayloadBlob(event.payloadRef.payloadId, event.payloadRef.sha256);
+      if (options.view === 'runtime') {
+        if (/^(?:context_injected|model_request_prepared|provider_request_started|provider_response_completed|provider_response_failed|provider_protocol_blocks_stored)$/.test(event.type)) {
+          event.payload = {};
+          return event;
+        }
+      }
+      if (!event.payloadRef) {
+        if (options.view === 'runtime' && event.type === 'model_request_started' && event.payload) delete event.payload.request;
+        return event;
+      }
+      var blob = await journal.getPayloadBlob(event.payloadRef.payloadId, event.payloadRef.sha256, options);
       if (!blob) {
         var error = new Error('Externalized Journal payload is missing');
         error.code = 'PAYLOAD_MISSING';
         throw error;
       }
       event.payload = clone(blob.value);
+      if (options.view === 'runtime' && event.type === 'model_request_started') {
+        delete event.payload.request;
+      }
       event.payloadStorage = { externalized: true, payloadRef: clone(event.payloadRef) };
       return event;
     }
-    async function materializeEvents(values) {
+    async function materializeEvents(values, options) {
       var events = [];
       for (var index = 0; index < (values || []).length; index += 1) {
-        events.push(await materializeEvent(values[index]));
+        events.push(await materializeEvent(values[index], options));
       }
       return events;
     }
-    async function getAllEvents(conversationId) {
-      return materializeEvents(await journal.getAllEvents(conversationId));
+    async function getAllEvents(conversationId, options) {
+      options = options || {};
+      var events = await journal.getAllEvents(conversationId);
+      if (options.generationId) events = events.filter(function (event) { return event.generationId === options.generationId; });
+      if (options.types) events = events.filter(function (event) { return options.types.indexOf(event.type) !== -1; });
+      return materializeEvents(events, options);
     }
     function collectRecordingContext(events, checkpoint) {
       var groups = Object.create(null);

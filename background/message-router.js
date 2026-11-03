@@ -28,7 +28,7 @@
     var releaseConversationArchiveExport = deps.releaseConversationArchiveExport || null;
     var getConfig = deps.getConfig || (function () { return { pages: {} }; });
     var chromeApi = deps.chrome || (typeof chrome !== 'undefined' ? chrome : null);
-    var pageAutomation = deps.pageAutomation || null;
+    var pageAgent = deps.pageAgent || null;
 
     function positiveTabId(value) {
       var number = Number(value);
@@ -100,10 +100,10 @@
     }
 
     function activateExtensionTab(tabId, focusWindow) {
-      if (!pageAutomation || !pageAutomation.action || typeof pageAutomation.action.act !== 'function') {
+      if (!pageAgent || !pageAgent.action || typeof pageAgent.action.act !== 'function') {
         return Promise.reject(new Error('统一页面动作引擎尚未就绪'));
       }
-      return pageAutomation.action.act({
+      return pageAgent.action.act({
         source: 'script',
         owner: 'extension-ui:element-picker',
         tabId: Number(tabId),

@@ -105,7 +105,7 @@
     var getLogPanel = requireFunction(options.getLogPanel, 'getLogPanel');
     var getDebugPanel = requireFunction(options.getDebugPanel, 'getDebugPanel');
     var now = typeof options.now === 'function' ? options.now : function () { return Date.now(); };
-    var messageContract = windowRef.PageAutomationSessionFloatingMessageContract;
+    var messageContract = windowRef.PageAgentSessionFloatingMessageContract;
     if (!messageContract || messageContract.API_VERSION !== 1) throw new Error('session/floating message contract must load before SidepanelSessionController');
     var lifecycle = lifecycleApi.create(windowRef);
     if (!windowRef.SidepanelSessionSnapshotRuntime

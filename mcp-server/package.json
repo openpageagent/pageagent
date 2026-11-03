@@ -1,6 +1,6 @@
 {
   "name": "@page-agent/mcp-server",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "ARP/1 MCP transport for the Page Agent Extension",
   "main": "index.js",
   "bin": {
@@ -18,7 +18,7 @@
     "resource-protocol",
     "chrome-extension",
     "edge-extension",
-    "automation"
+    "page-agent"
   ],
   "author": "Page Agent contributors",
   "license": "Apache-2.0",

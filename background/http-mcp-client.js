@@ -268,10 +268,14 @@
       });
     }
 
+    function validateServer(input) {
+      if (!input || !String(input.url || '').trim()) throw new Error('HTTP MCP URL 不能为空');
+      assertValidEndpointUrl(input.url);
+    }
+
     function upsertServer(input) {
       input = input || {};
-      if (!String(input.url || '').trim()) return Promise.reject(new Error('HTTP MCP URL 不能为空'));
-      try { assertValidEndpointUrl(input.url); } catch (err) { return Promise.reject(err); }
+      try { validateServer(input); } catch (err) { return Promise.reject(err); }
       var savedId = '';
       return update(function (state) {
         var existing = input.id && state.servers[input.id] || null;
@@ -570,7 +574,7 @@
         credentials: server.useBrowserCookies === true ? 'include' : 'omit',
         signal: controller.signal,
       });
-      return root.PageAutomationUserAgent.fetchSystem(server.url, init).then(function (resp) {
+      return root.PageAgentUserAgent.fetchSystem(server.url, init).then(function (resp) {
         return consumeResponse(resp);
       }).catch(function (err) {
         if (controller.signal.aborted) {
@@ -1158,6 +1162,7 @@
       STORAGE_KEY: storageKey,
       listServers: listServers,
       getServer: getServer,
+      validateServer: validateServer,
       upsertServer: upsertServer,
       removeServer: removeServer,
       testServer: testServer,

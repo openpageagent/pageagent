@@ -1,5 +1,5 @@
 // Builtin Flow Loader — loads exported flow and flow-group bundles packaged with the extension.
-// Built-in flows are product templates for page automation, not model-provider
+// Built-in flows are product templates for page tasks, not model-provider
 // endpoints or model aliases.
 (function attachBuiltinFlowLoader(root, factory) {
   root.BuiltinFlowLoader = factory();
@@ -48,7 +48,7 @@
     function upsertBuiltinItem(runtimeConfig, section, id, item, entry, role) {
       if (!runtimeConfig[section]) runtimeConfig[section] = {};
       if (!canReplaceWithBuiltin(runtimeConfig[section][id])) return false;
-      var cleaned = globalThis.PageAutomationConfigMigration.cleanItem(section, clone(item));
+      var cleaned = globalThis.PageAgentConfigMigration.cleanItem(section, clone(item));
       runtimeConfig[section][id] = markBuiltin(section === 'flows' ? migrateLegacyPageNodes(cleaned) : cleaned, section, entry, role);
       return true;
     }

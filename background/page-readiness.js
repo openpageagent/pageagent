@@ -1,4 +1,4 @@
-// Unified page-engine readiness. No page-side automation driver is injected.
+// Unified page-engine readiness. No page-side action driver is injected.
 (function attachPageReadiness(root, factory) {
   'use strict';
   root.PageReadiness = factory();
@@ -9,13 +9,13 @@
   function createPageReadiness(deps) {
     deps = deps || {};
     var chrome = deps.chrome || globalThis.chrome;
-    var pageAutomation = deps.pageAutomation;
+    var pageAgent = deps.pageAgent;
     var getConfigReady = deps.getConfigReady || (function () { return Promise.resolve(); });
     var getConfig = deps.getConfig || (function () { return { pages: {} }; });
     var pageHostMatchesTab = deps.pageHostMatchesTab || (function () { return false; });
-    if (!pageAutomation || typeof pageAutomation.executeCommand !== 'function'
-        || !pageAutomation.perception || !pageAutomation.action || !pageAutomation.verification) {
-      throw new Error('PageReadiness requires PageAutomationRuntime');
+    if (!pageAgent || typeof pageAgent.executeCommand !== 'function'
+        || !pageAgent.perception || !pageAgent.action || !pageAgent.verification) {
+      throw new Error('PageReadiness requires PageAgentRuntime');
     }
 
     function expectedInfo() {

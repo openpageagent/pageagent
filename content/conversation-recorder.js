@@ -1,13 +1,13 @@
 (function installConversationRecorder(root) {
   'use strict';
-  if (root.__pageAutomationConversationRecorderInstalled) return;
-  var contract = root.PageAutomationRecordingContract;
+  if (root.__pageAgentConversationRecorderInstalled) return;
+  var contract = root.PageAgentRecordingContract;
   if (!contract || contract.API_VERSION !== 1) throw new Error('RecordingContract must load before conversation-recorder');
-  var positionControllerApi = root.PageAutomationPageElementPositionController;
+  var positionControllerApi = root.PageAgentPageElementPositionController;
   if (!positionControllerApi || typeof positionControllerApi.createFree !== 'function') {
     throw new Error('PageElementPositionController must load before conversation-recorder');
   }
-  root.__pageAutomationConversationRecorderInstalled = true;
+  root.__pageAgentConversationRecorderInstalled = true;
 
   var state = 'dormant';
   var recordingId = '';
@@ -30,8 +30,8 @@
   var normalStopped = false;
   var normalDeliveryEpoch = 0;
   var indicatorHost = null;
-  var indicatorCount = null;
   var indicatorTime = null;
+  var indicatorError = null;
   var indicatorStopButton = null;
   var indicatorBar = null;
   var indicatorPositionController = null;
@@ -40,6 +40,7 @@
   var stopRequestedAt = 0;
   var listenersInstalled = false;
   var lastFinalBatch = null;
+  var networkCapture = contract.normalizeNetworkCapture();
   var INDICATOR_POSITION_STORAGE_KEY = 'page-agent-recording-indicator-position';
 
   function randomId(prefix) {
@@ -58,14 +59,14 @@
   }
   function isExtensionUi(event) {
     return composedElements(event).some(function (element) {
-      return element === indicatorHost || element.hasAttribute && (element.hasAttribute('data-page-automation-ui') || element.id === 'page-automation-page-conversation');
+      return element === indicatorHost || element.hasAttribute && (element.hasAttribute('data-page-agent-ui') || element.id === 'page-agent-page-conversation');
     });
   }
   function hideExtensionUi() {
     if (root.top !== root || extensionUiGuard || !document.documentElement) return;
     extensionUiGuard = document.createElement('style');
-    extensionUiGuard.setAttribute('data-page-automation-recording-ui-guard', '');
-    extensionUiGuard.textContent = '[data-page-automation-ui]:not([data-page-automation-ui="conversation-recording-indicator"]){display:none!important}';
+    extensionUiGuard.setAttribute('data-page-agent-recording-ui-guard', '');
+    extensionUiGuard.textContent = '[data-page-agent-ui]:not([data-page-agent-ui="conversation-recording-indicator"]){display:none!important}';
     document.documentElement.appendChild(extensionUiGuard);
   }
   function restoreExtensionUi() {
@@ -371,11 +372,11 @@
     return String(element.value === undefined ? '' : element.value);
   }
   function fillKey(element) {
-    if (!element.__pageAutomationRecordingFillKey) {
-      try { Object.defineProperty(element, '__pageAutomationRecordingFillKey', { value: randomId('target') }); }
+    if (!element.__pageAgentRecordingFillKey) {
+      try { Object.defineProperty(element, '__pageAgentRecordingFillKey', { value: randomId('target') }); }
       catch (_) { return String(selectorFor(element) && selectorFor(element).selector || element.tagName || 'target'); }
     }
-    return element.__pageAutomationRecordingFillKey;
+    return element.__pageAgentRecordingFillKey;
   }
   function stageFill(element) {
     if (!element || element.type === 'checkbox' || element.type === 'radio' || element.type === 'file') return;
@@ -443,7 +444,7 @@
   }
   function onBlur(event) {
     var element = event.target;
-    if (element && element.__pageAutomationRecordingFillKey) { flushFill(element.__pageAutomationRecordingFillKey); flushBatch(false, ''); }
+    if (element && element.__pageAgentRecordingFillKey) { flushFill(element.__pageAgentRecordingFillKey); flushBatch(false, ''); }
   }
   function onKeydown(event) {
     if (isExtensionUi(event) || !contract.ALLOWED_KEYS[event.key]) return;
@@ -464,6 +465,21 @@
     flushFills();
     flushBatch(false, '');
   }
+  function onNetworkEntry(event) {
+    if (state !== 'enabled') return;
+    try {
+      var entry = JSON.parse(event.detail);
+      var type = entry.resourceType;
+      var kind = type === 'fetch' || type === 'xhr' ? 'http' : type;
+      if (!networkCapture[kind] || !/^(?:http|websocket|sse)$/.test(kind)) return;
+      queueEvent(kind, { url: entry.url, network: entry }, false);
+    } catch (_) {}
+  }
+  function syncNetworkCapture(enabled) {
+    document.dispatchEvent(new CustomEvent('__pfa_recording_network_config', {
+      detail: JSON.stringify(enabled ? networkCapture : {}),
+    }));
+  }
   function installListeners() {
     if (listenersInstalled) return;
     listenersInstalled = true;
@@ -473,6 +489,8 @@
     document.addEventListener('blur', onBlur, true);
     document.addEventListener('keydown', onKeydown, true);
     document.addEventListener('submit', onSubmit, true);
+    document.addEventListener('__pfa_recording_network_entry', onNetworkEntry);
+    syncNetworkCapture(state === 'enabled');
     root.addEventListener('pagehide', onPageHide, true);
     root.addEventListener('beforeunload', onPageHide, true);
   }
@@ -485,6 +503,8 @@
     document.removeEventListener('blur', onBlur, true);
     document.removeEventListener('keydown', onKeydown, true);
     document.removeEventListener('submit', onSubmit, true);
+    document.removeEventListener('__pfa_recording_network_entry', onNetworkEntry);
+    syncNetworkCapture(false);
     root.removeEventListener('pagehide', onPageHide, true);
     root.removeEventListener('beforeunload', onPageHide, true);
   }
@@ -493,10 +513,8 @@
     var seconds = Math.max(0, Math.floor((elapsedAt - startedAt) / 1000));
     return String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
   }
-  function updateIndicator(count) {
-    if (indicatorCount && count !== undefined) indicatorCount.textContent = String(Number(count) || 0) + ' 个动作';
+  function updateIndicator() {
     if (indicatorTime) indicatorTime.textContent = formatElapsed();
-    if (count !== undefined && indicatorPositionController) indicatorPositionController.refresh();
   }
   function removeIndicator() {
     if (indicatorTimer) root.clearInterval(indicatorTimer);
@@ -504,14 +522,39 @@
     if (indicatorPositionController) indicatorPositionController.destroy();
     indicatorPositionController = null;
     if (indicatorHost) indicatorHost.remove();
-    indicatorHost = indicatorBar = indicatorCount = indicatorTime = indicatorStopButton = null;
+    indicatorHost = indicatorBar = indicatorTime = indicatorError = indicatorStopButton = null;
+  }
+  function indicatorIcon(kind) {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    var shape = document.createElementNS('http://www.w3.org/2000/svg', kind === 'loading' ? 'path' : 'rect');
+    if (kind === 'loading') {
+      shape.setAttribute('d', 'M20 12a8 8 0 1 1-8-8');
+      svg.classList.add('spinning');
+    } else {
+      shape.setAttribute('x', '6'); shape.setAttribute('y', '6');
+      shape.setAttribute('width', '12'); shape.setAttribute('height', '12'); shape.setAttribute('rx', '1');
+      shape.setAttribute('fill', 'currentColor'); shape.setAttribute('stroke', 'none');
+    }
+    svg.appendChild(shape);
+    return svg;
   }
   function setIndicatorStopping(stopping) {
     if (!indicatorStopButton) return;
     indicatorStopButton.disabled = stopping === true;
-    indicatorStopButton.textContent = stopping === true ? '正在停止' : '停止';
+    indicatorStopButton.textContent = '';
+    indicatorStopButton.appendChild(indicatorIcon(stopping === true ? 'loading' : 'stop'));
     indicatorStopButton.title = stopping === true ? '正在停止页面操作录制' : '停止页面操作录制';
     indicatorStopButton.setAttribute('aria-label', indicatorStopButton.title);
+    if (indicatorError) { indicatorError.textContent = ''; indicatorError.hidden = true; }
+    if (indicatorPositionController) indicatorPositionController.refresh();
   }
   function resumeAfterStopFailure() {
     if (state !== 'stop-requested') return;
@@ -524,6 +567,11 @@
     hideExtensionUi();
     showIndicator();
     setIndicatorStopping(false);
+    if (indicatorError) {
+      indicatorError.textContent = '停止失败，请重试';
+      indicatorError.hidden = false;
+      if (indicatorPositionController) indicatorPositionController.refresh();
+    }
   }
   function requestStop() {
     if (state !== 'enabled') return;
@@ -544,20 +592,22 @@
   function showIndicator() {
     if (root.top !== root || indicatorHost || !document.documentElement) return;
     indicatorHost = document.createElement('div');
-    indicatorHost.setAttribute('data-page-automation-ui', 'conversation-recording-indicator');
+    indicatorHost.setAttribute('data-page-agent-ui', 'conversation-recording-indicator');
     indicatorHost.style.cssText = 'all:initial;position:fixed;z-index:2147483647;pointer-events:auto;color-scheme:light';
     var shadow = indicatorHost.attachShadow({ mode: 'closed' });
     var style = document.createElement('style');
-    style.textContent = ':host{all:initial}*{box-sizing:border-box}.bar{display:flex;width:max-content;align-items:center;gap:8px;padding:8px 10px;border:1px solid #d9b3ae;border-radius:8px;background:rgba(255,250,249,.97);box-shadow:0 8px 24px rgba(62,20,16,.18);color:#5c2924;font:12px/1.3 Inter,Roboto,Arial,sans-serif;white-space:nowrap;cursor:grab;touch-action:none;user-select:none}.bar.dragging{cursor:grabbing}.dot{width:8px;height:8px;border-radius:50%;background:#ba554a;animation:pulse 1.2s ease-in-out infinite}.time{font-variant-numeric:tabular-nums;font-weight:650}.count{color:#835a56}button{height:26px;padding:0 9px;border:1px solid #ba554a;border-radius:5px;background:#ba554a;color:white;font:600 12px Inter,Roboto,Arial,sans-serif;cursor:pointer;touch-action:manipulation}button:focus-visible{outline:2px solid #004849;outline-offset:2px}button:disabled{cursor:wait;opacity:.68}@keyframes pulse{50%{opacity:.35}}';
+    style.textContent = ':host{all:initial}*{box-sizing:border-box}.bar{display:flex;width:max-content;max-width:calc(100vw - 16px);flex-wrap:wrap;align-items:center;gap:4px;padding:2px 3px 2px 8px;border:1px solid #e1e5e9;border-radius:4px;background:rgba(255,255,255,.98);box-shadow:0 2px 8px rgba(15,23,42,.08);color:#334155;font:12px/1.4 Inter,Roboto,Arial,sans-serif;cursor:grab;touch-action:none;user-select:none}.bar.dragging{cursor:grabbing}svg{width:16px;height:16px;flex-shrink:0}.time{font-variant-numeric:tabular-nums;font-weight:500;white-space:nowrap}.error{color:#a3423a;font-size:11px;padding-right:7px}.error[hidden]{display:none}button{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;flex:0 0 auto;border:0;border-radius:4px;background:transparent;color:#a3423a;cursor:pointer;touch-action:manipulation}button:hover:not(:disabled){background:#fceeed}button:active:not(:disabled){background:#f8dfdc}button:focus-visible{outline:2px solid #004849;outline-offset:2px}button:disabled{cursor:wait;opacity:.68}.spinning{animation:icon-spin 1s linear infinite}@keyframes icon-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spinning{animation:none}}';
     indicatorBar = document.createElement('div');
     indicatorBar.className = 'bar';
-    var dot = document.createElement('span'); dot.className = 'dot';
+    indicatorBar.setAttribute('role', 'group'); indicatorBar.setAttribute('aria-label', '页面录制');
     indicatorTime = document.createElement('span'); indicatorTime.className = 'time';
-    indicatorCount = document.createElement('span'); indicatorCount.className = 'count'; indicatorCount.textContent = '0 个动作';
+    indicatorTime.title = '录制时长';
+    indicatorError = document.createElement('span'); indicatorError.className = 'error';
+    indicatorError.setAttribute('role', 'alert'); indicatorError.hidden = true;
     indicatorStopButton = document.createElement('button'); indicatorStopButton.type = 'button';
-    indicatorStopButton.textContent = '停止'; indicatorStopButton.title = '停止页面操作录制'; indicatorStopButton.setAttribute('aria-label', '停止页面操作录制');
+    setIndicatorStopping(state === 'stop-requested');
     indicatorStopButton.addEventListener('click', requestStop);
-    indicatorBar.appendChild(dot); indicatorBar.appendChild(indicatorTime); indicatorBar.appendChild(indicatorCount); indicatorBar.appendChild(indicatorStopButton);
+    indicatorBar.appendChild(indicatorTime); indicatorBar.appendChild(indicatorStopButton); indicatorBar.appendChild(indicatorError);
     shadow.appendChild(style); shadow.appendChild(indicatorBar); document.documentElement.appendChild(indicatorHost);
     var sessionStorage = null;
     try { sessionStorage = root.sessionStorage; } catch (_) {}
@@ -573,7 +623,7 @@
       layoutDelay: 0,
     });
     indicatorPositionController.init();
-    updateIndicator(0);
+    updateIndicator();
     indicatorTimer = root.setInterval(updateIndicator, 1000);
   }
   function enable(payload) {
@@ -584,7 +634,7 @@
         && recordingId === nextRecordingId && capability === nextCapability) {
       hideExtensionUi();
       if (payload.showIndicator) showIndicator();
-      if (payload.count !== undefined) updateIndicator(payload.count);
+      if (payload.count !== undefined) updateIndicator();
       return;
     }
     var resumeEvents = [];
@@ -605,10 +655,15 @@
     localLimitRequested = false;
     recordingId = nextRecordingId;
     capability = nextCapability;
+    networkCapture = contract.normalizeNetworkCapture(payload.networkCapture);
     startedAt = Number(payload.startedAt) || now();
     state = 'enabled';
     hideExtensionUi();
     installListeners();
+    syncNetworkCapture(true);
+    if (payload.networkCaptureError) {
+      queueEvent('network_error', { url: String(location.href), network: { phase: 'error', error: payload.networkCaptureError } }, false);
+    }
     if (ringDropped) {
       pendingDiagnostics.push({ code: 'pending_ring_overflow', occurredAt: now(), count: ringDropped });
       ringDropped = 0;
@@ -619,7 +674,7 @@
       flushBatch(false, '');
     }
     if (payload.showIndicator) showIndicator();
-    if (payload.count !== undefined) updateIndicator(payload.count);
+    if (payload.count !== undefined) updateIndicator();
   }
   function stopAndFlush(payload) {
     if (!payload) return null;
@@ -686,7 +741,7 @@
     }
     else if (message.type === contract.UI_MESSAGES.STATE_CHANGED) {
       if (!message.payload || !message.payload.active) deactivate();
-      else if (indicatorHost) updateIndicator(message.payload.active.count);
+      else if (indicatorHost) updateIndicator();
     }
   });
   state = 'pending';

@@ -13,7 +13,7 @@
     return;
   }
 
-  var lifecycleApi = root && root.PageAutomationLifecycle;
+  var lifecycleApi = root && root.PageAgentLifecycle;
   if (commonJs && !lifecycleApi) lifecycleApi = require('../ui/lifecycle.js');
   var scheduleUtils = commonJs ? require('../shared/schedule-utils.js') : root.ScheduleUtils;
   var api = factory(lifecycleApi, scheduleUtils);
@@ -156,7 +156,7 @@
     options = options || {};
     var lifecycleFactory = options.lifecycleApi || LifecycleApi;
     if (!lifecycleFactory || typeof lifecycleFactory.create !== 'function') {
-      throw new Error('PageAutomationLifecycle must load before OptionsScheduleController');
+      throw new Error('PageAgentLifecycle must load before OptionsScheduleController');
     }
 
     var window = options.window || (typeof globalThis !== 'undefined' ? globalThis : {});

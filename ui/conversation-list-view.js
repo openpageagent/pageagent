@@ -8,7 +8,7 @@
   }
   var api = factory(root, projection);
   if (commonJs) module.exports = api;
-  if (root) root.PageAutomationConversationListView = api;
+  if (root) root.PageAgentConversationListView = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, projection) {
   'use strict';
 

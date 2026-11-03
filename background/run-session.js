@@ -226,7 +226,7 @@
       getDriverIdForSource: function (source) { return deps.sourceRegistry.getDriverIdForSource(source); },
       matchesSourceUrlFamily: function (source, url) { return deps.sourceRegistry.matchesSourceUrlFamily(source, url); },
       isRetryableTransportError: function (error) { return deps.loggingStatus.isRetryableTransportError(error); },
-      getPageAutomation: function () { return deps.pageAutomation; },
+      getPageAgent: function () { return deps.pageAgent; },
       throwIfStopped: function () {
         if (session.controller && session.controller.isRunning()) session.controller.throwIfStopped();
       },
@@ -264,7 +264,7 @@
       getAbortSignal: function () {
         return session._runAbortController && session._runAbortController.signal || null;
       },
-      pageAutomation: deps.pageAutomation,
+      pageAgent: deps.pageAgent,
       getAssistantOrchestrator: deps.getAssistantOrchestrator,
       throwIfStopped: function () {
         if (session.controller && session.controller.isRunning()) session.controller.throwIfStopped();
@@ -416,7 +416,7 @@
       if (!(await this._deps.mailClient.load()).enabled) return null;
       if (reportEntry && reportEntry.notificationStarted) return null;
       if (reportEntry) reportEntry.notificationStarted = true;
-      notification = globalThis.PageAutomationMailSettings.validateFlowNotification(notification);
+      notification = globalThis.PageAgentMailSettings.validateFlowNotification(notification);
       var resultLabel = status === 'success' ? '成功' : '失败';
       var flowLabel = String(this.flowLabel || this.flowId);
       var failure = (summaries || []).slice().reverse().find(function (summary) {

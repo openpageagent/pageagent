@@ -3,7 +3,7 @@
   'use strict';
 
   var MESSAGE_TYPE = 'PAGE_ACTION_VISUAL_FEEDBACK';
-  var CONTROLLER_KEY = '__pageAutomationActionVisualFeedbackV1';
+  var CONTROLLER_KEY = '__pageAgentActionVisualFeedbackV1';
   var APPEAR_HOLD_MS = 150;
   var MIN_MOVE_MS = 240;
   var MAX_MOVE_MS = 600;
@@ -25,8 +25,8 @@
     if (host && host.isConnected) return;
     if (!host) {
       host = documentRef.createElement('div');
-      host.id = 'page-automation-action-visual-feedback';
-      host.setAttribute('data-page-automation-ui', 'page-action-visual-feedback');
+      host.id = 'page-agent-action-visual-feedback';
+      host.setAttribute('data-page-agent-ui', 'page-action-visual-feedback');
       host.setAttribute('aria-hidden', 'true');
       host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483646;display:block;pointer-events:none;contain:strict';
       shadow = host.attachShadow({ mode: 'closed' });
@@ -86,7 +86,7 @@
   }
 
   function floatingStatusPoint() {
-    var floatingStatus = documentRef.getElementById('page-automation-floating-status');
+    var floatingStatus = documentRef.getElementById('page-agent-floating-status');
     if (!floatingStatus || typeof floatingStatus.getBoundingClientRect !== 'function') return null;
     var rect;
     try { rect = floatingStatus.getBoundingClientRect(); } catch (_) { return null; }

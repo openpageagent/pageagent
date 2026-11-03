@@ -683,7 +683,17 @@
           if (response.finishReason === 'aborted') {
             return terminal(lease, lease.signal && lease.signal.aborted ? 'cancelled' : 'blocked', 'PROVIDER_ABORTED', '');
           }
-          if (response.finishReason === 'transport_error') return terminal(lease, 'failed', 'PROVIDER_TRANSPORT_ERROR', '');
+          if (response.finishReason === 'transport_error') {
+            var transportError = response.rawMeta && response.rawMeta.error;
+            if (transportError && transportError.retryable === false) {
+              return terminal(lease, 'failed', transportError.errorCode || 'PROVIDER_REQUEST_FAILED', '', {
+                error: transportError.message || 'Provider request failed',
+              });
+            }
+            // 重试仍计入模型请求预算；失败响应中的工具调用不会执行。
+            reason = 'transport_retry';
+            continue;
+          }
           var overflowCount = await counterValue(lease, 'overflowRetryCount');
           await lease.append({
             type: 'context_overflow_detected', modelRequestId: built.request.modelRequestId,

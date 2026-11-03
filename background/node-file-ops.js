@@ -757,7 +757,7 @@
             parentSignal.addEventListener('abort', forwardAbort, { once: true });
           }
           var timer = setTimeout(function () { controller.abort(); }, timeoutMs);
-          return globalThis.PageAutomationUserAgent.fetchSystem(url, {
+          return globalThis.PageAgentUserAgent.fetchSystem(url, {
             credentials: 'include', redirect: 'follow', signal: controller.signal,
           }, fetchImpl).then(function (response) {
             if (!response || !response.ok) throw new Error('HTTP ' + (response && response.status || 0));

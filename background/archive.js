@@ -3,9 +3,11 @@
   var SECTIONS = ['pages', 'scripts', 'flows', 'flowGroups', 'schedules', 'urlTriggers'];
   var FIELDS = { pageId: 'pages', targetPageId: 'pages', scriptId: 'scripts', flowId: 'flows', targetFlowId: 'flows',
     flowGroupId: 'flowGroups', assistantId: 'assistants', defaultAssistantId: 'assistants',
-    modelServiceId: 'models', defaultModelServiceId: 'models', serviceId: 'models' };
+    modelServiceId: 'models', defaultModelServiceId: 'models', serviceId: 'models', skillId: 'skills', mcpServerId: 'mcpServers' };
   var ROOTS = { pages: 'pages', scripts: 'scripts', flows: 'flows', 'flow-groups': 'flowGroups',
-    assistants: 'assistants', 'model-services': 'models', schedules: 'schedules', 'url-triggers': 'urlTriggers' };
+    assistants: 'assistants', 'model-services': 'models', schedules: 'schedules', 'url-triggers': 'urlTriggers', skills: 'skills', 'mcp-servers': 'mcpServers' };
+  var SKILL_FIELDS = ['id', 'name', 'description', 'instructions', 'version', 'resources', 'tags', 'enabled', 'archived'];
+  var MCP_FIELDS = ['id', 'name', 'url', 'enabled', 'bearerToken', 'headersText', 'useBrowserCookies', 'timeoutMs', 'protocolVersion'];
   var KEY = 'archive_state';
   var BOOT_KEY = 'archive_browser_session';
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
@@ -48,7 +50,13 @@
     Object.keys(out).forEach(function (key) {
       var section = FIELDS[key], raw = out[key];
       if (key === 'groupId' && ['flowGroup', 'flow-group'].includes(value.taskType || value.targetKind || value.kind || value.type)) section = 'flowGroups';
-      if (section && typeof raw === 'string' && raw) {
+      if (['skillIds', 'mcpServerIds'].includes(key) && Array.isArray(raw)) {
+        section = key === 'skillIds' ? 'skills' : 'mcpServers';
+        out[key] = raw.map(function (id) {
+          if (inspect) inspect(section, id);
+          return maps[section] && maps[section][id] || id;
+        });
+      } else if (section && typeof raw === 'string' && raw) {
         if (/\{\{|\$\{/.test(raw)) return;
         var prefix = section === 'flows' && raw.startsWith('user:') ? 'user:' : '';
         var id = prefix ? raw.slice(5) : raw;
@@ -56,7 +64,7 @@
         if (maps[section] && maps[section][id]) out[key] = prefix + maps[section][id];
       } else if (key === 'uri' && typeof raw === 'string') {
         if (/\{\{|\$\{/.test(raw)) return;
-        out[key] = raw.replace(/^\/(pages|scripts|flows|flow-groups|assistants|model-services|schedules|url-triggers)\/([^/?]+)(.*)$/, function (_, section, encoded, tail) {
+        out[key] = raw.replace(/^\/(pages|scripts|flows|flow-groups|assistants|model-services|schedules|url-triggers|skills|mcp-servers)\/([^/?]+)(.*)$/, function (_, section, encoded, tail) {
           var id = decodeURIComponent(encoded), kind = ROOTS[section];
           if (inspect) inspect(kind, id);
           return '/' + section + '/' + encodeURIComponent(maps[kind] && maps[kind][id] || id) + tail;
@@ -138,8 +146,9 @@
     }
     async function manualOperation(connectionId) {
       var grant = (await chrome.storage.session.get(manualKey))[manualKey];
-      return grant && grant.connectionId === connectionId && options.target(connectionId)
-        && grant.bucketId === options.target(connectionId).bucketId ? grant.operationId : null;
+      var binding = options.binding(), target = options.target(connectionId);
+      return grant && grant.connectionId === connectionId && target
+        && (grant.bucketId === target.bucketId || binding && binding.connectionId === connectionId && grant.bucketId === binding.bucketId) ? grant.operationId : null;
     }
     async function revokeManual(operationId) {
       var grant = (await chrome.storage.session.get(manualKey))[manualKey];
@@ -160,10 +169,13 @@
       }
       return connection;
     }
-    async function all(method) {
+    async function all(method, query) {
       var items = [], cursor;
-      do { var page = await method({ limit: 100, ...(cursor ? { cursor: cursor } : {}) }); items.push(...page.items); cursor = page.nextCursor; } while (cursor);
+      do { var page = await method({ ...query, limit: 100, ...(cursor ? { cursor: cursor } : {}) }); items.push(...page.items); cursor = page.nextCursor; } while (cursor);
       return items;
+    }
+    async function skills() {
+      return all(options.resourceService.listSkills, { includeArchived: true, includeDisabled: true });
     }
     async function injectModelApiKeys() {
       var keys = options.modelApiKeys();
@@ -195,12 +207,37 @@
         });
         return { items: items, order: Object.keys(items).sort() };
       }
-      var modules = {};
+      var modules = {}, summaries = await skills();
+      reverse.skills = reverse.skills || Object.create(null);
+      summaries.forEach(function (summary) {
+        if (summary.knowledgeId) reverse.skills[summary.knowledgeId] = reverse.skills[summary.id] || summary.id;
+      });
       SECTIONS.forEach(function (section) {
         modules[section] = module(section, section === 'urlTriggers' ? config[section] || [] : Object.values(config[section] || {}));
       });
       var modelItems = module('models', models).items;
       modules.modelSettings = { value: { version: 1, services: Object.values(modelItems), agentSettings: rewrite(settings, reverse, null) } };
+      var skillItems = [], skillIds = new Set(summaries.map(function (item) { return item.id; }));
+      for (var summary of summaries) {
+        if (summary.builtIn || summary.builtinSkill || summary.protected) continue;
+        // Imported catalog entries are read-only. After restoring their writable
+        // copy, export that copy instead of emitting the same logical ID twice.
+        var restoredId = stored.maps && stored.maps.skills && stored.maps.skills[summary.id];
+        if (summary.managedSkill && restoredId && restoredId !== summary.id && skillIds.has(restoredId)) continue;
+        var skill = pick(await options.resourceService.getSkill(summary.id), SKILL_FIELDS);
+        var resources = [];
+        for (var resource of skill.resources || []) {
+          resources.push(pick(await options.resourceService.getSkillResource(summary.id, resource.id), ['id', 'path', 'kind', 'mediaType', 'content']));
+        }
+        skill.resources = resources; skillItems.push(skill);
+      }
+      modules.skills = module('skills', skillItems);
+      var mcpServers = [];
+      for (var server of await all(options.mcpService.listMcpServers, { includeDisabled: true })) {
+        // Read the local configuration for auth fields; public ARP resources redact them.
+        mcpServers.push(pick(await options.httpMcpManager.getServer(server.id), MCP_FIELDS));
+      }
+      modules.mcpServers = module('mcpServers', mcpServers);
       modules.assistants = module('assistants', assistants);
       var connections = await options.connection().store.load();
       var bindings = Object.values(connections.connections).sort(function (a, b) { return a.id.localeCompare(b.id); }).map(function (entry) {
@@ -242,10 +279,14 @@
     async function applyLocked(input, context) {
       var connection = await authorize(context, true, input.operationId);
       if (await options.hasRunningWork()) fail('当前有运行中的任务，请稍后同步配置', 'RESOURCE_BUSY');
-      var binding = options.target(context.sourceConnectionId), stored = await state();
+      var binding = options.target(context.sourceConnectionId), stored = await state(), syncBinding = options.binding();
+      var manualId = await manualOperation(binding.connectionId);
+      if (manualId === input.operationId) {
+        binding = Object.assign({}, binding, { bucketId: (await chrome.storage.session.get(manualKey))[manualKey].bucketId });
+      } else if (syncBinding && syncBinding.connectionId === binding.connectionId) binding = syncBinding;
       root.McpContract.id(input.operationId); root.McpContract.id(input.versionId);
       if (input.bucketId !== binding.bucketId) fail('同步桶名不匹配');
-      if (await manualOperation(binding.connectionId) !== input.operationId && input.versionId !== options.configuration().syncVersion) {
+      if (manualId !== input.operationId && input.versionId !== options.configuration().syncVersion) {
         fail('自动同步版本与启动设置不一致', 'FORBIDDEN');
       }
       var backupHash = await hash(input.backup);
@@ -261,8 +302,9 @@
       stable(backup);
       if (!backup.package || backup.package.kind !== 'pfa-full-backup' || backup.package.version !== 7) fail('不支持的备份格式');
       var modules = backup.package.modules;
-      var allowed = SECTIONS.concat(['modelSettings', 'assistants']);
-      if (!record(modules) || Object.keys(modules).some(function (key) { return !allowed.includes(key); }) || allowed.some(function (key) { return !record(modules[key]); })) fail('备份模块不完整或不受支持');
+      var required = SECTIONS.concat(['modelSettings', 'assistants']), allowed = required.concat(['skills', 'mcpServers']);
+      if (!record(modules) || Object.keys(modules).some(function (key) { return !allowed.includes(key); }) || required.some(function (key) { return !record(modules[key]); })) fail('备份模块不完整或不受支持');
+      var warnings = [];
       var source = {};
       SECTIONS.concat(['assistants']).forEach(function (section) {
         if (!record(modules[section].items)) fail('配置模块缺少 items: ' + section);
@@ -270,8 +312,17 @@
       });
       if (!record(modules.modelSettings.value) || !Array.isArray(modules.modelSettings.value.services)) fail('模型配置无效');
       source.models = dictionary(modules.modelSettings.value.services);
+      if (modules.skills !== undefined) {
+        if (!record(modules.skills) || !record(modules.skills.items)) fail('配置模块缺少 items: skills');
+        source.skills = modules.skills.items;
+      } else warnings.push('此旧备份未包含 Skill；保留本机 Skill，缺失的助手 Skill 引用将跳过。');
+      if (modules.mcpServers !== undefined) {
+        if (!record(modules.mcpServers) || !record(modules.mcpServers.items)) fail('配置模块缺少 items: mcpServers');
+        source.mcpServers = modules.mcpServers.items;
+      } else warnings.push('此旧备份未包含 HTTP MCP 服务器配置；保留本机配置，缺失的助手 MCP 引用将跳过。');
       var current = await options.configStore.getConfig();
-      var existing = { models: dictionary(await all(agent.listModelServices)), assistants: dictionary(await all(agent.listAssistants)) };
+      var existing = { models: dictionary(await all(agent.listModelServices)), assistants: dictionary(await all(agent.listAssistants)),
+        skills: dictionary(await skills()), mcpServers: dictionary(await all(options.mcpService.listMcpServers, { includeDisabled: true })) };
       SECTIONS.forEach(function (section) { existing[section] = section === 'urlTriggers' ? dictionary(current[section] || []) : current[section] || {}; });
       var connectionState = await options.connection().store.load(), connectionMap = Object.create(null);
       (backup.connections || []).forEach(function (entry) {
@@ -303,7 +354,9 @@
           if (!record(source[section][id]) || source[section][id].id !== id) fail('配置条目 ID 无效: ' + section + '/' + id);
           var targetId = maps[section] && maps[section][id];
           if (!targetId) {
-            targetId = backup.sourceClientId === connectionState.clientId && existing[section][id]
+            var local = existing[section][id];
+            targetId = (backup.sourceClientId === connectionState.clientId || !connection.arpPermissions.delete)
+              && local && !local.__builtin && !local.builtIn && !local.managedSkill && !local.protected
               ? id : 'cfg_' + (await hash([connection.serverId, binding.bucketId, section, id])).slice(0, 32);
             if (existing[section][targetId] && targetId !== id) fail('目标资源已被本机配置占用: ' + targetId);
           }
@@ -311,10 +364,15 @@
         }
         var retainedIds = new Set(Object.values(nextMaps[section]));
         deleted[section] = Object.keys(existing[section]).filter(function (id) {
-          return !retainedIds.has(id) && !existing[section][id].__builtin && !existing[section][id].builtIn;
+          return !retainedIds.has(id) && !existing[section][id].__builtin && !existing[section][id].builtIn && !existing[section][id].managedSkill;
         });
       }
-      if (Object.values(deleted).some(function (items) { return items.length; }) && !connection.arpPermissions.delete) fail('强制同步需要删除所选版本中不存在的配置，请开放连接删除权限', 'FORBIDDEN');
+      if (!source.skills) nextMaps.skills = clone(maps.skills || {});
+      if (!source.mcpServers) nextMaps.mcpServers = clone(maps.mcpServers || {});
+      if (Object.values(deleted).some(function (items) { return items.length; }) && !connection.arpPermissions.delete) {
+        warnings.push('连接未开放删除权限，已保留所选版本之外的本地配置。');
+        Object.keys(deleted).forEach(function (section) { deleted[section] = []; });
+      }
       var prepared = {};
       Object.keys(source).forEach(function (section) {
         prepared[section] = {};
@@ -335,11 +393,33 @@
         catalogs[section] = Object.assign({}, existing[section], prepared[section]);
         deleted[section].forEach(function (id) { delete catalogs[section][id]; });
       });
+      if (!catalogs.skills) catalogs.skills = existing.skills;
+      if (!catalogs.mcpServers) catalogs.mcpServers = existing.mcpServers;
+      Object.values(existing.skills).forEach(function (skill) {
+        if (skill.knowledgeId && catalogs.skills[skill.id]) catalogs.skills[skill.knowledgeId] = catalogs.skills[skill.id];
+      });
+      // Legacy archives omitted Skills and MCP servers. Drop unavailable assistant bindings,
+      // and report them instead of preventing the entire configuration from loading.
+      for (var assistant of Object.values(prepared.assistants)) {
+        assistant.skillIds = (assistant.skillIds || []).filter(function (id) {
+          if (catalogs.skills[id]) return true;
+          warnings.push('助手「' + assistant.name + '」缺少 Skill，已跳过引用: ' + id); return false;
+        });
+        assistant.mcpServerIds = (assistant.mcpServerIds || []).filter(function (id) {
+          if (catalogs.mcpServers[id]) return true;
+          warnings.push('助手「' + assistant.name + '」缺少 MCP 配置，已跳过引用: ' + id); return false;
+        });
+      }
       var runtimeConfig = await options.resourceService.getConfig();
       ['flows', 'pages', 'scripts', 'flowGroups'].forEach(function (section) {
         Object.keys(runtimeConfig[section] || {}).forEach(function (id) { if (runtimeConfig[section][id].__builtin) catalogs[section][id] = runtimeConfig[section][id]; });
       });
-      function reference(section, id) { if (id && !catalogs[section][id]) fail('配置仍引用不存在的资源: ' + section + '/' + id); }
+      function reference(section, id) {
+        if (id && !catalogs[section][id]) {
+          if (['skills', 'mcpServers'].includes(section)) { warnings.push('缺少配置引用: ' + section + '/' + id); return; }
+          fail('配置仍引用不存在的资源: ' + section + '/' + id);
+        }
+      }
       Object.keys(catalogs).forEach(function (section) { Object.values(catalogs[section]).forEach(function (item) { rewrite(item, {}, null, reference); }); });
       var agentSettings = rewrite(modules.modelSettings.value.agentSettings || {}, nextMaps, null, function () {});
       rewrite(agentSettings, {}, null, reference);
@@ -354,9 +434,9 @@
       }
       for (var assistant of Object.values(prepared.assistants)) {
         if (typeof assistant.name !== 'string' || !assistant.name.trim()) fail('助手名称不能为空');
-        for (var skillId of assistant.skillIds || []) await options.resourceService.getSkill(skillId);
-        for (var mcpId of assistant.mcpServerIds || []) await options.mcpService.getMcpServer(mcpId);
       }
+      for (var skill of Object.values(prepared.skills || {})) options.resourceService.validateSkill(pick(skill, SKILL_FIELDS));
+      for (var server of Object.values(prepared.mcpServers || {})) options.httpMcpManager.validateServer(pick(server, MCP_FIELDS));
       // Save the complete identity plan before the first write. Repeating an
       // interrupted operation addresses the same resources after a worker restart.
       var union = {};
@@ -365,10 +445,20 @@
       stored.mappingHistory = mappingHistory;
       stored.bucketId = binding.bucketId; stored.maps = union;
       stored.serverId = connection.serverId; stored.connectionId = binding.connectionId;
-      stored.operation = { id: input.operationId, versionId: input.versionId, backupHash: backupHash, status: 'applying', startedAt: Date.now() };
+      stored.operation = { id: input.operationId, versionId: input.versionId, backupHash: backupHash, status: 'applying', startedAt: Date.now(), warnings: warnings };
       try {
         await save(stored);
         recoveryPending = true;
+        for (var skillId of Object.keys(prepared.skills || {})) {
+          var skill = pick(prepared.skills[skillId], SKILL_FIELDS);
+          if (existing.skills[skillId]) await options.resourceService.patchSkill(skillId, skill);
+          else await options.resourceService.createSkill(skill);
+        }
+        for (var serverId of Object.keys(prepared.mcpServers || {})) {
+          var server = pick(prepared.mcpServers[serverId], MCP_FIELDS);
+          if (existing.mcpServers[serverId]) await options.mcpService.patchMcpServer(serverId, server);
+          else await options.mcpService.createMcpServer(server);
+        }
         for (var logicalId of Object.keys(source.models)) {
           var modelId = nextMaps.models[logicalId];
           var model = pick(prepared.models[modelId], agent.mutableKeyContract.modelService.filter(function (key) { return key !== 'secret'; }));
@@ -392,6 +482,8 @@
         // Publish the complete flow/schedule configuration only after all of its
         // model/assistant dependencies and defaults are in place.
         await options.saveConfiguration(next);
+        for (var removedSkill of deleted.skills || []) await options.resourceService.deleteSkill(removedSkill);
+        for (var removedServer of deleted.mcpServers || []) await options.mcpService.deleteMcpServer(removedServer);
         stored.maps = nextMaps; stored.versionId = input.versionId;
         stored.operation.status = 'complete'; stored.operation.completedAt = Date.now();
         await save(stored);
@@ -406,17 +498,20 @@
       }
     }
     return { capture: capture, apply: apply, status: status, session: session, compatibility: compatibility,
-      authorizeManual: async function (connectionId, operationId) {
+      authorizeManual: async function (connectionId, operationId, bucketId) {
         root.McpContract.id(operationId);
         var target = options.target(connectionId);
         if (!target || (await compatibility(connectionId)).compatible !== true) fail('连接尚未就绪或同步版本不兼容');
+        var binding = options.binding();
+        bucketId = bucketId || target.bucketId;
+        if (bucketId !== target.bucketId && !(binding && binding.connectionId === connectionId && binding.bucketId === bucketId)) fail('同步桶名不匹配');
         if (busy) fail('配置操作正在进行', 'RESOURCE_BUSY');
         var stored = await state();
         if (recoveryPending && (stored.connectionId !== connectionId || stored.operation.id !== operationId)) fail('请先恢复未完成的同步操作', 'RESOURCE_BUSY');
-        await chrome.storage.session.set({ [manualKey]: { connectionId: connectionId, bucketId: target.bucketId, operationId: operationId } });
+        await chrome.storage.session.set({ [manualKey]: { connectionId: connectionId, bucketId: bucketId, operationId: operationId } });
       },
-      isApplying: function () { return busy === 'apply' || recoveryPending; },
-      isExecutionBlocked: function () { return busy === 'apply' || recoveryPending || startupPending; },
+      isApplying: function () { return busy === 'apply'; },
+      isExecutionBlocked: function () { return busy === 'apply'; },
       whenBindingReady: function () { return bindingReady; },
       initializeBinding: async function () {
         await ready;
@@ -447,6 +542,7 @@
         var autoSync = !!value.binding && value.binding.connectionId === target.connectionId;
         var recovery = value.recoveryConnectionId === target.connectionId;
         return Object.assign({}, value, { binding: target, autoSync: autoSync, backupEnabled: target.backup,
+          syncBinding: autoSync ? value.binding : null,
           protocol: protocol(), compatibility: negotiation, manualOperationId: await manualOperation(target.connectionId),
           startupCompleted: !autoSync || !value.autoSyncEnabled || value.startupCompleted,
           startupPending: autoSync && value.startupPending, recoveryPending: recovery,

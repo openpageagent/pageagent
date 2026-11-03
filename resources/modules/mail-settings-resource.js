@@ -5,7 +5,7 @@
   var arp = commonJs ? require('../protocol/index.js') : root.AgentResourceProtocol;
   var support = commonJs ? require('../resource-module-support') : root.ResourceModuleSupport;
   var adapter = commonJs ? require('../resource-module-adapter') : root.ResourceModuleAdapter;
-  var settings = commonJs ? require('../../settings/mail-settings') : root.PageAutomationMailSettings;
+  var settings = commonJs ? require('../../settings/mail-settings') : root.PageAgentMailSettings;
   if (!arp || !support || !adapter || !settings) throw new Error('MailSettingsResource dependencies are incomplete');
   var api = factory(arp, support, adapter, settings);
   if (commonJs) module.exports = api;

@@ -13,7 +13,7 @@
     return;
   }
 
-  var lifecycleApi = root && root.PageAutomationLifecycle;
+  var lifecycleApi = root && root.PageAgentLifecycle;
   if (commonJs && !lifecycleApi) lifecycleApi = require('../ui/lifecycle.js');
   var api = factory(lifecycleApi);
   if (commonJs) module.exports = api;
@@ -126,7 +126,7 @@
     options = options || {};
     var lifecycleFactory = options.lifecycleApi || LifecycleApi;
     if (!lifecycleFactory || typeof lifecycleFactory.create !== 'function') {
-      throw new Error('PageAutomationLifecycle must load before OptionsUrlTriggerController');
+      throw new Error('PageAgentLifecycle must load before OptionsUrlTriggerController');
     }
 
     var windowRef = options.window || (typeof globalThis !== 'undefined' ? globalThis : {});
@@ -425,7 +425,7 @@
         + targetOptions(selectedTarget) + '</select></div>'
         + '</div>'
         + '<div class="form-row"><label>URL 匹配模式（支持通配符 * ）</label><input type="text" id="urltrig-pattern" value="'
-        + esc(triggerPattern(draft)) + '" placeholder="https://erp.company.com/report*"></div>'
+        + esc(triggerPattern(draft)) + '" placeholder="https://erp.example.com/report*"></div>'
         + '<div class="form-row"><label class="switch-label"><input type="checkbox" id="urltrig-enabled"'
         + (ownDataValue(draft, 'enabled') !== false ? ' checked' : '')
         + '><span class="switch-slider"></span><span class="switch-text">启用</span></label></div>'
