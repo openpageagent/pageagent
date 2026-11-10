@@ -107,14 +107,14 @@
   }
   function releaseRequests() {
     failAll(C.error('SESSION_CLOSED', '应用连接已断开，未完成的操作可能已经执行；请先查询状态'));
-    workers.forEach(function (worker) { worker.terminate(); }); workers.clear(); dataWorker = null;
-    urls.forEach(function (url) { URL.revokeObjectURL(url); }); urls.clear();
-    dataPending.forEach(function (item) { clearTimeout(item.timer); item.reject(C.error('SESSION_CLOSED', '应用数据会话已关闭')); }); dataPending.clear();
   }
   function close() {
     if (disposed) return;
     disposed = true; closed = true; releaseRequests();
+    // Page resources survive bridge disconnects and are released with the instance.
+    workers.forEach(function (worker) { worker.terminate(); }); workers.clear(); dataWorker = null;
     urls.forEach(function (url) { URL.revokeObjectURL(url); }); urls.clear();
+    dataPending.forEach(function (item) { clearTimeout(item.timer); item.reject(C.error('SESSION_CLOSED', '应用数据会话已关闭')); }); dataPending.clear();
     listeners.clear(); if (port) port.disconnect();
     document.removeEventListener('visibilitychange', visible);
     window.removeEventListener('pagehide', close);

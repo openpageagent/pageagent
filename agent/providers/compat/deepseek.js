@@ -108,6 +108,8 @@
 
   function prepareAnthropicRequest(body, effort, requestedMaxTokens) {
     body = Object.assign({}, body || {});
+    // DeepSeek manages its cache automatically, independently of Claude controls.
+    delete body.cache_control;
     var mapped = mappedEffort(effort);
     if (mapped === 'none') {
       body.thinking = { type: 'disabled' };

@@ -124,10 +124,12 @@ class PageAgentMCPServer {
       this.startupDirectory = await fs.realpath(process.cwd()); this.shell = await discoverBash();
       this.environment = new EnvironmentInfo(this.serverId, this.shell, () => this.broadcastStatus(this.audit.available)); await this.environment.snapshot(true);
       const desktop = desktopCapabilities();
+      const desktopSupported = Object.keys(desktop.supported).length > 0;
       this.capabilities = { localProtocol: contract.LOCAL, files: ['read', 'write', 'delete', 'grep'],
         bash: { supported: !!this.shell, executable: this.shell },
-        desktop: { supported: process.platform === 'darwin' || process.platform === 'win32', actions: desktop.supported,
-          reason: process.platform === 'linux' ? 'PLATFORM_UNSUPPORTED' : null, permissionsVerified: false, requirements: desktop.requirements },
+        desktop: { supported: desktopSupported, actions: desktop.supported,
+          reason: desktopSupported ? null : process.platform === 'linux' ? 'X11_SCREENSHOT_UNAVAILABLE' : 'PLATFORM_UNSUPPORTED',
+          permissionsVerified: false, requirements: desktop.requirements },
         mail: { supported: true, protocol: 'smtp/1' }, configuration: { ...contract.CONFIGURATION, version: SERVER_VERSION },
         serverPolicy: 'allow-implemented', policyRevision: 1,
         environment: { schemaVersion: 1, disk: true, dynamicTtlMs: LIMITS.dynamicTtlMs },

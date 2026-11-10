@@ -50,7 +50,7 @@
     },
     desktop: {
       desktop: true, readOnly: true,
-      summary: '查询 macOS/Windows 桌面支持范围及 robotjs 是否安装；鼠标和图片定位需要 robotjs，Linux 不支持',
+      summary: '查询桌面支持范围及 robotjs 是否安装；macOS/Windows 鼠标和图片定位需要 robotjs，Linux 支持 X11 截图',
       inputSchema: schema({}, []),
     },
     keyboard: {
@@ -86,8 +86,14 @@
     },
     screenshot: {
       desktop: true, readOnly: true,
-      summary: 'macOS/Windows 主屏幕或 region 截图，返回 PNG；robotjs 提供屏幕坐标换算信息，Windows 和区域截图需要 robotjs',
-      inputSchema: schema({ region: REGION }, []),
+      summary: '桌面截图：屏幕、区域或活动窗口，可延迟；Linux/macOS 可交互选择。默认 PNG；Windows robotjs 另支持 BMP，Linux/macOS 可请求 JPEG/GIF；Linux 编码格式取决于 imlib2。支持范围见参数说明',
+      inputSchema: schema({
+        mode: { enum: ['screen', 'active', 'select'], description: '默认 screen：macOS/Windows 主屏幕，Linux 为 DISPLAY 全屏；可传 region。active：当前活动窗口；macOS/Windows 读取可见窗口边界后截图，不激活窗口。select：鼠标选择窗口/区域，仅 Linux/macOS，整个调用限 30 秒' },
+        region: REGION,
+        format: { enum: ['png', 'jpeg', 'bmp', 'gif'], description: '默认 png。Windows robotjs 仅支持 png/bmp；macOS JPEG/GIF 和交互选择使用系统 screencapture；Linux 使用 scrot/imlib2，缺少编码器时失败' },
+        quality: { type: 'integer', minimum: 1, maximum: 100, description: '仅 Linux PNG/JPEG，可选，省略时使用 scrot 默认值。JPEG 数值越高压缩损失越少、文件通常越大；PNG 始终无损，只改变压缩。此参数不增加分辨率或源图细节，高清截图需提高显示器物理分辨率与应用渲染像素密度。其他格式/平台不接受此参数' },
+        delayMs: { type: 'integer', minimum: 0, maximum: 10000, description: '启动截图或交互选择前等待的毫秒数，默认 0；计入 30 秒总超时，可取消' },
+      }, []),
     },
     locate: {
       desktop: true, readOnly: true,

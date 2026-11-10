@@ -25,6 +25,26 @@
     return /^image\/[a-z0-9.+-]+$/.test(mimeType) ? mimeType : '';
   }
 
+  function remoteImageUrl(value) {
+    if (typeof value !== 'string' || !/^https?:\/\//i.test(value)) return '';
+    try {
+      var parsed = new URL(value);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? value : '';
+    } catch (_) { return ''; }
+  }
+
+  function normalizeImageSource(value) {
+    var imageUrl = typeof value === 'string' ? value : value && (value.dataUrl || value.url);
+    var matched = typeof imageUrl === 'string' ? DATA_IMAGE_PATTERN.exec(imageUrl) : null;
+    if (matched) return {
+      dataUrl: imageUrl,
+      mimeType: normalizeMimeType(value && value.mimeType || matched[1]),
+    };
+    var url = remoteImageUrl(imageUrl);
+    if (url) return { url: url };
+    throw Object.assign(new Error('图片输入必须为有效的 Base64 Data URL 或 HTTP(S) URL'), { code: 'IMAGE_FORMAT_UNSUPPORTED' });
+  }
+
   function normalizeImagePart(part, includeResolvedData) {
     part = part || {};
     var artifactUri = trimmed(part.artifactUri || part.artifact_uri);
@@ -45,6 +65,8 @@
     if (includeResolvedData && typeof part.dataUrl === 'string' && DATA_IMAGE_PATTERN.test(part.dataUrl)) {
       output.dataUrl = part.dataUrl;
       if (!output.mimeType) output.mimeType = normalizeMimeType(DATA_IMAGE_PATTERN.exec(part.dataUrl)[1]);
+    } else if (includeResolvedData && remoteImageUrl(part.url)) {
+      output.url = part.url;
     }
     return output;
   }
@@ -156,13 +178,7 @@
             detail: part.detail || 'high',
             mimeType: part.mimeType || '',
           });
-          var dataUrl = typeof value === 'string' ? value : value && value.dataUrl;
-          var matched = typeof dataUrl === 'string' ? DATA_IMAGE_PATTERN.exec(dataUrl) : null;
-          if (!matched) throw Object.assign(new Error('Resolved image is not a base64 Data URL'), { code: 'IMAGE_FORMAT_UNSUPPORTED' });
-          return Object.assign({}, part, {
-            dataUrl: dataUrl,
-            mimeType: normalizeMimeType(value && value.mimeType || matched[1]) || part.mimeType,
-          });
+          return Object.assign({}, part, normalizeImageSource(value));
         } catch (error) {
           return { type: 'text', text: imageUnavailableText(error) };
         }
@@ -173,15 +189,15 @@
 
   function openAiContent(content) {
     var parts = contentParts(content, { includeResolvedData: true });
-    var hasImage = parts.some(function (part) { return part.type === 'image' && part.dataUrl; });
+    var hasImage = parts.some(function (part) { return part.type === 'image' && (part.dataUrl || part.url); });
     if (!hasImage) return parts.filter(function (part) { return part.type === 'text'; })
       .map(function (part) { return part.text; }).filter(Boolean).join('\n');
     return parts.map(function (part) {
       if (part.type === 'text') return { type: 'text', text: part.text };
-      if (!part.dataUrl) return { type: 'text', text: '[图片不可用：Artifact 已过期或不存在]' };
+      if (!part.dataUrl && !part.url) return { type: 'text', text: '[图片不可用：Artifact 已过期或不存在]' };
       return {
         type: 'image_url',
-        image_url: { url: part.dataUrl, detail: part.detail === 'original' ? 'high' : (part.detail || 'high') },
+        image_url: { url: part.dataUrl || part.url, detail: part.detail === 'original' ? 'high' : (part.detail || 'high') },
       };
     });
   }
@@ -190,9 +206,9 @@
     var parts = contentParts(content, { includeResolvedData: true });
     return parts.map(function (part) {
       if (part.type === 'text') return { type: textType || 'input_text', text: part.text };
-      if (!part.dataUrl) return { type: textType || 'input_text', text: '[图片不可用：Artifact 已过期或不存在]' };
+      if (!part.dataUrl && !part.url) return { type: textType || 'input_text', text: '[图片不可用：Artifact 已过期或不存在]' };
       return {
-        type: 'input_image', image_url: part.dataUrl,
+        type: 'input_image', image_url: part.dataUrl || part.url,
         detail: part.detail === 'original' ? 'high' : (part.detail || 'high'),
       };
     });
@@ -202,6 +218,7 @@
     var parts = contentParts(content, { includeResolvedData: true });
     return parts.map(function (part) {
       if (part.type === 'text') return { type: 'text', text: part.text };
+      if (part.url) return { type: 'image', source: { type: 'url', url: part.url } };
       var matched = part.dataUrl && DATA_IMAGE_PATTERN.exec(part.dataUrl);
       if (!matched) return { type: 'text', text: '[图片不可用：Artifact 已过期或不存在]' };
       return {
@@ -427,13 +444,13 @@
           var toolMessage = messages[messageIndex];
           var resultId = mappedIds[toolMessage.toolCallId] || chatCallId(toolMessage.toolCallId);
           output.push({ role: 'tool', tool_call_id: resultId, content: textOnly(toolMessage.content) || '（工具没有返回文本）' });
-          var images = imageParts(toolMessage.content, true).filter(function (part) { return !!part.dataUrl; });
+          var images = imageParts(toolMessage.content, true).filter(function (part) { return !!(part.dataUrl || part.url); });
           if (images.length) {
             imageContent.push({ type: 'text', text: '来自工具调用 ' + resultId + ' 的可信图片输出：' });
             images.forEach(function (part) {
               imageContent.push({
                 type: 'image_url',
-                image_url: { url: part.dataUrl, detail: part.detail === 'original' ? 'high' : (part.detail || 'high') },
+                image_url: { url: part.dataUrl || part.url, detail: part.detail === 'original' ? 'high' : (part.detail || 'high') },
               });
             });
           }
@@ -484,7 +501,7 @@
       }
       if (message.role === 'tool') {
         var resultIdentity = mappedIds[message.toolCallId] || responsesCallIdentity(message.toolCallId, true);
-        var toolImages = imageParts(message.content, true).filter(function (part) { return !!part.dataUrl; });
+        var toolImages = imageParts(message.content, true).filter(function (part) { return !!(part.dataUrl || part.url); });
         var responseOutput = toolImages.length
           ? responsesContent(message.content, 'input_text')
           : textOnly(message.content) || '(no tool output)';
@@ -632,6 +649,7 @@
     contentText: contentText,
     contentParts: contentParts,
     normalizeContent: normalizeContent,
+    normalizeImageSource: normalizeImageSource,
     imageParts: imageParts,
     hasToolImages: hasToolImages,
     omitToolImages: omitToolImages,

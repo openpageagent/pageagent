@@ -114,7 +114,7 @@ Bash 的启动目录固定为该目录，执行需要服务端安装 Bash；Bash
 
 ### 桌面操作
 
-桌面操作通过 `/local/connections/{connectionId}/desktop/{operation}` 调用，作用于 **MCP Server 所在机器当前登录的桌面**，仅支持 macOS 和 Windows。
+桌面操作通过 `/local/connections/{connectionId}/desktop/{operation}` 调用，作用于 **MCP Server 所在机器的桌面**。macOS 和 Windows 支持下列桌面操作，Linux 支持 X11 截图。
 
 鼠标、模板匹配及部分键盘和截图功能需要可选依赖 `robotjs@0.9.1`。在服务端文件所在目录安装：
 
@@ -128,24 +128,41 @@ npm install --no-save --ignore-scripts robotjs@0.9.1
 
 | 平台 | 条件与范围 |
 | --- | --- |
-| macOS | 鼠标、逐字输入、区域截图和模板匹配需要 robotjs；未安装时可用剪贴板、基础键盘、主屏幕截图、应用和窗口操作。输入和窗口需「辅助功能」，系统脚本需「自动化」，截图需「屏幕录制」权限。 |
+| macOS | 鼠标、逐字输入和模板匹配需要 robotjs；未安装时仍可使用系统截图。输入和窗口需「辅助功能」，系统脚本需「自动化」，截图需「屏幕录制」权限。 |
 | Windows | 鼠标、键盘、截图和模板匹配需要 robotjs；剪贴板、关闭应用、打印和窗口操作需要 Windows PowerShell 5.1，窗口查询/激活/边界读取还需系统 UI Automation。需要交互式登录桌面，不支持 UAC 安全桌面及窗口移动/缩放。 |
+| Linux | 截图需要 `/usr/bin/scrot` 和 `DISPLAY` 指向的 X11 显示器；Docker Selkies 环境已配置。 |
 
 | ARP 路径（POST） | 操作与参数 | 结果/边界 |
 | --- | --- | --- |
 | `/local/connections/{connectionId}/desktop/mouse` | `position/move/click/drag/scroll` | 需要 robotjs；移动/点击用 `x/y`，拖拽另需 `fromX/fromY`；`durationMs` 默认 300；click 支持 `button` 和 `double`；scroll 用 `deltaX/deltaY` |
 | `/local/connections/{connectionId}/desktop/keyboard` | `press` + `key`；`hotkey` + `key/modifiers`；`type` + `text` | 作用于当前焦点；修饰键支持 primary/command、ctrl、alt、shift；primary 在 macOS 为 Command，Windows 为 Ctrl |
 | `/local/connections/{connectionId}/desktop/clipboard` | `action: read/write/clear`；写入用 `text` | 仅文本，最多 64 KiB UTF-8 |
-| `/local/connections/{connectionId}/desktop/screenshot` | `{}` 或 `region: {x,y,width,height}` | 默认主屏幕；PNG 最多 8 MiB、实际像素最多 2000 万 |
+| `/local/connections/{connectionId}/desktop/screenshot` | 可选 `mode/region/format/quality/delayMs` | 默认屏幕 PNG；最多 8 MiB、2000 万像素，调用限 30 秒 |
 | `/local/connections/{connectionId}/workspaces/{workspaceId}/locate` | `templatePath`；可选 `region/tolerance` | 同时需要目录读取和桌面授权；返回首个匹配，不自动点击 |
 | `/local/connections/{connectionId}/desktop/application` | `open` + `application/args`；`close` + `pid`；`print` + `pid` | 支持范围见平台表；PID 从窗口列表获取 |
 | `/local/connections/{connectionId}/desktop/window` | `list/activate/bounds/move/resize` | 窗口列表最多 200 个；后续动作要求 PID 下精确标题唯一，按 OPTIONS 取得平台支持的参数 |
 
 `keyboard type` 默认 `mode: "paste"`，通过剪贴板粘贴 Unicode 文本，**会覆盖当前剪贴板文本**。安装 robotjs 后可选 `mode: "keys"` 逐字输入，`intervalMs` 默认 50，总预计时长限 30 秒。输入是否生效取决于当前焦点、键盘布局和应用。
 
-鼠标平滑移动，拖拽使用左键。`mouse position` 同时返回显示器列表，坐标允许副屏的负值。截图和找图区域须位于同一显示器内。
+截图参数：
 
-原生截图返回 `originX/originY/pixelsPerUnitX/pixelsPerUnitY`，图像点换算为屏幕点：`x = originX + pixelX / pixelsPerUnitX`，`y = originY + pixelY / pixelsPerUnitY`，取整后用于鼠标。图片定位直接返回换算后的 `center`。macOS 未安装 robotjs 时仍可用系统命令截取主屏幕，但不提供该换算信息。
+| 参数 | 说明 | 平台限制 |
+| --- | --- | --- |
+| `mode` | `screen`（默认屏幕）、`active`（活动窗口）、`select`（交互选择） | `screen` 在 macOS/Windows 使用主屏幕，Linux 使用 X11 屏幕；`select` 仅 Linux/macOS |
+| `region: {x,y,width,height}` | 指定区域，仅用于 `screen` | Linux 坐标非负且区域须在显示器内；robotjs 限同一显示器 |
+| `format` | `png`（默认）、`jpeg`、`bmp`、`gif` | Windows 仅 PNG/BMP；Linux 缺少对应 imlib2 编码器时返回错误 |
+| `quality` | 1–100；JPEG 数值越高清晰度越高，PNG 只调整压缩 | 仅 Linux PNG/JPEG |
+| `delayMs` | 截图前等待 0–10000 毫秒，默认 0 | 所有平台，计入总超时 |
+
+延迟在读取活动窗口或开始交互选择前生效。活动窗口截图不激活窗口；交互选择取消或超时返回错误。
+
+模型输入优先使用 PNG/JPEG，BMP/GIF 需接收方支持。
+
+鼠标平滑移动，拖拽使用左键。`mouse position` 同时返回显示器列表，坐标允许副屏的负值。robotjs 截图和找图区域须位于同一显示器内。
+
+robotjs 截图返回 `originX/originY/pixelsPerUnitX/pixelsPerUnitY`，图像点换算为屏幕点：`x = originX + pixelX / pixelsPerUnitX`，`y = originY + pixelY / pixelsPerUnitY`，取整后用于鼠标。图片定位直接返回换算后的 `center`。
+
+Linux 屏幕和区域截图的换算比例为 1；Linux 活动窗口、交互选择及 macOS 系统截图不提供屏幕坐标换算。
 
 模板匹配的 `tolerance` 是颜色误差容忍度，默认 0.1，0 为精确匹配。PNG 模板最多 8 MiB、200 万像素，需与截图保持相同像素比例，且不得通过符号链接越出工作目录。匹配返回首个结果，未找到返回 `found:false`；不支持多尺度搜索或语义识别。
 
@@ -198,7 +215,7 @@ Windows 窗口列表包含 UI Automation 暴露的多窗口和对话框。无标
 | 读取剪贴板 | `localClipboardRead` | 无 |
 | 写入剪贴板 | `localClipboardWrite` | `text`，允许空文本 |
 | 清空剪贴板 | `localClipboardClear` | 无 |
-| 截取桌面图像 | `localScreenshot` | 可选 `useRegion/x/y/width/height` |
+| 截取桌面图像 | `localScreenshot` | `mode/format/quality/delayMs`；可选 `useRegion/x/y/width/height` |
 | 查找桌面图片 | `localLocate` | `templatePath/tolerance`；可选 `useRegion/x/y/width/height` |
 | 打开桌面应用 | `localApplicationOpen` | `application`；`args` 为每行一个参数的文本 |
 | 请求关闭桌面应用 | `localApplicationClose` | `pid` |
@@ -209,7 +226,7 @@ Windows 窗口列表包含 UI Automation 暴露的多窗口和对话框。无标
 | 移动桌面窗口 | `localWindowMove` | `pid/title/x/y`，仅 macOS |
 | 调整桌面窗口大小 | `localWindowResize` | `pid/title/width/height`，仅 macOS |
 
-截图和图片定位默认使用主屏幕，勾选 `useRegion` 后使用表单中的 `x/y/width/height`。拖拽先移动到起点再拖到终点，两段各使用 `durationMs`。
+截图和图片定位启用 `useRegion` 后使用 `x/y/width/height`；截图仅 `screen` 模式支持此项。截图节点的 `quality: 0` 表示默认值，其他参数见上表。拖拽先移动到起点再拖到终点，两段各使用 `durationMs`。
 
 运行中目标离线、变化或权限不足会导致调用失败。写入、删除、Bash 和改变桌面状态的操作不自动重试。
 
@@ -221,7 +238,7 @@ Bash 非零退出码、超时或取消按失败处理，不写入成功输出变
 
 典型流程：查询窗口 → 确认唯一目标 → 激活窗口 → 按返回边界找图 → 找到后点击。条件节点会改变 `last`，窗口和找图结果可分别保存到 `outputVar`。窗口移动后使用边界节点重新读取位置。
 
-截图返回 `modelContent[0].data`（PNG Base64）、`modelContent[0].mimeType` 和尺寸，使用 robotjs 截图时还返回坐标换算信息。流程不自动触发视觉模型或保存图片文件。
+截图返回 `modelContent[0].data`（Base64）、`modelContent[0].mimeType`、`format` 和尺寸，不自动触发视觉模型或保存文件。定时截图由调度触发含 `localScreenshot` 的流程。
 
 ### 邮件
 

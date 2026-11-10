@@ -174,6 +174,17 @@
     return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36);
   }
 
+  async function promptCacheKey(sessionId, cryptoApi) {
+    sessionId = text(sessionId).trim();
+    if (!sessionId) return '';
+    cryptoApi = cryptoApi || globalThis.crypto;
+    if (!cryptoApi && typeof require === 'function') cryptoApi = require('node:crypto').webcrypto;
+    if (!cryptoApi || !cryptoApi.subtle) throw new Error('SHA-256 is required for provider cache routing');
+    var digest = await cryptoApi.subtle.digest('SHA-256', new TextEncoder().encode(sessionId));
+    var hash = Array.from(new Uint8Array(digest), function (value) { return value.toString(16).padStart(2, '0'); }).join('');
+    return 'pfa_' + hash.slice(0, 60);
+  }
+
   function truncate(value, limit) {
     var source = text(value);
     var max = Math.max(1, Number(limit) || MAX_ERROR_BODY_CHARS);
@@ -282,6 +293,7 @@
     parseStreamingJson: parseStreamingJson,
     parseFinalArguments: parseFinalArguments,
     shortHash: shortHash,
+    promptCacheKey: promptCacheKey,
     truncate: truncate,
     errorMessageFromBody: errorMessageFromBody,
     isRetryableStatus: isRetryableStatus,

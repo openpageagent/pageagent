@@ -1,14 +1,16 @@
 'use strict';
 
 const fs = require('fs/promises');
+const { accessSync, constants } = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { setTimeout: delay } = require('timers/promises');
 const native = require('./desktop-native.js');
+const { readScreenshot } = require('./screenshot-image');
 const { terminateChild, observeChild } = require('./execution-control');
 
 const MAX_TEXT_BYTES = 64 * 1024;
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 // All connections to this server share the same desktop.
 let busy = false;
 
@@ -20,6 +22,15 @@ function run(argv) {
     if (input.code !== undefined) system.keyCode(input.code, { using: input.modifiers });
     else system.keystroke(input.key, { using: input.modifiers });
     return JSON.stringify({ action: input.action, sent: true });
+  }
+  if (input.operation === 'screenshot') {
+    var front = system.applicationProcesses.whose({ frontmost: true })();
+    if (front.length !== 1) throw new Error('无法确定当前活动应用');
+    var focused = front[0].attributes.byName('AXFocusedWindow');
+    if (!focused.exists()) throw new Error('当前活动应用没有可截图的窗口');
+    var activeWindow = focused.value();
+    var position = activeWindow.position(), size = activeWindow.size();
+    return JSON.stringify({ x: position[0], y: position[1], width: size[0], height: size[1] });
   }
   var processes = system.applicationProcesses.whose(input.pid ? { unixId: input.pid } : { backgroundOnly: false })();
   if (input.operation === 'window' && input.action === 'list') {
@@ -103,6 +114,21 @@ if ($request.operation -eq 'clipboard') {
     else { Set-Clipboard -Value ([string]$request.text) }
     $result = @{ action = $request.action }
   }
+} elseif ($request.operation -eq 'screenshot') {
+  Add-Type -AssemblyName UIAutomationClient
+  Add-Type -AssemblyName UIAutomationTypes
+  $element = [System.Windows.Automation.AutomationElement]::FocusedElement
+  $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+  $found = $false
+  for ($depth = 0; $null -ne $element -and $depth -lt 64; $depth++) {
+    if ($element.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window) {
+      $found = $true; break
+    }
+    $element = $walker.GetParent($element)
+  }
+  if (!$found -or $element.Current.IsOffscreen) { throw '无法确定当前活动窗口的可见边界' }
+  $rect = $element.Current.BoundingRectangle
+  $result = @{ x = $rect.Left; y = $rect.Top; width = $rect.Width; height = $rect.Height }
 } elseif ($request.operation -eq 'window') {
   if ($request.action -notin @('list', 'activate', 'bounds')) { throw 'Windows 不支持此窗口操作' }
   # Load Windows assemblies only; no source compilation or generated native helper.
@@ -251,6 +277,11 @@ function checkCancelled(signal) {
   if (signal.aborted) throw new Error('桌面操作已取消；已经发生的输入或修改不会撤销');
 }
 
+function canCaptureX11() {
+  if (process.platform !== 'linux' || !String(process.env.DISPLAY || '').trim()) return false;
+  try { accessSync('/usr/bin/scrot', constants.X_OK); return true; } catch (_) { return false; }
+}
+
 function capabilities() {
   const supported = {};
   const nativeInstalled = (process.platform === 'darwin' || process.platform === 'win32') && native.installed();
@@ -270,11 +301,13 @@ function capabilities() {
     supported.screenshot = ['capture'];
     supported.window.push('move', 'resize');
   }
+  if (canCaptureX11()) supported.screenshot = ['capture'];
   return { platform: process.platform, supported, robotjs: { version: '0.9.1', installed: nativeInstalled },
     unsupported: ['semanticLocate'].concat(process.platform === 'darwin' ? [] : ['windowMove', 'windowResize']),
     requirements: process.platform === 'darwin' ? '鼠标/图片定位需 robotjs；输入/窗口需辅助功能，系统脚本需自动化权限，截图需屏幕录制权限'
       : process.platform === 'win32' ? '鼠标/键盘/截图/图片定位需 robotjs；剪贴板和窗口操作需 Windows PowerShell，窗口查询/激活/边界需系统 UI Automation，需交互式登录桌面'
-        : '桌面操作仅支持 macOS 和 Windows',
+        : process.platform === 'linux' ? 'X11 截图需 DISPLAY 和 /usr/bin/scrot；支持区域、活动窗口、交互选择、延迟和格式/质量参数；编码格式取决于 imlib2'
+          : '当前平台不支持桌面操作',
     permissionsVerified: false };
 }
 
@@ -323,7 +356,7 @@ async function systemOperation(operation, input, signal) {
     ? await command('/usr/bin/osascript', ['-l', 'JavaScript', '-e', MAC_SCRIPT, '--', JSON.stringify(payload)], signal)
     : await command('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_SCRIPT], signal, JSON.stringify(payload));
   const result = JSON.parse(output.trim());
-  if (operation === 'window' && (input.action === 'activate' || input.action === 'bounds')) {
+  if (operation === 'screenshot' || operation === 'window' && (input.action === 'activate' || input.action === 'bounds')) {
     if (![result.x, result.y, result.width, result.height].every(Number.isFinite)) throw new Error('系统没有返回有效窗口边界');
     const right = Math.floor(result.x + result.width), bottom = Math.floor(result.y + result.height);
     result.x = Math.ceil(result.x);
@@ -367,22 +400,48 @@ async function keyboard(input, signal) {
 }
 
 async function screenshot(input, signal) {
-  if (native.installed()) return native.screenshot(input, signal);
-  if (input.region) throw new Error('区域截图需要安装 robotjs 0.9.1');
+  const x11 = process.platform === 'linux';
+  const mode = input.mode || 'screen', format = input.format || 'png';
+  if (input.region && mode !== 'screen') throw new Error('region 不能与活动窗口或交互选择同时使用');
+  if (input.quality !== undefined && (!x11 || !['png', 'jpeg'].includes(format))) {
+    throw new Error('quality 仅适用于 Linux scrot 的 PNG/JPEG 编码；PNG 只调整压缩，不降低像素质量');
+  }
+  if (process.platform === 'win32' && (mode === 'select' || !['png', 'bmp'].includes(format))) {
+    throw new Error('Windows robotjs 支持屏幕、区域和窗口边界截图，格式为 PNG/BMP；不支持交互选择');
+  }
+  if (input.region && input.region.width * input.region.height > 20000000) throw new Error('截图区域超过 2000 万像素');
+  if (x11 && input.region && (input.region.x < 0 || input.region.y < 0)) throw new Error('X11 截图区域坐标不能为负数');
+  if (input.delayMs) await delay(input.delayMs, undefined, { signal });
+  checkCancelled(signal);
+  const region = mode === 'active' && !x11 ? await systemOperation('screenshot', {}, signal) : input.region;
+  if (!x11 && mode !== 'select' && ['png', 'bmp'].includes(format) && native.installed()) {
+    return native.screenshot({ ...input, region, format }, signal);
+  }
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'page-agent-screen-'));
   try {
-    const file = path.join(directory, 'screen.png');
-    await command('/usr/sbin/screencapture', ['-x', '-m', '-t', 'png', file], signal);
-    checkCancelled(signal);
-    if ((await fs.stat(file)).size > MAX_IMAGE_BYTES) throw new Error('截图 PNG 超过 8MB');
-    const data = await fs.readFile(file);
-    if (data.length > MAX_IMAGE_BYTES || data.length < 24 || data.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') {
-      throw new Error('系统截图没有返回有效的 PNG');
+    const file = path.join(directory, 'screen.' + format);
+    if (x11) {
+      const args = ['--silent'];
+      if (region) args.push('--autoselect', [region.x, region.y, region.width, region.height].join(','));
+      else if (mode === 'active') args.push('--focused');
+      else if (mode === 'select') args.push('--select');
+      if (input.quality !== undefined) args.push('--quality', String(input.quality));
+      await command('/usr/bin/scrot', args.concat(file), signal);
+    } else {
+      const args = ['-x', '-t', format === 'jpeg' ? 'jpg' : format];
+      if (region) args.push('-R' + [region.x, region.y, region.width, region.height].join(','));
+      else if (mode === 'select') args.push('-i');
+      else args.push('-m');
+      await command('/usr/sbin/screencapture', args.concat(file), signal);
     }
-    const width = data.readUInt32BE(16), height = data.readUInt32BE(20);
-    if (width * height > 20000000) throw new Error('截图实际像素超过 2000 万，请安装 robotjs 后使用区域截图');
-    return { width, height, coordinateSpace: 'image-pixels',
-      modelContent: [{ type: 'image', mimeType: 'image/png', data: data.toString('base64') }] };
+    checkCancelled(signal);
+    const result = await readScreenshot(file, format, signal);
+    if (x11 && region && (result.width !== region.width || result.height !== region.height)) {
+      throw new Error('X11 返回的截图尺寸与 region 不一致，请确认区域完全位于显示器内');
+    }
+    return { ...result, coordinateSpace: 'image-pixels', ...(region ? { region } : {}),
+      ...(x11 && mode === 'screen' ? { originX: region ? region.x : 0, originY: region ? region.y : 0,
+        pixelsPerUnitX: 1, pixelsPerUnitY: 1 } : {}) };
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
 }
 

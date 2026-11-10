@@ -2490,8 +2490,14 @@
       if (type === 'context_injected') {
         var injectedSystem = trajectoryContentText(payload.system);
         if (injectedSystem || Array.isArray(payload.tools)) addSystemCell(base, event, payload, injectedSystem);
+        var runtimeText = trajectoryContentText(payload.runtimeContext);
+        var guidanceMessages = payload.contextAppendMessages;
+        // Persisted runtime messages already have their own trajectory row.
+        if (runtimeText && Array.isArray(guidanceMessages)) guidanceMessages = guidanceMessages.filter(function (message) {
+          return trajectoryContentText(message) !== runtimeText;
+        });
         var contextParts = [
-          { key: 'guidance', content: payload.contextAppendMessages },
+          { key: 'guidance', content: guidanceMessages },
           { key: 'runtime', content: payload.runtimeContext },
         ].filter(function (part) { return trajectoryContentText(part.content); });
         if (!contextParts.length) contextParts.push({ key: 'content', content: payload.content });

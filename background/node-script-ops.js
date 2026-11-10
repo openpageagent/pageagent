@@ -369,7 +369,7 @@
           return executePageCommand('screenshot', withApiTabId(args[0], args[1]), execution);
         case 'model.chat':
           return Promise.resolve().then(function () {
-            var modelClient = getModelClient();
+            var modelClient = getModelClient(execution);
             var options = typeof args[0] === 'string' ? { user: args[0] } : copyOwnData(args[0]);
             return modelClient.chat({
               system: ownDataValue(options, 'system', undefined),

@@ -317,19 +317,27 @@
     } catch (_) {}
   }
 
-  var PAGE_CONVERSATION_VISIBILITY_KEY = 'page_conversation_visible';
+  var PAGE_CONVERSATION_VISIBILITY_KEY_PREFIX = 'page_conversation_visible:';
   var pageConversationVisibilityWrite = Promise.resolve();
 
-  function validatePageConversationVisibilitySender(sender) {
+  async function resolvePageConversationVisibilityKey(sender) {
     var pageUrl = String(sender && (sender.url || sender.tab && sender.tab.url) || '').trim();
     var parsed;
     try { parsed = new URL(pageUrl); } catch (_) {}
     var appEntry = sender && sender.id === chrome.runtime.id && sender.frameId === 0
       && globalThis.AppContract.parseUrl(pageUrl, chrome.runtime.getURL('/'));
-    if (appEntry) return;
-    if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) {
+    if (!parsed || (!appEntry && parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) {
       throw new Error('无法识别当前站点');
     }
+    if (appEntry) {
+      var appStore = globalThis.PageAgentApps.store;
+      var appMeta = appStore.required(appEntry.appId
+        ? await appStore.get('app_meta', appEntry.appId)
+        : await appStore.findBySlug(appEntry.slug));
+      return PAGE_CONVERSATION_VISIBILITY_KEY_PREFIX + 'app:' + appMeta.appId;
+    }
+    // 按站点保存；旧的全局开关无法归属站点，不再读取。
+    return PAGE_CONVERSATION_VISIBILITY_KEY_PREFIX + parsed.protocol + '//' + parsed.host;
   }
 
   function invokePageConversationVisibilityStorage(method, value) {
@@ -363,18 +371,18 @@
     });
   }
 
-  function getPageConversationVisibility() {
+  function getPageConversationVisibility(key) {
     return pageConversationVisibilityWrite.catch(function () {}).then(function () {
-      return invokePageConversationVisibilityStorage('get', PAGE_CONVERSATION_VISIBILITY_KEY);
+      return invokePageConversationVisibilityStorage('get', key);
     }).then(function (result) {
-      return !!(result && result[PAGE_CONVERSATION_VISIBILITY_KEY] === true);
+      return !!(result && result[key] === true);
     });
   }
 
-  function setPageConversationVisibility(open) {
+  function setPageConversationVisibility(key, open) {
     var operation = pageConversationVisibilityWrite.catch(function () {}).then(function () {
       var patch = {};
-      patch[PAGE_CONVERSATION_VISIBILITY_KEY] = open === true;
+      patch[key] = open === true;
       return invokePageConversationVisibilityStorage('set', patch);
     }).then(function () {
       return open === true;
@@ -4196,13 +4204,7 @@
     }
 
     if (message && message.type === PageConversationMessages.TYPES.GET_VISIBILITY) {
-      try {
-        validatePageConversationVisibilitySender(sender);
-      } catch (error) {
-        sendResponse({ ok: false, error: error && error.message || '无法识别当前站点' });
-        return undefined;
-      }
-      getPageConversationVisibility().then(function (open) {
+      resolvePageConversationVisibilityKey(sender).then(getPageConversationVisibility).then(function (open) {
         sendResponse({ ok: true, payload: { open: open } });
       }, function (error) {
         sendResponse({ ok: false, error: error && error.message || String(error || '读取页面对话显示状态失败') });
@@ -4216,13 +4218,9 @@
         sendResponse({ ok: false, error: '页面对话显示状态必须是布尔值' });
         return undefined;
       }
-      try {
-        validatePageConversationVisibilitySender(sender);
-      } catch (error) {
-        sendResponse({ ok: false, error: error && error.message || '无法识别当前站点' });
-        return undefined;
-      }
-      setPageConversationVisibility(visibilityPayload.open).then(function (open) {
+      resolvePageConversationVisibilityKey(sender).then(function (key) {
+        return setPageConversationVisibility(key, visibilityPayload.open);
+      }).then(function (open) {
         sendResponse({ ok: true, payload: { open: open } });
       }, function (error) {
         sendResponse({ ok: false, error: error && error.message || String(error || '保存页面对话显示状态失败') });

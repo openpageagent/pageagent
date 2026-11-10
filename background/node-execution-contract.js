@@ -431,7 +431,7 @@
 
     function inferMimeType(nodeType, content) {
       if (nodeType === 'screenshot') return 'image/jpeg';
-      if (nodeType === 'localScreenshot') return 'image/png';
+      if (nodeType === 'localScreenshot') return 'image/' + String(ownDataValue(content, 'format', 'png') || 'png');
       if (nodeType === 'cdp.screenshot') {
         var screenshotFormat = String(ownDataValue(content, 'format', 'png') || 'png').toLowerCase();
         return 'image/' + (screenshotFormat === 'jpg' ? 'jpeg' : screenshotFormat);

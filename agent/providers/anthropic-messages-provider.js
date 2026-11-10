@@ -130,6 +130,9 @@
         max_tokens: requestedMax,
         stream: true,
       };
+      // Main conversations preserve prior input, so the implicit breakpoint can
+      // advance with the history. One-off summary requests keep their defaults.
+      if (input.purpose === 'main') body.cache_control = { type: 'ephemeral' };
       var instructions = systemBlocks(input);
       if (instructions.length) body.system = instructions;
       var tools = toolDefinitions(input.tools);

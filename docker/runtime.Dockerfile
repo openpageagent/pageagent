@@ -3,7 +3,7 @@ FROM ${BROWSER_IMAGE}
 
 RUN apt-get update --error-on=any \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-       xvfb python3-venv libpulse0 libopus0 libva2 libva-drm2 libva-x11-2 libxkbfile1 \
+       xvfb openbox scrot python3-venv libpulse0 libopus0 libva2 libva-drm2 libva-x11-2 libxkbfile1 \
     && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv /opt/selkies \
     && /opt/selkies/bin/pip install --no-cache-dir --no-compile --only-binary=:all: pip==25.3

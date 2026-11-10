@@ -9,6 +9,7 @@
     arp: require('../resources/protocol'),
     summary: require('./conversation-summary'),
     projection: require('./tool-result-projection'),
+    providerUtilities: require('./providers/provider-utils'),
     materializer: require('../background/conversation-journal-materializer'),
   } : {
     prompt: root.AgentPrompt,
@@ -16,6 +17,7 @@
     arp: root.AgentResourceProtocol,
     summary: root.ConversationSummary,
     projection: root.AgentToolResultProjection,
+    providerUtilities: root.BrowserProviderUtilities,
     materializer: root.ConversationJournalMaterializer,
   };
   if (commonJs) {
@@ -413,8 +415,7 @@
         + '\n</request_guidance_update>';
     }
     function appendedContextMessages(profileUpdate, requestGuidance) {
-      // Only durable guidance belongs in the Journal/model prefix. Runtime is
-      // regenerated for each request and is appended separately at the end.
+      // Guidance and runtime updates are persisted in their original order.
       var textParts = [profileUpdate, requestGuidance].filter(Boolean);
       if (!textParts.length) return [];
       return [{
@@ -621,8 +622,18 @@
             && promptInput.applicationContext.appId ? ['/apps/' + promptInput.applicationContext.appId] : []),
         })
         : { schemaVersion: 1, contracts: [], text: '' };
+      var epoch = contextEpoch(checkpoint);
+      var previousPromptState = latestPromptState(events);
+      var samePromptEpoch = !!(previousPromptState && text(previousPromptState.contextEpoch) === epoch);
+      // Start each user turn/generation and each compacted context with a full
+      // snapshot. Within the turn, preserve prior input and append field updates.
+      var previousRuntimeContext = samePromptEpoch
+        && text(previousPromptState.generationId) === text(input.generationId)
+        && text(previousPromptState.turnId) === text(input.turnId)
+        ? previousPromptState.runtimeContextState : null;
       var composedPrompt = prompt.buildPrompt(Object.assign({}, promptInput, {
         capabilityGuidance: capabilityGuidance.text,
+        previousRuntimeContext: previousRuntimeContext,
       }));
       var profileGuidance = composedPrompt.profileGuidance;
       var requestGuidance = composedPrompt.requestGuidance;
@@ -630,9 +641,6 @@
       var systemCore = composedPrompt.systemCore;
       var activeRuntimeGuidance = composedPrompt.activeRuntimeGuidance;
       var systemPrompt = composedPrompt.system;
-      var epoch = contextEpoch(checkpoint);
-      var previousPromptState = latestPromptState(events);
-      var samePromptEpoch = !!(previousPromptState && text(previousPromptState.contextEpoch) === epoch);
       var profileGuidanceHash = await sha256(profileGuidance, cryptoApi);
       var requestGuidanceHash = await sha256(requestGuidance, cryptoApi);
       var profileGuidanceChanged = samePromptEpoch
@@ -660,11 +668,12 @@
       var contextAppendMessages = appendedContextMessages(
         appendedProfileGuidance,
         appendedRequestGuidance
-      );
-      var runtimeAppendMessages = runtimeContextMessage(runtimeContext);
+      ).concat(runtimeContextMessage(runtimeContext));
       var budget = budgetNumbers(input, input.service);
-      var recordingContextTokens = promptInput.recordingContext
-        ? estimate(promptInput.recordingContext, 'recordingContext', input.service) : 0;
+      var appendedRecordingContext = composedPrompt.runtimeContextFields
+        ? composedPrompt.runtimeContextFields.recordingContext : promptInput.recordingContext;
+      var recordingContextTokens = appendedRecordingContext
+        ? estimate(appendedRecordingContext, 'recordingContext', input.service) : 0;
       var combinedRuntimeTokens = estimate(runtimeContext, 'runtimeContext', input.service);
       var profileGuidanceTokens = appendedProfileGuidance
         ? estimate(appendedProfileGuidance, 'profileGuidance', input.service) : 0;
@@ -693,8 +702,7 @@
       var toolSchemaHash = await sha256(tools, cryptoApi);
       var systemPromptHash = await sha256(systemPrompt, cryptoApi);
       var cachePrefixMessages = currentPromptMessages.concat(contextAppendMessages);
-      var providerMessageProjection = cachePrefixMessages.concat(runtimeAppendMessages);
-      var providerMessageTokens = estimate(providerMessageProjection, 'messages', input.service);
+      var providerMessageTokens = estimate(cachePrefixMessages, 'messages', input.service);
       // This key describes only the stable cache prefix. Mutable profile and
       // request guidance deliberately stay out of it because their revisions
       // are appended to the conversation and must not invalidate that prefix.
@@ -707,7 +715,10 @@
         toolSchemaHash: toolSchemaHash,
         provider: cacheProviderVariant,
       }, cryptoApi);
-      var promptCacheKey = 'pfa_' + cacheEpochHash.replace(/^sha256:/, '').slice(0, 60);
+      // Cache routing belongs to the conversation, including after resume or
+      // compaction. The provider checks the actual prefix; epoch changes must
+      // not move an otherwise reusable conversation to a different cache route.
+      var promptCacheKey = await deps.providerUtilities.promptCacheKey(input.conversationId, cryptoApi);
       var appendOnlyPrefixVerified = await verifyAppendOnlyPrefix(
         cachePrefixMessages,
         previousPromptState,
@@ -813,13 +824,13 @@
         systemPrompt: systemPrompt,
         profileGuidance: profileGuidance,
         runtimeContext: runtimeContext,
+        runtimeContextState: clone(composedPrompt.runtimeContextState),
         prefixProfileGuidance: prefixProfileGuidance,
         baseMessages: currentPromptMessages,
         tailMessages: tailMessages,
         historyMessages: historyMessages,
         currentMessages: currentMessages,
         contextAppendMessages: contextAppendMessages,
-        runtimeAppendMessages: runtimeAppendMessages,
         contextEpoch: epoch,
         promptCacheKey: promptCacheKey,
         budget: budget,
@@ -892,9 +903,8 @@
       input = input || {};
       if (!input.conversationId || !input.generationId || !input.turnId) throw new TypeError('ContextBuilder.build requires conversationId, generationId, and turnId');
       var assembled = await assemble(input);
-      if (assembled.trace.mandatoryTokens > assembled.budget.inputLimit) {
-        throw contextError('CONTEXT_EXHAUSTED', 'Mandatory context buckets exceed the model input limit', assembled.trace);
-      }
+      // The total includes compressible history; exhaust the allowed summary
+      // path before rejecting a request that exceeds the input limit.
       var targetRatio = input.reason === 'overflow_retry' ? OVERFLOW_LOW_WATER_RATIO : LOW_WATER_RATIO;
       var highWater = Math.floor(assembled.budget.inputLimit * HIGH_WATER_RATIO);
       var shouldSummarize = input.forceSummary === true || assembled.trace.inputTokens > highWater;
@@ -921,14 +931,16 @@
       }
       if (summaryFailure) assembled.trace.summaryFailure = summaryFailure;
       var modelRequestId = input.modelRequestId || idGenerator('model_request');
-      var cachePrefixMessages = assembled.baseMessages.concat(assembled.contextAppendMessages);
-      var requestMessages = cachePrefixMessages.concat(assembled.runtimeAppendMessages);
-      // Prefix state intentionally excludes the regenerated runtime tail.
+      var requestMessages = assembled.baseMessages.concat(assembled.contextAppendMessages);
+      // Verify the complete prior input, including every persisted runtime update.
       var promptState = {
-        schemaVersion: 1,
+        schemaVersion: 2,
+        generationId: input.generationId,
+        turnId: input.turnId,
         contextEpoch: assembled.contextEpoch,
-        messageCount: cachePrefixMessages.length,
-        messagesHash: await sha256(cachePrefixMessages, cryptoApi),
+        messageCount: requestMessages.length,
+        messagesHash: await sha256(requestMessages, cryptoApi),
+        runtimeContextState: clone(assembled.runtimeContextState),
         systemPromptHash: assembled.trace.systemPromptHash,
         toolSchemaHash: assembled.trace.toolSchemaHash,
         cacheEpochHash: assembled.trace.cacheEpochHash,

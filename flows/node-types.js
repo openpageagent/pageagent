@@ -41,9 +41,11 @@
     ];
   }
 
-  function desktopRegionParams() {
+  function desktopRegionParams(screenshot) {
     return [
-      { key: 'useRegion', label: '使用指定区域', kind: 'boolean', default: false, description: '关闭时使用主屏幕；开启时使用下方屏幕坐标，区域须位于同一显示器内，需要 robotjs。' },
+      { key: 'useRegion', label: '使用指定区域', kind: 'boolean', default: false, description: screenshot
+        ? '仅屏幕模式可用；Linux 区域坐标非负且须在 DISPLAY 内，macOS/Windows 使用屏幕坐标，robotjs 区域须位于同一显示器内。'
+        : '关闭时使用主屏幕；开启时使用下方屏幕坐标，区域须位于同一显示器内，需要 robotjs。' },
       { key: 'x', label: '区域左上角 X', kind: 'number', default: 0, minimum: -100000, maximum: 100000 },
       { key: 'y', label: '区域左上角 Y', kind: 'number', default: 0, minimum: -100000, maximum: 100000 },
       { key: 'width', label: '区域宽度（屏幕坐标单位）', kind: 'number', default: 800, minimum: 1, maximum: 100000 },
@@ -1764,9 +1766,22 @@
       type: 'localScreenshot',
       label: '截取桌面图像',
       needsPage: false, desktopOperation: 'screenshot',
-      description: '截取主屏幕或指定区域，返回 PNG Base64，最多 8MB、2000 万实际像素；Windows 和区域截图需要 robotjs。',
-      params: desktopRegionParams(),
-      outputHint: '{ width, height, modelContent:[{ type:"image", mimeType:"image/png", data }], region?, originX?, originY?, pixelsPerUnitX?, pixelsPerUnitY? }',
+      description: '截取屏幕、指定区域或活动窗口，可延迟；Linux/macOS 可鼠标选择。默认 PNG，最多 8MB、2000 万实际像素，整个调用限 30 秒。Windows 需要 robotjs。',
+      params: [
+        { key: 'mode', label: '截图模式', kind: 'select', default: 'screen', options: [
+          { value: 'screen', label: '屏幕 / 指定区域' }, { value: 'active', label: '当前活动窗口' },
+          { value: 'select', label: '鼠标选择窗口或区域（Linux/macOS）' },
+        ] },
+        { key: 'format', label: '图片格式', kind: 'select', default: 'png', options: [
+          { value: 'png', label: 'PNG（无损）' }, { value: 'jpeg', label: 'JPEG（Linux/macOS）' },
+          { value: 'bmp', label: 'BMP' }, { value: 'gif', label: 'GIF（取决于系统编码器）' },
+        ], description: 'Windows 支持 PNG/BMP；Linux 其他格式取决于 imlib2 编码器。模型客户端通常使用 PNG/JPEG。' },
+        { key: 'quality', label: 'JPEG 清晰度 / PNG 压缩（0 默认）', kind: 'number', default: 0, minimum: 0, maximum: 100,
+          description: '仅 Linux PNG/JPEG 支持 1–100。JPEG 数值越高清晰度越高、文件通常越大；PNG 始终无损，只改变压缩。其他平台或格式保留 0。' },
+        { key: 'delayMs', label: '截图前等待（毫秒）', kind: 'number', default: 0, minimum: 0, maximum: 10000,
+          description: '启动截图或交互选择前等待，计入 30 秒总超时。' },
+      ].concat(desktopRegionParams(true)),
+      outputHint: '{ width, height, format, modelContent:[{ type:"image", mimeType, data }], region?, originX?, originY?, pixelsPerUnitX?, pixelsPerUnitY? }',
     },
     {
       type: 'localLocate',
@@ -2475,7 +2490,7 @@
           { value: 'both', label: '截图 + 文本' },
         ] },
         { key: 'selector', label: '限定区域选择器（可选，仅取该区域文本）', kind: 'text', placeholder: '' },
-        { key: 'timeoutMs', label: '模型调用超时(ms)', kind: 'number', default: 60000, minimum: 1000, maximum: 600000 },
+        { key: 'timeoutMs', label: '模型空闲超时(ms)', kind: 'number', default: 60000, minimum: 1000, maximum: 600000, description: '等待响应或连续无流事件的最长时间。' },
       ],
       outputHint: '{ passed: true, reason, verification }',
     },
@@ -2494,7 +2509,7 @@
         ] },
         { key: 'selector', label: '限定区域选择器（可选，仅取该区域文本）', kind: 'text', placeholder: '.product-list' },
         { key: 'maxChars', label: '页面文本最大字符数', kind: 'number', default: 10000, minimum: 2 },
-        { key: 'timeoutMs', label: '模型调用超时(ms)', kind: 'number', default: 60000, minimum: 1000, maximum: 600000 },
+        { key: 'timeoutMs', label: '模型空闲超时(ms)', kind: 'number', default: 60000, minimum: 1000, maximum: 600000, description: '等待响应或连续无流事件的最长时间。' },
       ],
       outputHint: '模型提取的 JSON 对象或数组',
     },
@@ -2522,7 +2537,7 @@
           { value: 'json', label: 'JSON 对象或数组（自动解析，解析失败则报错）' },
         ], description: '选择 json 时会解析模型回复；prompt 应明确给出期望的 JSON 对象或数组结构，无法解析时以 MODEL_OUTPUT_INVALID_JSON 失败。' },
         { key: 'temperature', label: '温度(0-2，0=最确定)', kind: 'number', default: 0, minimum: 0, maximum: 2 },
-        { key: 'timeoutMs', label: '模型调用超时(ms)', kind: 'number', default: 60000, minimum: 1000, maximum: 600000 },
+        { key: 'timeoutMs', label: '模型空闲超时(ms)', kind: 'number', default: 60000, minimum: 1000, maximum: 600000, description: '等待响应或连续无流事件的最长时间。' },
       ],
       outputHint: '模型回复（文本或解析后的 JSON 对象/数组），配合「输出变量名」给下游使用',
     },

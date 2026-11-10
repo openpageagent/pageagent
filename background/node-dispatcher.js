@@ -379,7 +379,14 @@
     addRoute(routes, 'localClipboardRead', local('clipboard', 'read'));
     addRoute(routes, 'localClipboardWrite', local('clipboard', 'write'));
     addRoute(routes, 'localClipboardClear', local('clipboard', 'clear'));
-    addRoute(routes, 'localScreenshot', local('screenshot', null, desktopCaptureInput));
+    addRoute(routes, 'localScreenshot', local('screenshot', null, function (params) {
+      var input = desktopCaptureInput(params);
+      ['mode', 'format', 'quality', 'delayMs'].forEach(function (name) {
+        if (name === 'quality' && Number(params[name]) === 0) return;
+        if (params[name] !== undefined && params[name] !== null && params[name] !== '') input[name] = params[name];
+      });
+      return input;
+    }));
     addRoute(routes, 'localLocate', local('locate', null, function (params) {
       return Object.assign(desktopCaptureInput(params), { templatePath: params.templatePath, tolerance: params.tolerance });
     }));

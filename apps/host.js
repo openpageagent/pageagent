@@ -7,9 +7,10 @@
   bannerHost.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647';
   shadow.innerHTML = '<style>:host{font:14px system-ui}div{padding:8px;background:#fff5d6;color:#392b00;border-bottom:1px solid #d8c792;display:flex;gap:12px;align-items:center}[hidden]{display:none}button,a{font:inherit;color:inherit}span{flex:1}</style><div hidden><span></span><button type="button">加载新内容</button><a>权限</a></div>';
   var panel = shadow.querySelector('div'), text = shadow.querySelector('span'), reload = shadow.querySelector('button'), permission = shadow.querySelector('a');
+  var bannerBeforeDisconnect = null;
   reload.onclick = function () { PageAgent.close(); location.reload(); };
   document.body.append(bannerHost);
-  function show(message, allowReload) { panel.hidden = false; text.textContent = message; reload.hidden = !allowReload; }
+  function show(message, allowReload) { bannerBeforeDisconnect = null; panel.hidden = false; text.textContent = message; reload.hidden = !allowReload; }
   function error(error) { show((error.code ? error.code + ': ' : '') + error.message, true); }
   window.addEventListener('error', function (event) { if (event.error) error(event.error); });
   window.addEventListener('unhandledrejection', function (event) { error(event.reason instanceof Error ? event.reason : new Error(String(event.reason))); });
@@ -19,12 +20,20 @@
   PageAgent.onChange(function (event) {
     if (event.change === 'deleted') { show('应用已删除', false); document.getElementById('app-root').inert = true; }
     else if (event.change === 'imported') show('应用内容已导入，请加载新内容', true);
-    else if (event.change === 'disconnected') show('应用连接已断开，输入仍保留。下一次操作会重新连接；预览临时数据已释放。', true);
+    else if (event.change === 'disconnected') {
+      var previous = bannerBeforeDisconnect || { hidden: panel.hidden, message: text.textContent, allowReload: !reload.hidden };
+      show('应用连接已断开，下一次操作会尝试重新连接。', false);
+      bannerBeforeDisconnect = previous;
+    }
     else if (event.change === 'error') error(event.error);
     else if (event.change === 'state') {
       document.title = event.state.name;
       var slot = event.state.slots[entry.slot];
       if (!slot || slot.revision !== loadedRevision) show(entry.slot === 'draft' ? '草稿已更新' : '应用已更新', true);
+      else if (bannerBeforeDisconnect) {
+        var previous = bannerBeforeDisconnect;
+        show(previous.message, previous.allowReload); panel.hidden = previous.hidden;
+      }
     } else if (event.slot === entry.slot && (event.change === 'saved' || event.change === 'published' || event.change === 'imported')) show(entry.slot === 'draft' ? '草稿已更新' : '应用已更新', true);
   });
   var loadedRevision;

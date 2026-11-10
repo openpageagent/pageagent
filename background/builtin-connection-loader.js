@@ -73,7 +73,7 @@
       // Persist the result below so new definitions always require explicit roles.
       var legacySources = new Set(file.connections.filter(function (entry) {
         var previous = previousConnections['builtin:' + entry.id];
-        return previous && previous.builtinId === entry.id && previous.url === entry.url
+        return previous && previous.builtinId === entry.id && previous.url === c.url(entry.url)
           && entry.bucket && entry.autoSync === undefined && entry.backup === undefined;
       }).map(function (entry) { return entry.id; }));
       var ids = new Set(), defaults = { autoSyncEnabled: true, syncConnectionId: null, targets: [] };

@@ -4,13 +4,15 @@
 
 用自然语言操作网页，把重复任务保存为流程，把常用需求做成自己的工具应用。
 
-版本 `1.2.1` · Chrome／Edge 等 Chromium `116+` 浏览器 · [Apache 2.0](LICENSE)
+版本 `1.2.2` · Chrome／Edge 等 Chromium `116+` 浏览器 · [Apache 2.0](LICENSE)
 
 [安装与上手](#安装与上手) · [已实现功能](#已实现功能) · [内置应用](#内置应用) · [MCP Server](#可选-mcp-server) · [打包](#打包) · [文档导航](#文档导航)
 
 ## 演示
 
-从 [Books to Scrape](https://books.toscrape.com/) 采集 11 本书的书名、价格和库存，再保存为可重复运行的 Flow。
+从 [Books to Scrape](https://books.toscrape.com/) 采集 11 本书的书名、价格和库存，保存为可重复运行的 Flow，再通过对话生成支持搜索、排序和收藏的「旅行书架」应用。演示还包含浏览器侧栏、应用管理和内置 Developer Utils 工具。
+
+![Page Agent 从网页采集、保存流程到生成和使用应用的演示](assets/readme-demo/page-agent-demo.gif)
 
 ![Page Agent 采集书名、价格和库存并保存流程的演示](assets/readme-demo/page-agent-demo.gif)
 
@@ -61,7 +63,7 @@
 
 ## 可选 MCP Server
 
-文件、Bash、桌面、邮件及外部 MCP 接入需要此服务；普通页面任务不需要。支持连接多台服务端，操作发生在 **MCP Server 所在机器**。桌面仅支持 macOS／Windows，部分功能需 `robotjs` 和系统授权。
+文件、Bash、桌面、邮件及外部 MCP 接入需要此服务；普通页面任务不需要。支持连接多台服务端，操作发生在 **MCP Server 所在机器**。macOS／Windows 支持桌面操作，部分功能需 `robotjs` 和系统授权；Linux 支持通过 scrot 截取 X11 桌面。
 
 ### 启动与配对
 
@@ -90,7 +92,7 @@ node mcp-server/index.js
 
 - 首次构建：`./docker/build.sh all`。
 - 日常更新：`./docker/build.sh app`。
-- 验证打包产物：`./docker/build.sh app ./dist/page-agent-extension-1.2.1`。
+- 验证打包产物：`./docker/build.sh app ./dist/page-agent-extension-1.2.2`。
 - 配置文件：`docker/.env`；运行数据：`data/`。
 
 准备好配置并构建镜像后启动：

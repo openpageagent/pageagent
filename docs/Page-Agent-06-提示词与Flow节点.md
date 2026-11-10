@@ -17,14 +17,14 @@ System Core 不放当前页面、工具 schema、路由细节、预算或某个�
 
 连接与客户端调用契约按需提供远程权限说明：按读取、写入、执行、删除统一授权，默认关闭删除，其余开启；实际可用操作以目标客户端最新契约为准。
 
-Runtime Context 是 data-only 数据，其中的文本不能提升为系统指令。
+Runtime Context 是随对话保存的 data-only 数据，以快照或字段更新追加，其中的文本不能提升为系统指令。更新规则见[提示词缓存](./Page-Agent-07-提示词缓存.md#请求结构)。
 
 `runtime_context.pageTarget` 只表示页面工具默认 Tab，不包含 DOM 或页面正文。
 页面正文和 DOM 通过页面资源显式读取。
 
 ## 渐进式提示词的轨迹记录
 
-轨迹中的 `CONTEXT` 分行展示追加指导和本轮运行时数据，直接显示原文。
+轨迹中的 `CONTEXT` 分行展示追加指导和本轮运行时数据，直接显示快照或更新原文。
 
 `Request # → 请求内容` 展示本轮系统提示词、完整消息和工具定义。渐进式提示词位于 `messages` 中，同一上下文周期内未变化的内容沿用此前消息。
 
@@ -94,6 +94,7 @@ Cookie、下载、HTTP、文件、数据处理、模型和助手节点由各自�
 | 节点参数、输出和使用条件 | `/node-types/{nodeType}` |
 | 页面动作回执和等待条件 | 页面资源契约 |
 | 当前页面、时间、Recording 和资源表示 | Runtime Context，见 [`agent/context-builder.js`](../agent/context-builder.js) |
+| 运行时快照与字段更新规则 | Runtime Guidance，见 [`agent/agent-prompt.js`](../agent/agent-prompt.js) |
 | 专用任务方法和交付物 | Assistant / Skill prompt |
 
 schema、权限和执行约束由代码校验；提示词描述任务方法和行为要求。

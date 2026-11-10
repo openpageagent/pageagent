@@ -555,17 +555,27 @@
     var captureScreenshotForPage = visualNodes.captureScreenshotForPage;
     var execScreenshot = visualNodes.execScreenshot;
 
-    var getModelClient = function () {
+    var getModelClient = function (execution) {
       if (!modelClient) throw new Error('模型客户端未初始化');
-      if (!deps.authorizeApplication) return modelClient;
+      var session = getSession();
+      var nodeId = execution && execution.frame && execution.frame.nodeId || '';
+      var sessionId = session && session.flowId
+        ? 'flow_' + globalThis.BrowserProviderUtilities.shortHash(JSON.stringify([runtimeScope, session.flowId, nodeId]))
+        : '';
       var guarded = Object.create(modelClient);
       guarded.chat = function (request) {
         return Promise.resolve().then(function () {
           throwIfStopped();
-          return deps.authorizeApplication({ kind: 'model', modelServiceId: request && request.serviceId });
-        }).then(function () { return modelClient.chat(Object.assign({}, request, {
-          authorizeRequest: function (target) { return deps.authorizeApplication({ kind: 'model', modelServiceId: target.serviceId, url: target.url, model: target.model, useVision: target.useVision }); },
-        })); });
+          return deps.authorizeApplication ? deps.authorizeApplication({ kind: 'model', modelServiceId: request && request.serviceId }) : null;
+        }).then(function () {
+          var options = Object.assign({}, request, { sessionId: sessionId });
+          if (deps.authorizeApplication) {
+            options.authorizeRequest = function (target) {
+              return deps.authorizeApplication({ kind: 'model', modelServiceId: target.serviceId, url: target.url, model: target.model, useVision: target.useVision });
+            };
+          }
+          return modelClient.chat(options);
+        });
       };
       return guarded;
     };

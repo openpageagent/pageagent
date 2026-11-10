@@ -90,6 +90,10 @@ function start(command, args, extraEnv = {}) {
   return child;
 }
 async function main() {
+  const displayScaleSetting = String(process.env.PAGE_AGENT_DISPLAY_SCALE || '').trim() || '2';
+  // Integer densities keep the logical desktop fixed; 4x would exceed 20 million pixels.
+  if (!['1', '2', '3'].includes(displayScaleSetting)) throw new Error('PAGE_AGENT_DISPLAY_SCALE must be 1, 2 or 3');
+  const deviceScaleFactor = Number(displayScaleSetting);
   const browserCache = path.join(state, 'browser-cache', 'selkies');
   await own(state); await own(profile); await own(browserHome); await own(runtime);
   await own(browserCache);
@@ -167,10 +171,10 @@ async function main() {
     existingAuth ? {} : { PAGE_AGENT_PAIRING_PASSWORD: password });
   password = '';
   const browser = require('/opt/browser/node_modules/playwright').chromium.executablePath();
-  const dimensions = await startSelkies({ start, stopping: () => stopping, state });
+  await startSelkies({ start, stopping: () => stopping, state, runtime, deviceScaleFactor });
   if (stopping) return;
   // Chromium 156's infobar_utils.cc skips the Chrome for Testing banner for test-type=gpu.
-  start(browser, ['--window-position=0,0', '--window-size=' + dimensions.join(','),
+  start(browser, ['--start-maximized', '--force-device-scale-factor=' + deviceScaleFactor,
     '--no-sandbox', '--test-type=gpu', '--no-first-run', '--no-default-browser-check',
     '--password-store=basic', '--user-data-dir=' + profile, '--disk-cache-dir=' + path.join(browserCache, 'chromium'),
     '--disable-extensions-except=' + extension, '--load-extension=' + extension, 'about:blank'],

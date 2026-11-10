@@ -69,6 +69,11 @@
       if (stored[key]) {
         var value = validate(stored[key]), updated = false;
         Object.values(value.connections).forEach(function (item) {
+          // Normalize before clients capture the URL; equivalent addresses retain their credentials.
+          if (!item.migrationRepair) {
+            var url = c.url(item.url);
+            if (item.url !== url) { item.url = url; updated = true; }
+          }
           var grants = ensureStartupRead(item), missingArpPermissions = !c.own(item, 'arpPermissions');
           if (missingArpPermissions) item.arpPermissions = c.arpPermissions();
           if (grants || missingArpPermissions) { changed(item, grants); updated = true; }
@@ -93,7 +98,7 @@
           workspaces.push({ id: workspaceId, kind: 'custom', alias: '待确认旧目录', path: directory, permissions: permissions, migrationPending: true });
         }
         var alias = '待修复旧连接', repair = false;
-        try { alias = new URL(url).host || alias; c.url(url); if (directory) c.workspacePath(directory); } catch (_) { repair = true; }
+        try { alias = new URL(url).host || alias; url = c.url(url); if (directory) c.workspacePath(directory); } catch (_) { repair = true; }
         connections[id] = { id: id, alias: alias, migrationRepair: repair, url: url, enabled: stored['mcpEnabled' + suffix] === true && !repair,
           expectedServerId: null, runTabMode: stored['mcpRunTabMode' + suffix] || 'reuseOpenTab',
           desktopEnabled: allowed, arpPermissions: c.arpPermissions(), grantRevision: 1, configRevision: 1, workspaces: workspaces };
@@ -340,7 +345,8 @@
         var replaced = [];
         for (var definition of definitions) {
           var id = 'builtin:' + definition.id, previous = value.connections[id];
-          var sameServer = previous && previous.url === definition.url;
+          var url = c.url(definition.url);
+          var sameServer = previous && previous.url === url;
           if (previous && !sameServer) replaced.push(id);
           var item = sameServer ? copy(previous) : {
             id: id, expectedServerId: null, runTabMode: 'reuseOpenTab', desktopEnabled: false,
@@ -348,7 +354,7 @@
             workspaces: [{ id: 'startup', kind: 'startup', alias: '工作目录', permissions: { read: true, write: false, execute: false } }],
           };
           item.builtinId = definition.id;
-          item.alias = definition.alias; item.url = definition.url;
+          item.alias = definition.alias; item.url = url;
           item.arpPermissions = copy(c.arpPermissions(definition.arpPermissions));
           if (definition.workspaces) item.workspaces = copy(definition.workspaces);
           ensureStartupRead(item);

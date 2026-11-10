@@ -27,7 +27,7 @@ COPY --from=mcp /build/mcp-server/page-agent-mcp-server.cjs /opt/page-agent/page
 COPY LICENSE mcp-server/NODEMAILER_LICENSE /opt/page-agent/
 COPY . /opt/page-agent/extension/
 COPY docker/start.cjs /opt/page-agent/start.cjs
-COPY docker/selkies.cjs /opt/page-agent/
+COPY docker/selkies.cjs docker/openbox.xml /opt/page-agent/
 RUN mkdir -p /data
 
 EXPOSE 10000 9999 9998

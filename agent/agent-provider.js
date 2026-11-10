@@ -236,6 +236,7 @@
       if (!adapter || typeof adapter.request !== 'function') throw contractError('Provider adapter does not expose request()');
       var contextTrace = input.contextTrace && typeof input.contextTrace === 'object' ? input.contextTrace : {};
       var adapterInput = Object.assign({}, input, {
+        promptCacheKey: text(input.promptCacheKey) || await deps.utilities.promptCacheKey(input.sessionId, options.crypto),
         appendSessionEvent: typeof input.appendSessionEvent === 'function'
           ? input.appendSessionEvent : options.appendSessionEvent,
         providerTrace: {

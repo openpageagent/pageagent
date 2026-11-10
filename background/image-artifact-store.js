@@ -105,6 +105,7 @@
     if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
     if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
     if (bytes.length >= 6 && String.fromCharCode.apply(null, bytes.subarray(0, 6)).indexOf('GIF8') === 0) return 'image/gif';
+    if (bytes.length >= 26 && bytes[0] === 0x42 && bytes[1] === 0x4d) return 'image/bmp';
     if (bytes.length >= 12 && String.fromCharCode.apply(null, bytes.subarray(0, 4)) === 'RIFF'
         && String.fromCharCode.apply(null, bytes.subarray(8, 12)) === 'WEBP') return 'image/webp';
     if (bytes.length >= 12 && String.fromCharCode.apply(null, bytes.subarray(4, 8)) === 'ftyp') {
@@ -132,6 +133,12 @@
     }
     if (mimeType === 'image/gif' && bytes.length >= 10) {
       return { width: u16le(6), height: u16le(8) };
+    }
+    if (mimeType === 'image/bmp' && bytes.length >= 26) {
+      var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      var header = view.getUint32(14, true);
+      if (header === 12) return { width: u16le(18), height: u16le(20) };
+      if (header >= 40 && 14 + header <= bytes.length) return { width: view.getInt32(18, true), height: Math.abs(view.getInt32(22, true)) };
     }
     if (mimeType === 'image/webp' && bytes.length >= 30) {
       var chunk = String.fromCharCode.apply(null, bytes.subarray(12, 16));

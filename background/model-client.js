@@ -71,112 +71,105 @@
       }
     }
 
-    // opts: { system, user, serviceId, useVision, timeoutMs, temperature, signal }
-    function chat(opts) {
+    // Flow inputs use inline screenshots or remote URLs; providers use image refs.
+    // Keep this request's images in memory and resolve them through the same
+    // provider hook used by conversations, without storing them in history.
+    function providerUserInput(content) {
+      var images = new Map();
+      var user = Array.isArray(content) ? content.map(function (part, index) {
+        if (!part || part.type !== 'image_url') return part;
+        var image = part.image_url;
+        var imageUrl = typeof image === 'string' ? image : image && image.url;
+        var uri = '/image-artifacts/model-input-' + index;
+        // Reject invalid request input before the history resolver can replace it.
+        images.set(uri, globalThis.ProviderMessageNormalizer.normalizeImageSource(imageUrl));
+        return { type: 'image', artifactUri: uri, detail: image && image.detail || 'high' };
+      }) : content;
+      return {
+        content: user,
+        resolveImageArtifact: function (uri) {
+          if (!images.has(uri)) throw new Error('模型输入图片不存在');
+          return images.get(uri);
+        },
+      };
+    }
+
+    // opts: { system, user, serviceId, useVision, timeoutMs, temperature, signal, sessionId }
+    async function chat(opts) {
       opts = opts || {};
-      return getSettings().then(function (settings) {
-        var serviceId = String(opts.serviceId || '').trim();
-        var service = serviceId
-          ? globalThis.ModelSettings.getService(settings, serviceId, false)
-          : globalThis.ModelSettings.getGeneratorService(settings);
-        if (serviceId && !service) {
-          var missingService = new Error('指定的模型服务不存在或已删除: ' + serviceId);
-          missingService.code = 'SERVICE_NOT_FOUND';
-          throw missingService;
-        }
-        ensureConfigured(service, opts.useVision);
-        var model = (opts.useVision && service.visionModel) ? service.visionModel : service.model;
-        var messages = [];
-        if (opts.system) messages.push({ role: 'system', content: opts.system });
-        messages.push({ role: 'user', content: opts.user });
-
-        var body = {
-          model: model,
-          messages: messages,
-          temperature: opts.temperature !== undefined ? opts.temperature : 0,
-        };
-        var modelRequest = globalThis.ModelSettings.buildModelHttpRequest(body, service, { reserveTokens: 1024 });
-        if (globalThis.ProviderCompat && typeof globalThis.ProviderCompat.resolve === 'function') {
-          var compatibility = globalThis.ProviderCompat.resolve(service, service.protocol);
-          var compatibleRequest = compatibility.beforeRequest({
-            body: modelRequest.body,
-            headers: modelRequest.headers,
-            reasoningEffort: service.reasoningEffort,
-            maxTokens: modelRequest.body && (modelRequest.body.max_tokens || modelRequest.body.max_output_tokens),
-          });
-          modelRequest.url = compatibility.endpoint(modelRequest.url);
-          modelRequest.body = compatibleRequest.body;
-          modelRequest.headers = compatibleRequest.headers;
-        }
-        if (!modelRequest.url) throw new Error('模型接口地址未配置');
-        body = modelRequest.body;
-        if (modelRequest.meta && modelRequest.meta.compacted) {
-          addLog('模型请求上下文已压缩: ' + modelRequest.meta.estimatedTokens + ' -> ' + modelRequest.meta.outputTokens + ' tokens', { scope: 'model' });
-        }
-
-        var timeoutMs = globalThis.ModelSettings.normalizeRequestTimeoutMs(opts.timeoutMs, {
-          defaultMs: DEFAULT_TIMEOUT_MS,
-          minMs: 1000,
-          maxMs: MAX_TIMEOUT_MS,
-        });
-        var controller = new AbortController();
-        var parentSignal = opts.signal || null;
-        var timedOut = false;
-        var forwardAbort = null;
-        if (parentSignal && parentSignal.aborted) {
-          throw parentSignal.reason instanceof Error ? parentSignal.reason : new Error('模型调用已停止');
-        }
-        if (parentSignal && typeof parentSignal.addEventListener === 'function') {
-          forwardAbort = function () {
-            try { controller.abort(parentSignal.reason); } catch (_) { controller.abort(); }
-          };
-          parentSignal.addEventListener('abort', forwardAbort, { once: true });
-        }
-        var timer = setTimeout(function () {
-          timedOut = true;
-          try { controller.abort(new Error('模型调用超时')); } catch (_) { controller.abort(); }
-        }, timeoutMs);
-
-        return Promise.resolve().then(function () {
-          return typeof opts.authorizeRequest === 'function' ? opts.authorizeRequest({ serviceId: service.id, url: modelRequest.url, model: model, useVision: !!opts.useVision }) : null;
-        }).then(function () {
-          return globalThis.PageAgentUserAgent.fetchModel(modelRequest.url, {
-            method: 'POST',
-            headers: modelRequest.headers,
-            body: JSON.stringify(body),
-            signal: controller.signal,
-            redirect: typeof opts.authorizeRequest === 'function' ? 'error' : 'follow',
-          });
-        }).then(function (response) {
-          return response.text().then(function (text) {
-            if (!response.ok) {
-              throw globalThis.ModelSettings.createChatCompletionHttpError(response.status, response.statusText, text);
-            }
-            var normalized = globalThis.ModelSettings.parseModelResponse(text, service);
-            return {
-              content: normalized.content,
-              model: normalized.model || model,
-              serviceId: service.id || '',
-              serviceName: globalThis.ModelSettings.serviceDisplayName(service),
-              usage: normalized.usage,
-              finishReason: normalized.finishReason,
-            };
-          });
-        }).catch(function (err) {
-          if (timedOut) {
-            throw new Error('模型调用超时 (' + timeoutMs + 'ms)');
-          }
-          if (parentSignal && parentSignal.aborted) {
-            throw parentSignal.reason instanceof Error ? parentSignal.reason : new Error('模型调用已停止');
-          }
-          throw err;
-        }).finally(function () {
-          clearTimeout(timer);
-          if (parentSignal && forwardAbort && typeof parentSignal.removeEventListener === 'function') {
-            try { parentSignal.removeEventListener('abort', forwardAbort); } catch (_) {}
-          }
-        });
+      var settings = await getSettings();
+      var serviceId = String(opts.serviceId || '').trim();
+      var service = serviceId
+        ? globalThis.ModelSettings.getService(settings, serviceId, false)
+        : globalThis.ModelSettings.getGeneratorService(settings);
+      if (serviceId && !service) {
+        var missingService = new Error('指定的模型服务不存在或已删除: ' + serviceId);
+        missingService.code = 'SERVICE_NOT_FOUND';
+        throw missingService;
+      }
+      ensureConfigured(service, opts.useVision);
+      if (opts.signal && opts.signal.aborted) throw opts.signal.reason || new Error('模型调用已停止');
+      var model = (opts.useVision && service.visionModel) ? service.visionModel : service.model;
+      var input = providerUserInput(opts.user);
+      var timeoutMs = globalThis.ModelSettings.normalizeRequestTimeoutMs(opts.timeoutMs, {
+        defaultMs: service.requestTimeoutMs || DEFAULT_TIMEOUT_MS,
+        minMs: 1000,
+        maxMs: MAX_TIMEOUT_MS,
       });
+      var gateway = globalThis.AgentProvider.create({
+        service: service,
+        assistant: { model: model, settings: {
+          temperature: opts.temperature !== undefined ? opts.temperature : 0,
+          timeoutMs: timeoutMs,
+        } },
+        modelSettings: globalThis.ModelSettings,
+        resolveImageArtifact: input.resolveImageArtifact,
+        fetch: async function (url, init) {
+          if (typeof opts.authorizeRequest === 'function') {
+            await opts.authorizeRequest({ serviceId: service.id, url: url, model: model, useVision: !!opts.useVision });
+          }
+          if (init.signal && init.signal.aborted) throw init.signal.reason || new Error('模型调用已停止');
+          return globalThis.fetch(url, Object.assign({}, init, {
+            redirect: typeof opts.authorizeRequest === 'function' ? 'error' : 'follow',
+          }));
+        },
+      });
+      var result = await gateway.request({
+        purpose: 'main',
+        serviceId: service.id,
+        sessionId: String(opts.sessionId || ''),
+        system: opts.system || '',
+        messages: [{ role: 'user', content: input.content }],
+        tools: [],
+        signal: opts.signal,
+        onEvent: function (event) {
+          if (event.type === 'provider_warning') addLog(event.message, { scope: 'model' });
+        },
+      });
+      if (opts.signal && opts.signal.aborted) throw opts.signal.reason || new Error('模型调用已停止');
+      if (result.finishReason !== 'stop') {
+        var detail = result.rawMeta && result.rawMeta.error;
+        var failed = new Error(detail && detail.message || '模型响应未完成: ' + result.finishReason);
+        failed.code = detail ? detail.errorCode || 'MODEL_PROVIDER_ERROR' : 'MODEL_RESPONSE_INCOMPLETE';
+        failed.status = detail && detail.status || 0;
+        failed.retryable = !!(detail && detail.retryable);
+        failed.finishReason = result.finishReason;
+        throw failed;
+      }
+      var content = globalThis.ProviderMessageNormalizer.contentText(result.content);
+      if (!content) {
+        var empty = new Error('模型接口返回缺少文本内容');
+        empty.code = 'MODEL_RESPONSE_CONTENT_MISSING';
+        throw empty;
+      }
+      return {
+        content: content,
+        model: result.rawMeta && result.rawMeta.responseModel || model,
+        serviceId: service.id,
+        serviceName: globalThis.ModelSettings.serviceDisplayName(service),
+        usage: result.usage,
+        finishReason: result.finishReason,
+      };
     }
 
     function balancedJsonCandidate(text, start) {

@@ -80,7 +80,7 @@
       params = params || {};
       if (!params.assertion) throw new Error('请求模型断言缺少断言描述');
       var source = modelEnum(params, 'source', 'screenshot', ['screenshot', 'text', 'both']);
-      var modelClient = getModelClient();
+      var modelClient = getModelClient(execution);
       return collectModelInputs(node.pageId, {
         tabId: params.tabId || params.activeTabId,
         needScreenshot: source !== 'text',
@@ -131,7 +131,7 @@
       params = params || {};
       if (!params.instruction) throw new Error('请求模型数据提取缺少提取指令');
       var source = modelEnum(params, 'source', 'text', ['screenshot', 'text', 'both']);
-      var modelClient = getModelClient();
+      var modelClient = getModelClient(execution);
       return collectModelInputs(node.pageId, {
         tabId: params.tabId || params.activeTabId,
         needScreenshot: source !== 'text',
@@ -168,7 +168,7 @@
       if (!params.prompt) throw new Error('请求模型自定义动作缺少用户提示词');
       var pageContext = modelEnum(params, 'pageContext', 'none', ['none', 'text', 'screenshot', 'both']);
       var outputFormat = modelEnum(params, 'outputFormat', 'text', ['text', 'json']);
-      var modelClient = getModelClient();
+      var modelClient = getModelClient(execution);
       var needsPageContext = pageContext !== 'none';
       if (needsPageContext && !(params.tabId || params.activeTabId || node.pageId)) {
         throw new Error('附带页面内容需要传入 tabId 或选择目标页面');

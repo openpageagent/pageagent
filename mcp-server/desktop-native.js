@@ -5,6 +5,7 @@ const { constants } = require('fs');
 const path = require('path');
 const os = require('os');
 const { performance } = require('perf_hooks');
+const { readScreenshot } = require('./screenshot-image');
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_SCREEN_PIXELS = 20 * 1000 * 1000;
@@ -137,25 +138,25 @@ function captureRegion(input, api) {
 }
 
 async function screenshot(input, signal) {
+  const format = input.format || 'png';
+  if (!['png', 'bmp'].includes(format)) throw new Error('robotjs 截图只支持 PNG 和 BMP');
   const api = robot('screen');
-  if (!api.image.supportsPNG) throw new Error('当前 robotjs 预编译包不支持 PNG');
+  if (format === 'png' && !api.image.supportsPNG) throw new Error('当前 robotjs 预编译包不支持 PNG');
   const region = captureRegion(input, api);
   check(signal);
   const image = api.screen.capture(region.x, region.y, region.width, region.height);
   if (image.width * image.height > MAX_SCREEN_PIXELS) throw new Error('截图实际像素超过 2000 万，请缩小 region');
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'page-agent-screen-'));
   try {
-    const file = path.join(directory, 'screen.png');
+    const file = path.join(directory, 'screen.' + format);
     check(signal);
-    if (!image.save(file)) throw new Error('robotjs 无法保存 PNG 截图');
-    if ((await fs.stat(file)).size > MAX_IMAGE_BYTES) throw new Error('截图 PNG 超过 8MB，请缩小 region');
-    const data = await fs.readFile(file);
+    if (!image.save(file)) throw new Error('robotjs 无法保存截图');
+    const result = await readScreenshot(file, format, signal);
     check(signal);
-    return { width: image.width, height: image.height, region,
+    return { ...result, region,
       originX: image.screenX === undefined ? region.x : image.screenX,
       originY: image.screenY === undefined ? region.y : image.screenY,
-      pixelsPerUnitX: image.scaleX || image.width / region.width, pixelsPerUnitY: image.scaleY || image.height / region.height,
-      modelContent: [{ type: 'image', mimeType: 'image/png', data: data.toString('base64') }] };
+      pixelsPerUnitX: image.scaleX || image.width / region.width, pixelsPerUnitY: image.scaleY || image.height / region.height };
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
 }
 

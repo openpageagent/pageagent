@@ -388,10 +388,12 @@
     if (options.apiKey && !hasAuthorization(headers, ['authorization', 'cf-aig-authorization'])) {
       setHeader(headers, 'Authorization', 'Bearer ' + String(options.apiKey), true);
     }
-    if (!options.apiKey && !hasAuthorization(headers, ['authorization', 'cf-aig-authorization'])) {
-      throw new Error('OpenAI-compatible provider requires an API key or authorization header');
-    }
+    // Local and compatible services may accept unauthenticated requests.
     if (options.sessionId) {
+      // Codex Responses uses hyphenated headers for session/cache affinity.
+      // Keep the legacy spelling for compatible endpoints that still read it.
+      setHeader(headers, 'session-id', options.sessionId, false);
+      setHeader(headers, 'thread-id', options.sessionId, false);
       setHeader(headers, 'session_id', options.sessionId, false);
       setHeader(headers, 'x-client-request-id', options.sessionId, false);
       if (options.includeAffinityHeader) setHeader(headers, 'x-session-affinity', options.sessionId, false);
@@ -410,9 +412,6 @@
     }, options.serviceHeaders, options.headers);
     if (options.apiKey && !hasAuthorization(headers, ['x-api-key', 'authorization', 'cf-aig-authorization'])) {
       setHeader(headers, 'x-api-key', options.apiKey, true);
-    }
-    if (!options.apiKey && !hasAuthorization(headers, ['x-api-key', 'authorization', 'cf-aig-authorization'])) {
-      throw new Error('Anthropic provider requires an API key or authorization header');
     }
     if (options.sessionId) setHeader(headers, 'x-session-affinity', options.sessionId, false);
     if (options.userAgent) setHeader(headers, 'User-Agent', options.userAgent, false);

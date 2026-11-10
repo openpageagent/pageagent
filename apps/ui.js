@@ -1,6 +1,19 @@
 (function (root) {
   'use strict';
   var C = root.AppContract, files = new Map(), modules = new Map(), owners = new WeakMap(), floatingOwners = new WeakMap(), disposed = false;
+  // This host script runs with defer, before the remaining preloaded UI scripts.
+  var hostScriptsReady = new Promise(function (resolve) {
+    document.addEventListener('DOMContentLoaded', resolve, { once: true });
+  });
+  var scriptGlobals = {
+    'dependencies/marked/marked.min.js': 'marked',
+    'dependencies/dompurify/purify.min.js': 'DOMPurify',
+    'ui/code-editor.js': 'PageAgentCodeEditor',
+    'ui/conversation-event-view.js': 'PageAgentConversationEventView',
+    'ui/conversation-list-view.js': 'PageAgentConversationListView',
+    'ui/feedback.js': 'PageAgentFeedback',
+    'content/page-element-position-controller.js': 'PageAgentPageElementPositionController'
+  };
   var lifetime = root.PageAgentLifecycle.create();
   var defaults = { bg: '#ffffff', 'bg-secondary': '#f9fafb', 'bg-muted': '#eaeef0', text: '#262626', 'text-secondary': '#728e9b', value: '#775351', border: '#d0dbe0', 'border-strong': '#aabbc3', 'border-link': '#ccdadb', 'table-header': '#728e9b', accent: '#004849', 'accent-soft': 'rgba(0,72,73,.08)', danger: '#ba554a', success: '#3da67a', transmitting: '#44a3cf', warn: '#cf9f5d', 'control-radius': '4px', 'control-border': '#ccdadb', 'control-bg': '#f9fafb', 'control-bg-hover': '#e3e8eb' };
   function invalid(message) { throw C.error('UI_INVALID_ARGUMENT', message); }
@@ -42,6 +55,8 @@
   }
   function script(path) {
     if (files.has(path)) return files.get(path);
+    // Re-executing preloaded UMD libraries would register them with Monaco's AMD loader.
+    if (root[scriptGlobals[path]]) return Promise.resolve();
     var promise = new Promise(function (resolve, reject) {
       var node = document.createElement('script'); node.src = chrome.runtime.getURL(path);
       node.onload = function () { resolve(); };
@@ -171,6 +186,8 @@
     alive();
     var paths = typeof id === 'string' && root.AppUiContract.scripts(id);
     if (!paths) throw C.error('UI_COMPONENT_NOT_FOUND', 'UI 组件不存在: ' + id);
+    await hostScriptsReady;
+    alive();
     if (!modules.has(id)) {
       var promise = (async function () {
         for (var path of paths) { alive(); await script(path); }
