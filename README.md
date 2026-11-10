@@ -12,9 +12,7 @@
 
 从 [Books to Scrape](https://books.toscrape.com/) 采集 11 本书的书名、价格和库存，保存为可重复运行的 Flow，再通过对话生成支持搜索、排序和收藏的「旅行书架」应用。演示还包含浏览器侧栏、应用管理和内置 Developer Utils 工具。
 
-![Page Agent 从网页采集、保存流程到生成和使用应用的演示](assets/readme-demo/page-agent-demo.gif)
-
-![Page Agent 采集书名、价格和库存并保存流程的演示](assets/readme-demo/page-agent-demo.gif)
+![Page Agent 演示](assets/readme-demo/page-agent-demo.gif)
 
 ## 已实现功能
 
