@@ -27,6 +27,8 @@ HTTP 本地能力独立于插件，无需客户端 ID 或插件在线。以下�
 
 HTTP `/local` 始终指向当前服务端，不受插件绑定影响。文件操作限定在启动工作目录内；Bash 从该目录启动，按服务端进程权限执行。HTTP Bearer 可使用本地及平台支持的桌面能力，不依赖插件授权。
 
+本地操作使用 `/local` 返回的链接，通过具体路径的 `OPTIONS` 查询参数，无需 `connectionId` 或 `workspaceId`。`/clients/{clientId}/arp` 用于调用插件资源。
+
 ### 客户端通信
 
 | ARP 调用 | 用途 |

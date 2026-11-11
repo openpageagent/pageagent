@@ -2,6 +2,7 @@ ARG NODE_VERSION=22
 ARG BASE_IMAGE=page-agent-base:latest
 FROM node:${NODE_VERSION}-bookworm-slim AS node
 FROM ${BASE_IMAGE} AS browser
+USER root
 
 COPY --from=node /usr/local/ /usr/local/
 ARG PLAYWRIGHT_VERSION=1.64.1
@@ -17,8 +18,6 @@ RUN apt-get update \
        libxrandr2 libxtst6 libgtk-3-0 fonts-liberation fonts-noto-cjk fonts-noto-color-emoji util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && npm install --prefix /opt/browser --omit=dev --ignore-scripts "playwright@${PLAYWRIGHT_VERSION}" \
-    && node /opt/browser/node_modules/playwright/cli.js install chromium --no-shell \
-    && chmod -R a+rX /opt/browsers \
-    && useradd --uid 1000 --create-home --shell /bin/bash pageagent
+    && node /opt/browser/node_modules/playwright/cli.js install chromium --no-shell
 
 WORKDIR /app

@@ -140,6 +140,7 @@ class McpHttpHandler {
         res.setHeader('Mcp-Session-Id', session.id); res.setHeader('MCP-Protocol-Version', version);
         sendJson(req, res, 200, { jsonrpc: '2.0', id: message.id, result: { protocolVersion: version,
           capabilities: { tools: { listChanged: false }, resources: { listChanged: false, subscribe: false } },
+          instructions: this.server.instructions,
           serverInfo: { name: 'page-agent-arp', title: this.server.serverName, version: this.server.version } } }); return;
       }
       if (!session) throw rpcError(-32600, 'Mcp-Session-Id required', 400);

@@ -1,6 +1,7 @@
 # Build directly from source or an extracted release.
 ARG RUNTIME_IMAGE=page-agent-runtime:latest
 FROM ${RUNTIME_IMAGE} AS mcp
+USER root
 WORKDIR /build
 
 COPY mcp-server/ ./mcp-server/
@@ -16,6 +17,7 @@ RUN if [ -f mcp-server/index.js ]; then \
     fi
 
 FROM ${RUNTIME_IMAGE}
+USER root
 
 # Selkies 2.1.0 must resume a paused capture when another controller joins.
 COPY docker/selkies-2.1.0.patch /tmp/selkies-2.1.0.patch
@@ -28,7 +30,7 @@ COPY LICENSE mcp-server/NODEMAILER_LICENSE /opt/page-agent/
 COPY . /opt/page-agent/extension/
 COPY docker/start.cjs /opt/page-agent/start.cjs
 COPY docker/selkies.cjs docker/openbox.xml /opt/page-agent/
-RUN mkdir -p /data
+RUN mkdir -p /data/page-agent
 
 EXPOSE 10000 9999 9998
-CMD ["flock", "--nonblock", "--no-fork", "/data/browser.lock", "node", "/opt/page-agent/start.cjs"]
+CMD ["flock", "--nonblock", "--no-fork", "/data/page-agent/browser.lock", "node", "/opt/page-agent/start.cjs"]

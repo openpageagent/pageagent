@@ -1145,6 +1145,10 @@
           }
           return rpcRequest(server, 'tools/call', { name: toolName, arguments: args || {} }, { timeoutMs: timeoutMs });
         }).then(function (result) {
+          if (!result || typeof result !== 'object' || !Array.isArray(result.content)
+              || (result.isError !== undefined && typeof result.isError !== 'boolean')) {
+            throw new Error('HTTP MCP tools/call 返回了无效结果：需要 content 数组及可选的 boolean isError');
+          }
           log('HTTP MCP 工具调用完成: ' + server.name + '/' + toolName);
           return {
             provider: 'http-mcp-client',

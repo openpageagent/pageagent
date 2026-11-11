@@ -119,6 +119,7 @@
     'background/mcp-tab-access.js',
     'background/session-tab-access.js',
     'background/action-indicator.js',
+    'background/release-update.js',
     'background/mcp-runtime.js',
     'background/node-http.js',
     'background/node-random-data.js',
@@ -4260,6 +4261,10 @@
 
   // 定时任务触发
   chrome.alarms.onAlarm.addListener(function (alarm) {
+    if (alarm.name === ReleaseUpdate.ALARM_NAME) {
+      ReleaseUpdate.check();
+      return;
+    }
     if (alarm.name === SW_KEEPALIVE_ALARM_NAME) {
       // SW 保活心跳：alarm 事件本身已重置 SW 空闲计时器
       // 顺带保存运行中会话的快照，用于 SW 意外终止后恢复
@@ -4272,6 +4277,7 @@
       loggingStatus.addLog('定时任务初始化失败: ' + error.message, { level: 'warn' });
     });
   });
+  ReleaseUpdate.check();
 
   // 定期保存所有运行中会话的恢复快照（SW 意外被杀后可用）
   function saveRunningSnapshots(options) {
@@ -4764,6 +4770,7 @@
 
   builtinConnections = BuiltinConnectionLoader.create({
     runtime: mcpRuntime,
+    httpMcpManager: httpMcpManager,
     onLoaded: function () { return archiveService.initializeBinding(); },
     log: function (message) { loggingStatus.addLog(message, { scope: 'mcp', level: 'warn' }); },
   });

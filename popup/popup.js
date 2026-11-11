@@ -8,6 +8,11 @@
   var retry = document.getElementById('retry');
   var sidepanel = document.getElementById('open-sidepanel');
   var options = document.getElementById('open-options');
+  var aboutButton = document.getElementById('open-about');
+  var releaseBadge = document.getElementById('release-update');
+  var projectUrl = 'https://github.com/openpageagent/pageagent';
+  var aboutUrl = projectUrl;
+  var releaseStorageKey = 'github_release_update';
   var windowId = null;
   recentContent.style.setProperty('--recent-limit', recentLimit);
 
@@ -15,6 +20,24 @@
     status.textContent = error.message || String(error);
     status.classList.add('error'); status.hidden = false;
     retry.hidden = false;
+  }
+
+  function renderReleaseUpdate(release) {
+    releaseBadge.hidden = true;
+    aboutButton.title = '打开 GitHub 项目首页';
+    aboutUrl = projectUrl;
+    if (!release || !release.version || !release.url) return;
+    var latest = release.version.split('.').map(Number);
+    var current = chrome.runtime.getManifest().version.split('.').map(Number);
+    for (var i = 0; i < Math.max(latest.length, current.length); i++) {
+      var nextPart = latest[i] || 0, currentPart = current[i] || 0;
+      if (nextPart === currentPart) continue;
+      if (nextPart < currentPart) return;
+      releaseBadge.hidden = false;
+      aboutButton.title = '新版本 v' + release.version + '，打开 GitHub 下载页';
+      aboutUrl = release.url;
+      return;
+    }
   }
 
   async function openApp(app, event, button) {
@@ -115,6 +138,18 @@
       window.close();
     }).catch(fail).finally(function () { options.disabled = false; });
   });
+  aboutButton.addEventListener('click', function () {
+    aboutButton.disabled = true;
+    chrome.tabs.create({ url: aboutUrl }).then(function () {
+      window.close();
+    }).catch(fail).finally(function () { aboutButton.disabled = false; });
+  });
+  chrome.storage.onChanged.addListener(function (changes, area) {
+    if (area === 'local' && changes[releaseStorageKey]) renderReleaseUpdate(changes[releaseStorageKey].newValue);
+  });
+  chrome.storage.local.get(releaseStorageKey).then(function (stored) {
+    renderReleaseUpdate(stored[releaseStorageKey]);
+  }).catch(function (error) { console.warn('读取新版本提示失败:', error); });
   retry.addEventListener('click', load);
   document.addEventListener('keydown', function (event) {
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;

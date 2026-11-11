@@ -15,6 +15,7 @@
   var composingSearch = null;
   var knowledgeLoadSequence = 0;
   var skillLoadSequence = 0;
+  var mcpToolsLoadSequence = Object.create(null);
   var settingsSaveChain = Promise.resolve();
   var idempotencySequence = 0;
   var DEFAULT_PAGE_SIZE = 50;
@@ -78,6 +79,8 @@
   var treeExpansion = { skill: new Map(), import: new Map() };
   var mcpDraft = null;
   var toolCallDraft = null;
+  var mcpDrawer = null;
+  var pendingMcpOperations = new Set();
   var operations = Object.create(null);
   var operationTimers = Object.create(null);
 
@@ -481,11 +484,15 @@
   }
 
   function loadMcpTools(serverId) {
+    var sequence = (mcpToolsLoadSequence[serverId] || 0) + 1;
+    mcpToolsLoadSequence[serverId] = sequence;
     return collectPagedResources(mcpToolsUri(serverId), { limit: 100 }).then(function (result) {
+      if (sequence !== mcpToolsLoadSequence[serverId]) return null;
       viewState.toolsByServer[serverId] = { items: result.items, total: result.total };
       delete viewState.errors['tools:' + serverId];
       return result;
     }, function (error) {
+      if (sequence !== mcpToolsLoadSequence[serverId]) return null;
       delete viewState.toolsByServer[serverId];
       viewState.errors['tools:' + serverId] = errorText(error, '工具目录读取失败');
       throw error;
@@ -1041,6 +1048,16 @@
     if (!operation || !operation.data) return '';
     var data = operation.data;
     var status = String(data.status || '');
+    if (data.kind === 'mcp-call') {
+      var message = status === 'running' ? '正在调用，结果会自动更新。'
+        : status === 'succeeded' ? '调用已完成。'
+          : (status === 'interrupted' ? '调用已中断' : '调用未完成') + (data.error ? '：' + data.error : '。');
+      return '<section class="drawer-section"><h4>调用结果</h4>'
+        + '<p class="drawer-hint" role="status">' + esc(message) + '</p>'
+        + (operation.pollError ? '<p class="form-help">暂时无法更新状态，正在重试：' + esc(operation.pollError) + '</p>' : '')
+        + (data.result !== undefined ? PageAgentCodeEditor.html(JSON.stringify(data.result, null, 2), 'json') : '')
+        + '</section>';
+    }
     var badgeClass = status === 'succeeded' ? ' on' : ((status === 'failed' || status === 'interrupted') ? ' danger' : '');
     var details = '';
     if (status === 'succeeded' && data.result !== undefined) {
@@ -1054,11 +1071,8 @@
     }
     if ((status === 'failed' || status === 'interrupted') && data.error) details = ' · ' + esc(data.error);
     if (operation.pollError) details += ' · 状态读取失败：' + esc(operation.pollError);
-    var result = data.kind === 'mcp-call' && status === 'succeeded'
-      ? PageAgentCodeEditor.html(JSON.stringify(data.result, null, 2), 'json')
-      : '';
     return '<div class="knowledge-operation-status"><span class="badge' + badgeClass + '">' + esc(OPERATION_LABELS[status] || status) + '</span>'
-      + '<span class="knowledge-meta">' + esc(OPERATION_KIND_LABELS[data.kind] || '操作') + details + '</span>' + result + '</div>';
+      + '<span class="knowledge-meta">' + esc(OPERATION_KIND_LABELS[data.kind] || '操作') + details + '</span></div>';
   }
 
   function renderOperationSlot(key) {
@@ -1070,6 +1084,20 @@
     Array.prototype.forEach.call(elements, function (element) {
       var key = element.getAttribute('data-operation-key') || '';
       element.innerHTML = renderOperation(operations[key]);
+    });
+    refreshMcpButtons();
+  }
+
+  function mcpOperationBusy(key) {
+    var operation = operations[key];
+    return pendingMcpOperations.has(key) || !!(operation && !TERMINAL_OPERATION_STATES[operation.data.status]);
+  }
+
+  function refreshMcpButtons() {
+    document.querySelectorAll('[data-mcp-operation]').forEach(function (button) {
+      var busy = mcpOperationBusy(button.dataset.mcpOperation);
+      button.disabled = busy || button.dataset.serverDisabled === 'true';
+      if (button.dataset.httpMcpAction === 'submit-call') button.textContent = busy ? '调用中…' : '调用';
     });
   }
 
@@ -1090,6 +1118,7 @@
     clearOperationTimer(key);
     operationTimers[key] = root.setTimeout(function () {
       ensureClient().get(tracked.uri).then(function (envelope) {
+        if (operations[key] !== tracked) return;
         tracked.data = operationDataFromEnvelope(envelope);
         tracked.pollError = '';
         tracked.pollFailures = 0;
@@ -1101,6 +1130,7 @@
         }
         pollOperation(key, 500);
       }).catch(function (error) {
+        if (operations[key] !== tracked) return;
         tracked.pollFailures = Math.min(10, Number(tracked.pollFailures) + 1);
         tracked.pollError = errorText(error, '未知错误');
         refreshOperationViews();
@@ -1173,7 +1203,7 @@
     return '<div class="item-card knowledge-mcp-tool-card">'
       + '<div class="knowledge-card-main"><span class="item-title" title="' + esc(tool.name) + '">' + esc(tool.name) + '</span>'
       + '<span class="item-sub" title="' + esc(tool.description || '') + '">' + esc(tool.description || '') + '</span></div>'
-      + '<button class="btn-small" data-http-mcp-action="call-tool" data-id="' + esc(server.id) + '" data-tool="' + esc(tool.name) + '">调用</button>'
+      + '<button class="btn-small" data-http-mcp-action="call-tool" data-id="' + esc(server.id) + '" data-tool="' + esc(tool.name) + '"' + (server.enabled ? '' : ' disabled') + '>调用</button>'
       + '</div>';
   }
 
@@ -1181,9 +1211,9 @@
     var error = viewState.errors['tools:' + server.id];
     var collection = viewState.toolsByServer[server.id];
     if (error) return renderError(error);
-    if (!collection) return '';
+    if (!collection) return '<div class="placeholder">工具目录尚未加载，请刷新工具。</div>';
     return '<div class="item-list knowledge-mcp-tool-list">'
-      + (collection.items.length ? collection.items.map(function (tool) { return renderMcpTool(server, tool); }).join('') : '<div class="placeholder">服务器尚未提供工具。</div>')
+      + (collection.items.length ? collection.items.map(function (tool) { return renderMcpTool(server, tool); }).join('') : '<div class="placeholder">目录中没有工具，可点击“刷新工具”从服务器获取。</div>')
       + '</div>';
   }
 
@@ -1193,56 +1223,182 @@
     var title = server.name || server.id;
     var metadata = '工具 ' + (server.toolCount || 0) + ' 个 · 最近更新 ' + fmtTime(server.syncedAt || server.updatedAt)
       + (server.lastError ? ' · ' + server.lastError : '');
-    return '<div class="knowledge-mcp-server-block">'
-      + '<div class="item-card knowledge-mcp-card' + (mcpDraft && mcpDraft.id === server.id ? ' selected' : '') + '" role="button" tabindex="0" data-http-mcp-action="edit" data-id="' + esc(server.id) + '">'
+    return '<div class="item-card knowledge-mcp-card' + (mcpDraft && mcpDraft.id === server.id ? ' selected' : '') + '" role="button" tabindex="0" data-http-mcp-action="edit" data-id="' + esc(server.id) + '">'
       + '<div class="knowledge-card-main"><span class="item-title" title="' + esc(title) + '">' + esc(title) + '</span>'
       + '<span class="item-sub" title="' + esc(server.url || '') + '">' + esc(server.url || '') + '</span>'
       + '<span class="knowledge-meta" title="' + esc(metadata) + '">' + esc(metadata) + '</span></div>'
       + '<span class="badge' + statusClass + '">' + esc(lastStatus) + '</span>'
       + (server.enabled ? '' : '<span class="badge">停用</span>')
       + deps.itemIdHtml(server.id)
-      + '<button class="btn-small" data-http-mcp-action="test" data-id="' + esc(server.id) + '">检查连接</button>'
-      + '<button class="btn-small" data-http-mcp-action="discover" data-id="' + esc(server.id) + '">刷新工具</button>'
+      + '<button class="btn-small" data-http-mcp-action="test" data-id="' + esc(server.id) + '" data-mcp-operation="' + esc(operationKey('mcp-test', server.id)) + '" data-server-disabled="' + !server.enabled + '">检查连接</button>'
+      + '<button class="btn-small" data-http-mcp-action="discover" data-id="' + esc(server.id) + '" data-mcp-operation="' + esc(operationKey('mcp-discovery', server.id)) + '" data-server-disabled="' + !server.enabled + '">刷新工具</button>'
       + '<button class="btn-small" data-http-mcp-action="tools" data-id="' + esc(server.id) + '">查看工具</button>'
       + '<button class="btn-small btn-danger-outline" data-http-mcp-action="delete" data-id="' + esc(server.id) + '">删除</button>'
-      + '</div>'
-      + renderOperationSlot(operationKey('mcp-test', server.id))
-      + renderOperationSlot(operationKey('mcp-discovery', server.id))
-      + renderMcpTools(server)
       + '</div>';
   }
 
   function captureToolCallDraft() {
     if (!toolCallDraft || !$('#http-mcp-call-arguments')) return;
     toolCallDraft.argumentsText = $('#http-mcp-call-arguments').value;
-    toolCallDraft.timeoutMs = Number($('#http-mcp-call-timeout').value) || 120000;
+    toolCallDraft.timeoutMs = Number($('#http-mcp-call-timeout').value);
+  }
+
+  function renderMcpDescription(description) {
+    return String(description || '').trim().split(/\n\s*\n/).map(function (paragraph) {
+      return paragraph.replace(/\s+/g, ' ').trim();
+    }).filter(Boolean).map(function (paragraph, index) {
+      return '<p>' + (index === 0 ? '<b>工具说明：</b>' : '') + esc(paragraph) + '</p>';
+    }).join('');
+  }
+
+  function mcpSchemaReference(schema, ref) {
+    if (ref === '#') return schema;
+    if (typeof ref !== 'string' || ref.indexOf('#/') !== 0) return null;
+    ref.slice(2).split('/').forEach(function (part) {
+      part = part.replace(/~1/g, '/').replace(/~0/g, '~');
+      schema = schema && Object.prototype.hasOwnProperty.call(schema, part) ? schema[part] : null;
+    });
+    return schema;
+  }
+
+  function renderMcpParameterFields(rootSchema) {
+    var rows = [];
+    var truncated = false;
+    function resolve(schema) {
+      var value = Object.assign({}, schema && typeof schema === 'object' ? schema : {});
+      var refs = [];
+      while (typeof value.$ref === 'string' && refs.indexOf(value.$ref) === -1) {
+        var target = mcpSchemaReference(rootSchema, value.$ref);
+        if (!target || typeof target !== 'object') break;
+        refs.push(value.$ref);
+        delete value.$ref;
+        value = Object.assign({}, target, value);
+      }
+      return value;
+    }
+    function appendField(path, schema, required, example, parents) {
+      if (rows.length >= 200 || parents.length >= 12) { truncated = true; return; }
+      var property = resolve(schema);
+      var type = Array.isArray(property.type) ? property.type.join(' | ') : property.type
+        || (property.properties ? 'object' : property.items || property.prefixItems ? 'array' : '见原始定义');
+      var description = String(property.description || property.title || '').replace(/\s+/g, ' ').trim();
+      if (Array.isArray(property.enum)) description += (description ? '；' : '') + '可选值：' + JSON.stringify(property.enum);
+      var exampleLabel = '示例';
+      if (Object.prototype.hasOwnProperty.call(property, 'const')) { example = property.const; exampleLabel = '固定值'; }
+      else if (Array.isArray(property.examples) && property.examples.length) example = property.examples[0];
+      else if (Object.prototype.hasOwnProperty.call(property, 'default')) { example = property.default; exampleLabel = '默认值'; }
+      var exampleText = example === undefined ? '' : JSON.stringify(example);
+      if (exampleText.length > 120) exampleText = exampleText.slice(0, 117) + '…';
+      rows.push('<tr><td><code>' + esc(path) + '</code></td><td>' + esc(type) + '</td><td>' + esc(required) + '</td>'
+        + '<td>' + esc(description || '—') + '</td><td>'
+        + (exampleText ? esc(exampleLabel) + '：<code>' + esc(exampleText) + '</code>' : '—') + '</td></tr>');
+      if (parents.indexOf(schema) !== -1) return;
+      parents = parents.concat([schema]);
+      Object.keys(property.properties || {}).forEach(function (name) {
+        appendField(path + '.' + name, property.properties[name], (property.required || []).indexOf(name) !== -1 ? '父级内必填' : '否',
+          example && typeof example === 'object' ? example[name] : undefined, parents);
+      });
+      var tuple = property.prefixItems || (Array.isArray(property.items) ? property.items : null);
+      if (tuple) tuple.forEach(function (item, index) {
+        appendField(path + '[' + index + ']', item, '—', Array.isArray(example) ? example[index] : undefined, parents);
+      });
+      else if (property.items && typeof property.items === 'object') {
+        appendField(path + '[]', property.items, '—', Array.isArray(example) ? example[0] : undefined, parents);
+      }
+      if (property.additionalProperties && typeof property.additionalProperties === 'object') {
+        appendField(path + '[key]', property.additionalProperties, '—', undefined, parents);
+      }
+    }
+    var schema = resolve(rootSchema);
+    var examples = toolArgumentsExample(rootSchema);
+    var names = Array.from(new Set(Object.keys(schema.properties || {}).concat(schema.required || [])));
+    names.forEach(function (name) {
+      appendField(name, (schema.properties || {})[name], (schema.required || []).indexOf(name) !== -1 ? '是' : '否', examples[name], []);
+    });
+    if (!rows.length) return '<p>未声明可展开的参数字段，请查看原始参数结构。</p>';
+    return '<div class="app-parameter-fields"><table aria-label="工具请求参数"><thead><tr>'
+      + ['参数', '类型', '必填', '说明', '示例 / 默认值'].map(function (label) { return '<th scope="col">' + label + '</th>'; }).join('')
+      + '</tr></thead><tbody>' + rows.join('') + '</tbody></table></div>'
+      + (truncated ? '<p>字段较多或嵌套较深，完整定义请查看原始参数结构。</p>' : '');
   }
 
   function renderToolCallEditor() {
     if (!toolCallDraft) return '';
     var key = operationKey('mcp-call', toolCallDraft.serverId + '/' + toolCallDraft.toolName);
-    return '<div class="editor knowledge-mcp-call-editor">'
-      + '<h3>调用工具：' + esc(toolCallDraft.toolName) + '</h3>'
-      + '<p class="item-sub">' + esc(toolCallDraft.description || '') + '</p>'
-      + '<div class="form-grid">'
-      + '<div class="form-row"><label>参数 JSON</label><page-code-editor id="http-mcp-call-arguments" language="json" rows="10">' + esc(toolCallDraft.argumentsText || '{}') + '</page-code-editor></div>'
-      + '<div class="form-row"><label>参数结构</label>' + PageAgentCodeEditor.html(JSON.stringify(toolCallDraft.argumentSchema || {}, null, 2), 'json') + '<label>超时毫秒</label><input type="number" id="http-mcp-call-timeout" min="1000" max="600000" value="' + esc(toolCallDraft.timeoutMs || 120000) + '"></div>'
-      + '</div>'
-      + '<div class="editor-actions"><button class="btn-primary" data-http-mcp-action="submit-call">调用工具</button><button class="btn-secondary" data-http-mcp-action="cancel-call">取消</button></div>'
-      + renderOperationSlot(key)
-      + '</div>';
+    return '<details class="reference-panel drawer-guide"><summary>调用说明与参数结构</summary><div class="drawer-guide-content">'
+      + renderMcpDescription(toolCallDraft.description)
+      + '<p><b>填写参数：</b>将示例中的占位内容替换为实际值，可删除不需要的可选字段。超时单位为毫秒。</p>'
+      + '<p><b>返回列表：</b>点击右上角 × 返回工具列表。已发起的调用会继续执行，再次打开此工具可查看结果。</p>'
+      + '<p><b>参数字段：</b></p><div class="app-parameter-content">' + renderMcpParameterFields(toolCallDraft.argumentSchema)
+      + '<details class="reference-panel"><summary>查看原始参数结构（JSON）</summary>'
+      + PageAgentCodeEditor.html(JSON.stringify(toolCallDraft.argumentSchema, null, 2), 'json') + '</details></div>'
+      + '</div></details><section class="drawer-section"><h4>请求参数</h4>'
+      + '<div class="form-row"><label for="http-mcp-call-arguments">参数 JSON</label><page-code-editor id="http-mcp-call-arguments" language="json" rows="10">' + esc(toolCallDraft.argumentsText || '{}') + '</page-code-editor></div>'
+      + '<div class="form-row"><label for="http-mcp-call-timeout">超时毫秒</label><input type="number" id="http-mcp-call-timeout" min="1000" max="600000" step="1" value="' + esc(toolCallDraft.timeoutMs) + '"></div>'
+      + '<p id="http-mcp-call-error" class="form-help" role="status"' + (toolCallDraft.error ? '' : ' hidden') + '>' + esc(toolCallDraft.error || '') + '</p>'
+      + '</section><div data-operation-key="' + esc(key) + '">' + renderOperation(operations[key]) + '</div>';
   }
 
   function renderMcpSection() {
     return '<div class="knowledge-mcp-section">'
-      + '<div class="knowledge-mcp-head"><div><h3>HTTP MCP 服务器</h3><p>管理外部工具服务器，检查连接，刷新工具目录，并在允许后发起工具调用。</p></div><button class="btn-secondary" data-http-mcp-action="new">添加服务器</button></div>'
+      + '<div class="knowledge-mcp-head"><div><h3>HTTP MCP 服务器</h3><p>配置服务器，检查连接，在抽屉中查看工具、填写参数并查看调用结果。</p></div><button class="btn-secondary" data-http-mcp-action="new">添加服务器</button></div>'
       + renderError(viewState.errors.mcp)
       + '<div class="item-list knowledge-mcp-list">'
       + (viewState.mcpServers.length ? viewState.mcpServers.map(renderMcpServerCard).join('') : mcpDraft ? '' : '<div class="placeholder">尚未配置 HTTP MCP 服务器。</div>')
       + '</div>'
       + '<div id="http-mcp-editor-wrap">' + renderMcpEditor() + '</div>'
-      + '<div id="http-mcp-call-editor-wrap">' + renderToolCallEditor() + '</div>'
       + '</div>';
+  }
+
+  function mcpDrawerActive(state) {
+    return !!state && mcpDrawer === state && deps.isActive()
+      && $('#drawer').classList.contains('active') && !!$('#http-mcp-tools-drawer');
+  }
+
+  function renderMcpDrawer() {
+    var state = mcpDrawer;
+    if (!state) return;
+    var server = viewState.mcpServers.find(function (item) { return item.id === state.serverId; });
+    if (!server) return;
+    var calling = state.mode === 'call';
+    $('#drawer-title').textContent = (calling ? '调用工具：' + state.toolName : '工具目录') + ' · ' + (server.name || server.id);
+    $('#drawer-close').title = calling ? '返回工具列表' : '关闭';
+    $('#drawer-close').setAttribute('aria-label', $('#drawer-close').title);
+    var content = state.loading ? '<p class="drawer-hint" role="status">正在读取' + (calling ? '工具定义' : '工具目录') + '…</p>'
+      : state.error ? '<p class="drawer-hint" role="status">' + esc(state.error) + '</p>' : calling ? renderToolCallEditor() : renderMcpTools(server);
+    $('#drawer-content').innerHTML = '<div id="http-mcp-tools-drawer">'
+      + (server.enabled ? '' : '<div class="readonly-banner">服务器已停用，请启用后再刷新或调用工具。</div>')
+      + (calling ? '' : renderOperationSlot(operationKey('mcp-discovery', server.id)))
+      + content + '</div>';
+    $('#drawer-actions').innerHTML = (calling
+      ? (toolCallDraft ? '<button class="btn-primary" data-http-mcp-action="submit-call" data-mcp-operation="'
+        + esc(operationKey('mcp-call', server.id + '/' + state.toolName)) + '" data-server-disabled="' + !server.enabled + '">调用</button>' : '')
+      : '<button class="btn-primary" data-http-mcp-action="discover" data-id="' + esc(server.id) + '" data-mcp-operation="'
+        + esc(operationKey('mcp-discovery', server.id)) + '" data-server-disabled="' + !server.enabled + '">刷新工具</button>');
+    var argumentsEditor = $('#http-mcp-call-arguments');
+    if (argumentsEditor && toolCallDraft) argumentsEditor.schema = toolCallDraft.argumentSchema;
+    refreshMcpButtons();
+  }
+
+  function handleDrawerBack() {
+    if (!mcpDrawerActive(mcpDrawer) || mcpDrawer.mode !== 'call') return false;
+    showMcpTools(mcpDrawer.serverId);
+    return true;
+  }
+
+  function handleDrawerClosed() {
+    if (!mcpDrawer) return;
+    var returnFocus = mcpDrawer.returnFocus;
+    mcpDrawer = null;
+    toolCallDraft = null;
+    $('#drawer-close').title = '关闭';
+    $('#drawer-close').setAttribute('aria-label', '关闭');
+    if ($('#http-mcp-tools-drawer')) {
+      $('#drawer-content').replaceChildren();
+      $('#drawer-actions').replaceChildren();
+    }
+    if (returnFocus && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
+    refreshPendingResources();
   }
 
   function captureDrafts() {
@@ -1312,8 +1468,7 @@
         + '<fieldset class="knowledge-content"' + (taskRunning() || saving ? ' disabled' : '') + '>'
         + renderMcpSection() + renderSkillSection() + renderKnowledgeSection() + '</fieldset>';
     element.querySelectorAll('[data-indeterminate]').forEach(function (input) { input.indeterminate = true; });
-    var toolArguments = $('#http-mcp-call-arguments');
-    if (toolArguments && toolCallDraft) toolArguments.schema = toolCallDraft.argumentSchema || {};
+    refreshMcpButtons();
     if (restoreSearch) {
       var search = $('#' + searchId);
       if (search) {
@@ -1326,7 +1481,7 @@
 
   function refreshPendingResources() {
     if (!pendingReload || loading || saving || taskRunning() || deps.lifecycle.isDestroyed()
-        || !deps.isActive() || composingSearch || knowledgeDraft || skillDraft || skillImportDraft || mcpDraft || toolCallDraft) return;
+        || !deps.isActive() || composingSearch || knowledgeDraft || skillDraft || skillImportDraft || mcpDraft || mcpDrawer) return;
     render();
   }
 
@@ -1704,7 +1859,13 @@
     captureDrafts();
     var loads = [loadMcpServers()];
     if (includeTools) loads.push(loadMcpTools(serverId).catch(function () {}));
-    return Promise.all(loads).then(renderCurrentState);
+    return Promise.all(loads).then(function () {
+      renderCurrentState();
+      if (mcpDrawerActive(mcpDrawer) && mcpDrawer.serverId === serverId && mcpDrawer.mode === 'tools') {
+        mcpDrawer.loading = false;
+        renderMcpDrawer();
+      }
+    });
   }
 
   function operationFinishedMessage(data, label) {
@@ -1715,31 +1876,64 @@
   function testMcpServer(id) {
     var uri = mcpServerUri(id) + '/connection-attempts';
     var key = operationKey('mcp-test', id);
-    return ensureClient().authorizedPost(uri, { timeoutMs: 120000 }, mutationOptions()).then(function (envelope) {
+    if (mcpOperationBusy(key)) return Promise.resolve();
+    var server = viewState.mcpServers.find(function (item) { return item.id === id; });
+    pendingMcpOperations.add(key);
+    refreshMcpButtons();
+    return ensureClient().authorizedPost(uri, { timeoutMs: server && server.timeoutMs || 120000 }, mutationOptions()).then(function (envelope) {
       trackOperation(key, envelope, function (data) {
         operationFinishedMessage(data, '连接检查');
         refreshMcpAfterOperation(id, false);
       });
       toast('连接检查已开始');
-    }).catch(function (error) { toast(errorText(error), true); });
+    }).catch(function (error) { toast(errorText(error), true); }).finally(function () {
+      pendingMcpOperations.delete(key);
+      refreshMcpButtons();
+    });
   }
 
   function discoverMcpTools(id) {
     var uri = mcpServerUri(id) + '/tool-discoveries';
     var key = operationKey('mcp-discovery', id);
-    return ensureClient().authorizedPost(uri, { timeoutMs: 120000 }, mutationOptions()).then(function (envelope) {
+    if (mcpOperationBusy(key)) return Promise.resolve();
+    if (!mcpDrawerActive(mcpDrawer) || mcpDrawer.serverId !== id || mcpDrawer.mode !== 'tools') showMcpTools(id);
+    var drawer = mcpDrawer;
+    if (drawer) drawer.error = '';
+    var server = viewState.mcpServers.find(function (item) { return item.id === id; });
+    pendingMcpOperations.add(key);
+    refreshMcpButtons();
+    return ensureClient().authorizedPost(uri, { timeoutMs: server && server.timeoutMs || 120000 }, mutationOptions()).then(function (envelope) {
       trackOperation(key, envelope, function (data) {
         operationFinishedMessage(data, '工具刷新');
         refreshMcpAfterOperation(id, true);
       });
       toast('工具刷新已开始');
-    }).catch(function (error) { toast(errorText(error), true); });
+    }).catch(function (error) {
+      toast(errorText(error), true);
+      if (mcpDrawerActive(drawer)) { drawer.error = errorText(error); drawer.loading = false; renderMcpDrawer(); }
+    }).finally(function () {
+      pendingMcpOperations.delete(key);
+      refreshMcpButtons();
+    });
   }
 
   function showMcpTools(id) {
-    return loadMcpTools(id).then(function () {
-      renderCurrentState();
-    }).catch(function (error) { toast(errorText(error), true); renderCurrentState(); });
+    if (!viewState.mcpServers.some(function (server) { return server.id === id; })) return Promise.resolve();
+    var state = { serverId: id, mode: 'tools', loading: true, error: '',
+      returnFocus: mcpDrawer ? mcpDrawer.returnFocus : document.activeElement };
+    mcpDrawer = state;
+    toolCallDraft = null;
+    renderMcpDrawer();
+    deps.openDrawer();
+    return loadMcpTools(id).then(function (result) {
+      if (!result || !mcpDrawerActive(state)) return;
+      state.loading = false;
+      renderMcpDrawer();
+    }).catch(function () {
+      if (!mcpDrawerActive(state)) return;
+      state.loading = false;
+      renderMcpDrawer();
+    });
   }
 
   function dynamicCallDescriptor(envelope, uri) {
@@ -1752,66 +1946,183 @@
     return {
       descriptor: descriptor,
       schemaHash: String(schemaHash),
-      argumentSchema: clone(Object.prototype.hasOwnProperty.call(properties, 'arguments')
-        ? properties.arguments
-        : { type: 'object' }),
     };
   }
 
+  function toolArgumentsExample(rootSchema) {
+    var remaining = 200;
+    function sample(schema, name, depth, refs) {
+      if (--remaining < 0 || depth > 12 || !schema || typeof schema !== 'object') return null;
+      if (Object.prototype.hasOwnProperty.call(schema, 'const')) return clone(schema.const);
+      if (Array.isArray(schema.examples) && schema.examples.length) return clone(schema.examples[0]);
+      if (Object.prototype.hasOwnProperty.call(schema, 'default')) return clone(schema.default);
+      if (Array.isArray(schema.enum) && schema.enum.length) return clone(schema.enum[0]);
+      if (typeof schema.$ref === 'string') {
+        if (refs.indexOf(schema.$ref) !== -1) return null;
+        return sample(mcpSchemaReference(rootSchema, schema.$ref), name, depth + 1, refs.concat(schema.$ref));
+      }
+      var branches = schema.oneOf || schema.anyOf;
+      if (Array.isArray(branches) && branches.length) {
+        var branch = branches.find(function (item) { return item && item.type !== 'null'; }) || branches[0];
+        var selected = Object.assign({}, schema, branch);
+        delete selected.oneOf;
+        delete selected.anyOf;
+        return sample(selected, name, depth + 1, refs);
+      }
+      if (Array.isArray(schema.allOf) && schema.allOf.length) {
+        var base = Object.assign({}, schema);
+        delete base.allOf;
+        var combined = sample(base, name, depth + 1, refs);
+        schema.allOf.forEach(function (part) {
+          var value = sample(part, name, depth + 1, refs);
+          combined = value && typeof value === 'object' && !Array.isArray(value)
+            ? Object.assign(Object.create(null), combined && typeof combined === 'object' ? combined : {}, value) : value;
+        });
+        return combined;
+      }
+      var type = Array.isArray(schema.type) ? schema.type.find(function (item) { return item !== 'null'; }) || 'null' : schema.type;
+      if (type === 'object' || schema.properties || schema.required) {
+        var properties = schema.properties || {};
+        var value = Object.create(null);
+        Array.from(new Set(Object.keys(properties).concat(schema.required || []))).forEach(function (key) {
+          if (remaining > 0) value[key] = sample(properties[key], key, depth + 1, refs);
+        });
+        return value;
+      }
+      if (type === 'array' || schema.items || schema.prefixItems) {
+        var items = schema.prefixItems || (Array.isArray(schema.items) ? schema.items : []);
+        var count = Math.min(20, remaining, schema.maxItems === undefined ? Infinity : schema.maxItems,
+          Math.max(1, schema.minItems || 0, items.length));
+        return Array.from({ length: Math.max(0, count) }, function (_, index) {
+          return sample(items[index] || schema.items, name, depth + 1, refs);
+        });
+      }
+      if (type === 'integer' || type === 'number') {
+        var number = Math.max(0, schema.minimum === undefined ? -Infinity : schema.minimum);
+        if (schema.maximum !== undefined) number = Math.min(number, schema.maximum);
+        return type === 'integer' ? Math.ceil(number) : number;
+      }
+      if (type === 'boolean') return false;
+      if (type === 'null') return null;
+      var text = '请填写' + (schema.title || name || '内容');
+      if (schema.minLength) text = text.padEnd(Math.min(1000, schema.minLength), '…');
+      return schema.maxLength === undefined ? text : text.slice(0, schema.maxLength);
+    }
+    var example = sample(rootSchema, '', 0, []);
+    return example && typeof example === 'object' && !Array.isArray(example) ? example : {};
+  }
+
+  function toolCallValidationMessage(errors) {
+    errors = Array.isArray(errors) ? errors.map(String) : [];
+    if (!errors.length) return '请按顶部的参数结构检查请求参数。';
+    var missing = errors.map(function (message) { return message.match(/^\$\.(.+) is required$/); });
+    if (missing.every(Boolean)) return '请补充必填参数：' + missing.map(function (match) { return match[1]; }).join('、') + '。';
+    return '请检查请求参数：' + errors.slice(0, 4).map(function (message) {
+      return message.replace(/^\$\./, '')
+        .replace(/ is required$/, ' 为必填项')
+        .replace(/ must be one of enum$/, ' 需使用参数结构中的可选值')
+        .replace(/ must equal const$/, ' 需使用参数结构中的固定值')
+        .replace(/ must be (.+), got .+$/, ' 类型应为 $1')
+        .replace(/ is shorter than minLength (\d+)$/, ' 至少需要 $1 个字符')
+        .replace(/ is longer than maxLength (\d+)$/, ' 最多允许 $1 个字符')
+        .replace(/ is below minimum (.+)$/, ' 不能小于 $1')
+        .replace(/ is above maximum (.+)$/, ' 不能大于 $1')
+        .replace(/ is forbidden by additionalProperties=false$/, ' 不在参数结构中，请删除');
+    }).join('；') + '。';
+  }
+
   function openToolCall(serverId, toolName) {
+    if (!mcpDrawerActive(mcpDrawer) || mcpDrawer.serverId !== serverId) return Promise.resolve();
+    var state = { serverId: serverId, toolName: toolName, mode: 'call', loading: true, error: '', returnFocus: mcpDrawer.returnFocus };
+    mcpDrawer = state;
+    toolCallDraft = null;
+    renderMcpDrawer();
     var toolUri = mcpToolUri(serverId, toolName);
     var callUri = mcpCallUri(serverId, toolName);
     return Promise.all([
       ensureClient().get(toolUri),
       ensureClient().options(callUri, { relation: 'mcp-calls' }),
     ]).then(function (values) {
+      if (!mcpDrawerActive(state)) return;
       var tool = envelopeData(values[0], 'MCP 工具');
       var dynamic = dynamicCallDescriptor(values[1], callUri);
+      if (tool.schemaHash !== dynamic.schemaHash) throw new Error('工具定义已更新，请返回列表重新选择工具。');
+      var server = viewState.mcpServers.find(function (item) { return item.id === serverId; });
       toolCallDraft = {
         serverId: serverId,
         toolName: toolName,
         description: tool.description || '',
-        argumentSchema: dynamic.argumentSchema,
+        argumentSchema: tool.inputSchema,
         schemaHash: dynamic.schemaHash,
-        argumentsText: '{}',
-        timeoutMs: 120000,
+        argumentsText: JSON.stringify(toolArgumentsExample(tool.inputSchema), null, 2),
+        timeoutMs: server && server.timeoutMs || 120000,
+        error: '',
       };
-      renderCurrentState(true);
-      scrollIntoView('#http-mcp-call-editor-wrap .knowledge-mcp-call-editor');
-    }).catch(function (error) { toast(errorText(error), true); });
+      state.loading = false;
+      renderMcpDrawer();
+      $('#drawer-content').scrollTop = 0;
+      $('#http-mcp-call-arguments').focus();
+    }).catch(function (error) {
+      if (!mcpDrawerActive(state)) return;
+      state.loading = false;
+      state.error = errorText(error);
+      renderMcpDrawer();
+    });
   }
 
-  function postDynamicMcpCall(uri, argumentsValue, timeoutMs) {
-    var client = ensureClient();
-    var idempotencyKey = makeIdempotencyKey('mcp_call');
-    return client.options(uri, { relation: 'mcp-calls' }).then(function (optionsEnvelope) {
-      var dynamic = dynamicCallDescriptor(optionsEnvelope, uri);
-      var body = { arguments: argumentsValue, timeoutMs: timeoutMs, schemaHash: dynamic.schemaHash };
-      return client.post(uri, body, { idempotencyKey: idempotencyKey });
-    });
+  function showToolCallError(draft, message) {
+    if (toolCallDraft !== draft) return;
+    draft.error = message;
+    var element = $('#http-mcp-call-error');
+    if (element) { element.textContent = message; element.hidden = !message; }
   }
 
   function submitToolCall() {
     captureToolCallDraft();
     if (!toolCallDraft) return Promise.resolve();
+    var draft = toolCallDraft;
+    var serverId = draft.serverId;
+    var toolName = draft.toolName;
+    var key = operationKey('mcp-call', serverId + '/' + toolName);
+    if (mcpOperationBusy(key)) return Promise.resolve();
+    showToolCallError(draft, '');
     var argumentsValue;
     try {
       argumentsValue = JSON.parse(toolCallDraft.argumentsText || '{}');
     } catch (error) {
-      toast('参数 JSON 无法解析：' + error.message, true);
+      showToolCallError(draft, '参数 JSON 格式不正确，请检查引号、逗号和括号。');
       return Promise.resolve();
     }
     if (!argumentsValue || typeof argumentsValue !== 'object' || Array.isArray(argumentsValue)) {
-      toast('工具参数必须是 JSON 对象', true);
+      showToolCallError(draft, '工具参数必须是 JSON 对象');
       return Promise.resolve();
     }
-    var serverId = toolCallDraft.serverId;
-    var toolName = toolCallDraft.toolName;
-    var key = operationKey('mcp-call', serverId + '/' + toolName);
-    return postDynamicMcpCall(mcpCallUri(serverId, toolName), argumentsValue, toolCallDraft.timeoutMs).then(function (envelope) {
+    var validation = root.AgentResourceProtocol.validateJsonSchema(draft.argumentSchema, argumentsValue);
+    if (!validation.valid) {
+      showToolCallError(draft, toolCallValidationMessage(validation.errors));
+      $('#http-mcp-call-arguments').focus();
+      return Promise.resolve();
+    }
+    if (!Number.isInteger(draft.timeoutMs) || draft.timeoutMs < 1000 || draft.timeoutMs > 600000) {
+      showToolCallError(draft, '超时必须是 1000 到 600000 之间的整数毫秒。');
+      return Promise.resolve();
+    }
+    pendingMcpOperations.add(key);
+    refreshMcpButtons();
+    return ensureClient().post(mcpCallUri(serverId, toolName), {
+      arguments: argumentsValue, timeoutMs: draft.timeoutMs, schemaHash: draft.schemaHash,
+    }, mutationOptions()).then(function (envelope) {
       trackOperation(key, envelope, function (data) { operationFinishedMessage(data, '工具调用'); });
       toast('工具调用已开始');
-    }).catch(function (error) { toast(errorText(error), true); });
+    }).catch(function (error) {
+      var message = error.code === 'SCHEMA_VALIDATION_FAILED'
+        ? toolCallValidationMessage(error.details && error.details.errors) : errorText(error);
+      showToolCallError(draft, message);
+      if (toolCallDraft !== draft) toast(message, true);
+    }).finally(function () {
+      pendingMcpOperations.delete(key);
+      refreshMcpButtons();
+    });
   }
 
   async function handleClick(event) {
@@ -1844,7 +2155,6 @@
       else if (mcpAction === 'tools') showMcpTools(serverId);
       else if (mcpAction === 'call-tool') openToolCall(serverId, mcpTarget.dataset.tool || '');
       else if (mcpAction === 'submit-call') submitToolCall();
-      else if (mcpAction === 'cancel-call') { toolCallDraft = null; renderCurrentState(); }
       return;
     }
 
@@ -2035,6 +2345,11 @@
     document.addEventListener('compositionend', handleSearchCompositionEnd);
     document.addEventListener('input', handleInput);
     document.addEventListener('change', handleChange);
+    deps.lifecycle.listen(document, 'keydown', function (event) {
+      if (event.key !== 'Escape' || event.defaultPrevented || !mcpDrawerActive(mcpDrawer)) return;
+      event.preventDefault();
+      if (!handleDrawerBack()) deps.closeDrawer();
+    });
     var refreshButton = $('#btn-knowledge-refresh');
     var newButton = $('#btn-knowledge-new');
     if (refreshButton) refreshButton.addEventListener('click', function () { render(); });
@@ -2050,5 +2365,6 @@
     });
   }
 
-  return Object.freeze({ init: init, render: render, getState: getState, discard: discard });
+  return Object.freeze({ init: init, render: render, getState: getState, discard: discard,
+    handleDrawerBack: handleDrawerBack, handleDrawerClosed: handleDrawerClosed });
 });

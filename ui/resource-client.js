@@ -56,7 +56,7 @@
     routeTemplate: true, relation: true, summary: true,
     inputSchema: true, outputSchema: true, safety: true, idempotency: true,
     execution: true, requiredPermissions: true,
-    requiredPreconditions: true, patchMediaTypes: true,
+    requiredPreconditions: true, guidance: true, patchMediaTypes: true,
     deprecated: true,
   });
   var ERROR_KEYS = Object.freeze({ code: true, message: true, retryable: true, stage: true, trace: true, details: true, current: true });
@@ -297,6 +297,7 @@
     }
     assertStringArray(value.requiredPermissions, label + '.requiredPermissions');
     assertStringArray(value.requiredPreconditions, label + '.requiredPreconditions');
+    if (value.guidance !== undefined) assertStringArray(value.guidance, label + '.guidance');
     if (value.patchMediaTypes !== undefined) {
       assertStringArray(value.patchMediaTypes, label + '.patchMediaTypes');
       value.patchMediaTypes.forEach(function (mediaType) {
@@ -477,8 +478,9 @@
       })).then(function (response) {
         if (!response || response.ok !== true) throw transportError(response);
         var envelope = response.payload;
-        if (!isEnvelope(envelope)) {
-          throw new ResourceClientError('Background returned an invalid ARP Resource Envelope', {
+        try { validateEnvelope(envelope); }
+        catch (error) {
+          throw new ResourceClientError('Background returned an invalid ARP Resource Envelope: ' + error.message, {
             code: 'ARP_ENVELOPE_INVALID', transport: true, performed: 'unknown',
           });
         }

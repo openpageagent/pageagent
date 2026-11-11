@@ -94,7 +94,11 @@ class PageAgentMCPServer {
     this.clients = new Map(); this.sockets = new Map(); this.callContext = new AsyncLocalStorage();
     this.requestBroker = new ExtensionRequestBroker((socket, body, callback) => this.send(socket, body, callback));
     this.mailQueue = createMailQueue(); this.mailRequests = new Set(); this.closing = false;
+    this.instructions = '本 MCP 的 /local/* 在服务端直接执行文件、Bash、环境与桌面操作，不依赖插件连接或插件授权，也不需要 mcpClientId、connectionId 或 workspaceId。'
+      + '本地任务先 GET /local 获取支持的能力和链接，再 OPTIONS 具体路径获取参数，按声明的方法直接调用；无需经 /clients/{clientId}/arp 转发当前服务端的本地任务，该路径会先经过插件再回到服务端执行，并受插件权限管控。'
+      + '只有访问插件资源才查询 GET /clients 并选择客户端；客户端绑定不改变 /local 的服务端归属。OPTIONS / 查看服务端资源目录。';
     this.toolDefinitions = arp.createToolDefinitions().filter(item => arp.METHODS.includes(item.name)).map(item => ({ ...item,
+      description: this.instructions + '\n' + item.description,
       inputSchema: { ...item.inputSchema, properties: { ...item.inputSchema.properties,
         mcpClientId: { type: 'string', minLength: 1, maxLength: 200, description: '访问插件资源时的目标客户端 ID；服务端 /local、/clients 无需填写，也可使用 /clients/{clientId}/arp' } } } }));
   }

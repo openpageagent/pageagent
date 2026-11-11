@@ -535,6 +535,7 @@ body {
   min-height: 34px;
   gap: 10px;
   text-align: left;
+  text-decoration: none;
   padding: 8px;
   border: 1px solid transparent;
   border-radius: var(--control-radius);
@@ -569,6 +570,7 @@ body {
 .nav-item[data-section="model-settings"]::before { content: '\f0d0'; }
 .nav-item[data-section="changelog"]::before { content: '\f1ea'; }
 .nav-item[data-section="system-settings"]::before { content: '\f013'; }
+.nav-item#open-release::before { content: '\f09b'; }
 .nav-item:hover { background: var(--control-bg-hover); border-color: var(--control-border); box-shadow: none; }
 .nav-item.active {
   position: relative;
@@ -1400,7 +1402,6 @@ page-code-editor[hidden] { display: none !important; }
 #skill-import-editor-wrap:empty,
 #skill-editor-wrap:empty,
 #http-mcp-editor-wrap:empty,
-#http-mcp-call-editor-wrap:empty,
 #knowledge-editor-wrap:empty {
   display: none;
 }
@@ -1542,16 +1543,11 @@ page-code-editor[hidden] { display: none !important; }
   font-size: 12px;
   line-height: 1.5;
 }
-.knowledge-mcp-server-block {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  min-width: 0;
-}
 .knowledge-operation:empty {
   display: none;
 }
-.knowledge-mcp-server-block > .knowledge-operation:not(:empty) {
-  margin-top: -1px;
+.knowledge-operation:not(:empty) {
+  margin-bottom: 8px;
 }
 .knowledge-operation-status {
   display: flex;
@@ -1567,10 +1563,6 @@ page-code-editor[hidden] { display: none !important; }
 .knowledge-operation-status .knowledge-meta {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-.knowledge-operation-status page-code-editor {
-  flex-basis: 100%;
-  margin-top: 2px;
 }
 .knowledge-mcp-card .badge.danger {
   color: #fff;

@@ -408,7 +408,7 @@
 
     function publicServer(server) {
       var value = sanitize(server || {});
-      var tools = Array.isArray(value.tools) ? value.tools : [];
+      var tools = server && Array.isArray(server.tools) ? server.tools : [];
       value.toolCount = tools.length;
       value.auth = {
         kind: 'local-secret',
@@ -448,7 +448,10 @@
       return rawServerList(true).then(function (result) {
         var server = result.items.find(function (item) { return String(item && item.id || '') === serverId; });
         if (!server) fail('RESOURCE_NOT_FOUND', 'HTTP MCP Server does not exist: ' + serverId);
-        return sanitize(server);
+        var value = sanitize(server);
+        // Tool schemas describe arguments; names such as token/password are not credentials.
+        value.tools = clone(server.tools || []);
+        return value;
       });
     }
 
@@ -505,7 +508,7 @@
         var tools = Array.isArray(server.tools) ? server.tools : [];
         var tool = tools.find(function (item) { return String(item && item.name || '') === toolName; });
         if (!tool) fail('RESOURCE_NOT_FOUND', 'MCP Tool is not in the discovered server catalog: ' + toolName);
-        return sanitize(tool);
+        return clone(tool);
       });
     }
 
@@ -518,12 +521,33 @@
       return clone(schema);
     }
 
+    function callArgumentSchema(schema) {
+      var embedded = clone(schema);
+      // Local references are relative to the entire call body once arguments is nested.
+      function visit(node) {
+        if (!node || typeof node !== 'object' || Array.isArray(node)) return;
+        if (typeof node.$ref === 'string' && (node.$ref === '#' || node.$ref.indexOf('#/') === 0)) {
+          node.$ref = '#/properties/arguments' + node.$ref.slice(1);
+        }
+        ['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas', 'dependencies'].forEach(function (key) {
+          if (node[key] && typeof node[key] === 'object') Object.keys(node[key]).forEach(function (name) { visit(node[key][name]); });
+        });
+        ['items', 'additionalItems', 'additionalProperties', 'contains', 'propertyNames', 'not', 'if', 'then', 'else',
+          'unevaluatedItems', 'unevaluatedProperties', 'allOf', 'anyOf', 'oneOf', 'prefixItems'].forEach(function (key) {
+          if (Array.isArray(node[key])) node[key].forEach(visit);
+          else visit(node[key]);
+        });
+      }
+      visit(embedded);
+      return embedded;
+    }
+
     function toolContract(serverId, tool) {
       var argumentSchema = mcpToolInputSchema(tool);
       var inputSchema = {
         type: 'object',
         properties: {
-          arguments: argumentSchema,
+          arguments: callArgumentSchema(argumentSchema),
           timeoutMs: { type: 'integer', minimum: 1000, maximum: 600000 },
         },
         required: ['arguments'],
@@ -563,7 +587,7 @@
     }
 
     function publicOperation(record) {
-      record = sanitize(record || {});
+      record = record && record.kind === 'mcp-call' ? clone(record) : sanitize(record || {});
       delete record.runtimeOwner;
       delete record.owner;
       return record;
@@ -578,7 +602,14 @@
         record = stored;
         Promise.resolve().then(executor).then(function (result) {
           record.status = 'succeeded';
-          record.result = sanitize(result);
+          // callTool returns only call metadata and the remote tool result, never server credentials.
+          record.result = kind === 'mcp-call' ? clone(result) : sanitize(result);
+          if (kind === 'mcp-call' && result && result.result && result.result.isError === true) {
+            record.status = 'failed';
+            record.error = (result.result.content || []).filter(function (item) {
+              return item && item.type === 'text' && typeof item.text === 'string';
+            }).map(function (item) { return item.text; }).join('\n').trim().slice(0, 1200) || 'MCP 工具返回执行错误';
+          }
           record.endedAt = Date.now();
           return callStore.update(record.id, record);
         }, function (error) {

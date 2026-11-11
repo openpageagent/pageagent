@@ -1740,7 +1740,7 @@
   // 导航
   $all('.nav-item').forEach(function (el) {
     if (!el.title) el.title = el.textContent.trim();
-    el.addEventListener('click', function () { switchSection(el.dataset.section); });
+    if (el.dataset.section) el.addEventListener('click', function () { switchSection(el.dataset.section); });
   });
 
   function setGlobalSidebarCollapsed(collapsed) {
@@ -3178,7 +3178,8 @@
   }
   if (globalThis.OptionsKnowledgePanel && globalThis.OptionsKnowledgePanel.init) {
     globalThis.OptionsKnowledgePanel.init({ $: $, esc: esc, toast: toast, confirm: confirmSettingsAction, itemIdHtml: itemIdHtml,
-      lifecycle: lifecycle, isActive: function () { return currentSection === 'knowledge'; } });
+      lifecycle: lifecycle, openDrawer: openDrawer, closeDrawer: closeDrawer,
+      isActive: function () { return currentSection === 'knowledge'; } });
   }
 
   // 共享同步事件：各业务位置按当前引用的数据重新读取资源。
@@ -3218,6 +3219,7 @@
     drawerEditBaseline = '';
     $('#drawer-overlay').classList.remove('active');
     $('#drawer').classList.remove('active');
+    globalThis.OptionsKnowledgePanel.handleDrawerClosed();
     if (mcpActionDrawer) {
       var clientSettings = mcpActionDrawer === 'client';
       $('#mcp-action-host').appendChild($(clientSettings ? '#mcp-client-settings-form' : '#mcp-pair-form'));
@@ -3251,6 +3253,7 @@
       event.preventDefault();
       event.stopPropagation();
     }
+    if (globalThis.OptionsKnowledgePanel.handleDrawerBack()) return;
     closeDrawer();
   }
   $('#drawer-overlay').addEventListener('click', handleDrawerCancel);

@@ -1,6 +1,8 @@
 # Docker 部署、更新与备份
 
-每个容器运行 MCP Server、Chromium 和 Page Agent 插件，通过 Selkies 查看和操作浏览器。宿主机需安装 Docker（含 Compose）和 Bash，无需安装 Node.js。
+每个容器以 root 运行 MCP Server、Chromium 和 Page Agent 插件，通过 Selkies 查看和操作浏览器。宿主机需安装 Docker（含 Compose）和 Bash，无需安装 Node.js。
+
+系统 locale 为 `zh_CN.UTF-8`，Chromium 界面和首选网页语言为简体中文。容器和浏览器默认使用 `Asia/Shanghai` 时区，可在 `docker/.env` 中通过 `TZ` 修改，重新创建容器后生效。中文 locale 和时区数据由基础工具层提供，更新该层需执行 `./docker/build.sh all`。
 
 **所有命令在包含 `docker/` 的项目根目录执行。** 源码工作区和 release 解压目录使用相同命令。
 
@@ -185,15 +187,15 @@ PAGE_AGENT_DISPLAY_SCALE='3'
 | 宿主机位置 | 容器内位置 | 用途 |
 | --- | --- | --- |
 | 当前项目根目录 | `/app` | 文件与 Bash 操作的默认工作目录 |
-| 当前项目根目录下的 `data/` | `/data` | 认证、浏览器状态、证书和备份 |
+| 当前项目根目录下的 `data/` | `/data/page-agent` | 认证、浏览器状态、证书和备份 |
 
-文件和 Bash 操作在容器内执行，其他宿主机目录需显式挂载。服务以 UID/GID 1000 运行，启动时调整数据文件属主；每个容器须使用独立的 `data/`。
+文件和 Bash 操作在容器内以 root 执行，其他宿主机目录需显式挂载。新建数据由 root 所有，启动时不递归修改已有数据的属主；每个容器须使用独立的 `data/`。
 
 ### 从旧目录布局迁移
 
 1. 使用原 Compose 配置停止旧容器。
-2. 将环境文件迁至 `docker/.env`，按示例合并配置。
-3. 保留原 `data/`，在项目根目录按本文命令启动。
+2. 将环境文件迁至 `docker/.env`，按示例合并配置；已配置的 `PAGE_AGENT_BUILTIN_CONNECTIONS_FILE` 路径改为 `/data/page-agent/...`。
+3. 保留原 `data/`，更新镜像和 Compose，将数据挂载到 `/data/page-agent` 后按本文命令启动；无需移动宿主机数据。
 
 ### 数据文件用途
 
@@ -223,7 +225,7 @@ data/
 
 1. 将 [`docker/builtin-connections.example.json`](builtin-connections.example.json) 复制到 `data/builtin-connections.json`。
 2. 填写地址、服务端配对密码和权限；远程连接使用 WSS。
-3. 在 `docker/.env` 中设置 `PAGE_AGENT_BUILTIN_CONNECTIONS_FILE=/data/builtin-connections.json`，重新创建容器。
+3. 在 `docker/.env` 中设置 `PAGE_AGENT_BUILTIN_CONNECTIONS_FILE=/data/page-agent/builtin-connections.json`，重新创建容器。
 
 含真实密码的文件保存在 `data/`，不放入通用发布包。完成配对后，连接使用已保存的凭据。
 
@@ -234,6 +236,34 @@ data/
 | `bucket` | 本机备份在此连接上的写入桶；单独填写不会开启同步或备份 |
 
 `bucket` 用作初始备份桶；已有保存设置时，以「自动备份」中的配置为准。本机连接的初始桶为 `default`。
+
+## 添加 HTTP MCP 服务器
+
+通过 `PAGE_AGENT_HTTP_MCP_SERVERS_FILE` 指定容器内的 JSON 配置文件，启动时注册服务器并同步工具目录；服务未就绪时每分钟重试。此配置与 Page Agent 直连及配对独立。
+
+例如，在宿主机 `data/http-mcp-servers.json` 中保存：
+
+```json
+{
+  "version": 1,
+  "servers": [
+    {
+      "id": "container-example",
+      "name": "示例 MCP 服务",
+      "url": "http://mcp-service:8080/mcp",
+      "bearerToken": "<服务访问令牌>",
+      "protocolVersion": "2025-06-18",
+      "enabled": true
+    }
+  ]
+}
+```
+
+ID 须以 `container-` 开头且不重复；地址须能从容器内访问，`127.0.0.1` 仅指向当前容器。按服务要求填写令牌，无需认证时可省略 `bearerToken`；含真实令牌的文件不放入通用发布包。
+
+在 `docker/.env` 中设置 `PAGE_AGENT_HTTP_MCP_SERVERS_FILE=/data/page-agent/http-mcp-servers.json`。修改文件或环境变量后，重新创建容器生效。
+
+从清单移除条目会删除对应服务器记录并归档工具知识，手工添加的其他服务器保留。
 
 ## 备份与同步
 
@@ -277,7 +307,7 @@ data/
 例如，额外连接设置 `autoSync: true`、`backup: true`、`bucket: "instance-backup"`，读取该服务端已标记可同步的 `shared-config/v000001`：
 
 ```dotenv
-PAGE_AGENT_BUILTIN_CONNECTIONS_FILE=/data/builtin-connections.json
+PAGE_AGENT_BUILTIN_CONNECTIONS_FILE=/data/page-agent/builtin-connections.json
 PAGE_AGENT_AUTO_SYNC_BUCKET=shared-config
 PAGE_AGENT_AUTO_SYNC_VERSION=v000001
 PAGE_AGENT_AUTO_SYNC_ENABLED=true
@@ -340,7 +370,7 @@ Project root must contain manifest.json and MCP server source or bundle: <项目
 源码的 MCP 构建依赖和中间产物仅保留在构建阶段。也可指定 release 目录构建：
 
 ```bash
-./docker/build.sh app ./dist/page-agent-extension-1.2.2
+./docker/build.sh app ./dist/page-agent-extension-1.2.3
 ```
 
 相对路径以当前执行目录为基准，构建时打印实际使用的目录。

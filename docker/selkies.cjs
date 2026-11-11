@@ -30,7 +30,7 @@ async function startSelkies({ start, stopping, state, runtime, deviceScaleFactor
     SELKIES_MANUAL_RESOLUTION: 'true', SELKIES_MANUAL_WIDTH: String(dimensions[0]), SELKIES_MANUAL_HEIGHT: String(dimensions[1]),
     SELKIES_ENABLE_RESIZE: 'false', SELKIES_COMMAND_ENABLED: 'false',
   });
-  console.log('Selkies: https://localhost:10000/ (certificate: /data/tls/selkies.crt)');
+  console.log('Selkies: https://localhost:10000/ (certificate: ' + state + '/tls/selkies.crt)');
 }
 
 module.exports = { startSelkies };

@@ -13,7 +13,7 @@ services:
     working_dir: /app
     volumes:
       - ..:/app
-      - ../data:/data
+      - ../data:/data/page-agent
     ports:
       - "10000:10000"
       - "9999:9999"

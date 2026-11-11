@@ -10,6 +10,8 @@
     var autoSyncAvailable = false, environmentAllowsSync = false;
     var applicationVersion = chrome.runtime.getManifest().version;
     var syncVersion = '', syncTarget = null, modelApiKeys = {};
+    var httpMcpServers = [], httpMcpSynced = new Set();
+    var httpMcpIdsKey = 'container_http_mcp_ids';
     var settings = { autoSyncEnabled: true, syncConnectionId: null, targets: [] };
     function target(connectionId) {
       return settings.targets.find(function (item) { return item.connectionId === connectionId; }) || null;
@@ -55,7 +57,7 @@
       var response = await fetch(chrome.runtime.getURL('builtin-connections/index.json'), { cache: 'no-store' });
       if (!response.ok) throw new Error('无法读取内置连接配置');
       var file = await response.json();
-      c.fields(file, ['version', 'clientName', 'connections', 'runtime', 'applicationVersion', 'autoSyncEnabled', 'syncVersion', 'syncTarget', 'modelApiKeys'], ['version', 'connections']);
+      c.fields(file, ['version', 'clientName', 'connections', 'runtime', 'applicationVersion', 'autoSyncEnabled', 'syncVersion', 'syncTarget', 'modelApiKeys', 'httpMcpServers'], ['version', 'connections']);
       if (file.version !== 1 || !Array.isArray(file.connections)) throw new Error('内置连接格式无效');
       if (file.autoSyncEnabled !== undefined && typeof file.autoSyncEnabled !== 'boolean') throw new Error('启动自动同步开关必须为布尔值');
       if (file.syncVersion !== undefined && (typeof file.syncVersion !== 'string' || file.syncVersion && !/^v\d{6,}$/.test(file.syncVersion))) throw new Error('启动同步版本无效');
@@ -67,6 +69,17 @@
         });
       }
       if (file.clientName !== undefined && (typeof file.clientName !== 'string' || file.clientName.length > 300)) throw new Error('客户端名称须为不超过 300 个字符的字符串');
+      if (file.httpMcpServers !== undefined) {
+        if (file.runtime !== 'docker/start.cjs' || !Array.isArray(file.httpMcpServers)) throw new Error('HTTP MCP 启动配置必须由容器提供');
+        var httpIds = new Set();
+        file.httpMcpServers.forEach(function (entry) {
+          c.fields(entry, ['id', 'name', 'url', 'bearerToken', 'headersText', 'protocolVersion', 'timeoutMs', 'enabled'], ['id', 'name', 'url']);
+          if (typeof entry.id !== 'string' || !/^container-[A-Za-z0-9_-]+$/.test(entry.id) || httpIds.has(entry.id)) throw new Error('容器 HTTP MCP ID 须以 container- 开头且不能重复');
+          httpIds.add(entry.id);
+          options.httpMcpManager.validateServer(entry);
+        });
+      }
+      httpMcpServers = !incognito ? file.httpMcpServers || [] : [];
       var storedSettings = (await chrome.storage.local.get(settingsKey))[settingsKey];
       var previousConnections = !incognito && !storedSettings ? (await options.runtime.store.load()).connections : {};
       // Migrate implicit roles only for connections already installed by an older loader.
@@ -122,6 +135,21 @@
         validateSettings({ syncConnectionId: source.connectionId, targets: [Object.assign({}, policy, syncTarget)] });
       }
       await options.onLoaded();
+      if (!incognito) {
+        var previousHttpIds = (await chrome.storage.local.get(httpMcpIdsKey))[httpMcpIdsKey] || [];
+        var existingHttp = await options.httpMcpManager.listServers({ includeDisabled: true });
+        for (var oldId of previousHttpIds) {
+          if (!httpMcpServers.some(function (entry) { return entry.id === oldId; })
+              && existingHttp.servers.some(function (server) { return server.id === oldId && server.owner.scope === 'container'; })) {
+            await options.httpMcpManager.removeServer({ id: oldId });
+          }
+        }
+        for (var httpServer of httpMcpServers) {
+          await options.httpMcpManager.upsertServer(Object.assign({ bearerToken: '', headersText: '', useBrowserCookies: false }, httpServer,
+            { owner: { scope: 'container' } }));
+        }
+        await chrome.storage.local.set({ [httpMcpIdsKey]: httpMcpServers.map(function (entry) { return entry.id; }) });
+      }
       initialized = true;
     }
     function initialize() {
@@ -160,6 +188,18 @@
           }
         }
         await options.runtime.initClient();
+        // Servers may still be starting. Register immediately, then retry tool discovery
+        // using the existing minute alarm without blocking the browser startup.
+        for (var httpServer of httpMcpServers) {
+          if (httpServer.enabled === false || httpMcpSynced.has(httpServer.id)) continue;
+          try {
+            await options.httpMcpManager.syncServer({ id: httpServer.id, timeoutMs: 10000 });
+            httpMcpSynced.add(httpServer.id);
+          } catch (error) {
+            retry = true;
+            options.log('容器 HTTP MCP ' + httpServer.name + ' 尚未同步，请检查服务状态及认证配置');
+          }
+        }
         if (!retry) await chrome.alarms.clear(alarm);
       })().finally(function () { running = null; });
       return running;

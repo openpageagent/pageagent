@@ -8,25 +8,13 @@ const { spawn } = require('child_process');
 const { createHash } = require('crypto');
 const { startSelkies } = require('./selkies.cjs');
 
-const uid = 1000, gid = 1000;
-const state = '/data', profile = '/data/browser', browserHome = '/data/browser-home', runtime = '/run/page-agent';
+const state = '/data/page-agent', runtime = '/run/page-agent';
+const profile = path.join(state, 'browser'), browserHome = path.join(state, 'browser-home');
 const extension = path.join(runtime, 'extension');
 const modelApiKeyPrefix = 'PAGE_AGENT_MODEL_API_KEY_';
 const children = new Set();
 let stopping = false;
 
-async function own(directory) {
-  await fs.mkdir(directory, { recursive: true });
-  await fs.chown(directory, uid, gid);
-}
-async function ownState(directory) {
-  await fs.chown(directory, uid, gid);
-  for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
-    const file = path.join(directory, entry.name);
-    if (entry.isDirectory()) await ownState(file);
-    else if (entry.isFile()) await fs.chown(file, uid, gid);
-  }
-}
 async function versionExtension() {
   const manifestFile = path.join(extension, 'manifest.json');
   const source = await fs.readFile(manifestFile);
@@ -80,7 +68,7 @@ function start(command, args, extraEnv = {}) {
     if (name.startsWith(modelApiKeyPrefix)) delete env[name];
   }
   Object.assign(env, extraEnv);
-  const child = spawn(command, args, { uid, gid, env, stdio: 'inherit', detached: true });
+  const child = spawn(command, args, { env, stdio: 'inherit', detached: true });
   children.add(child);
   child.on('error', error => { children.delete(child); console.error(command + ': ' + error.message); stop(1); });
   child.on('exit', (code, signal) => {
@@ -95,13 +83,12 @@ async function main() {
   if (!['1', '2', '3'].includes(displayScaleSetting)) throw new Error('PAGE_AGENT_DISPLAY_SCALE must be 1, 2 or 3');
   const deviceScaleFactor = Number(displayScaleSetting);
   const browserCache = path.join(state, 'browser-cache', 'selkies');
-  await own(state); await own(profile); await own(browserHome); await own(runtime);
-  await own(browserCache);
-  await own(path.join(state, 'tls'));
+  for (const directory of [state, profile, browserHome, runtime, browserCache, path.join(state, 'tls')]) {
+    await fs.mkdir(directory, { recursive: true });
+  }
   await fs.chmod(path.join(state, 'tls'), 0o700);
   await fs.chmod(runtime, 0o700);
-  await ownState(state);
-  // Dockerfile holds /data/browser.lock for this supervisor's lifetime.
+  // Dockerfile holds /data/page-agent/browser.lock for this supervisor's lifetime.
   // Chromium's singleton links retain the old hostname after container recreation.
   for (const file of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
     await fs.unlink(path.join(profile, file)).catch(error => { if (error.code !== 'ENOENT') throw error; });
@@ -124,6 +111,12 @@ async function main() {
   const builtin = JSON.parse(await fs.readFile(source, 'utf8'));
   if (builtin.version !== 1 || !Array.isArray(builtin.connections)) throw new Error('Invalid builtin-connections file');
   if (builtin.connections.some(item => item.id === 'container-local')) throw new Error('container-local is reserved for this container');
+  let httpMcpServers = [];
+  if (process.env.PAGE_AGENT_HTTP_MCP_SERVERS_FILE) {
+    const httpMcp = JSON.parse(await fs.readFile(process.env.PAGE_AGENT_HTTP_MCP_SERVERS_FILE, 'utf8'));
+    if (httpMcp.version !== 1 || !Array.isArray(httpMcp.servers)) throw new Error('Invalid HTTP MCP servers file');
+    httpMcpServers = httpMcp.servers;
+  }
   const autoSyncSetting = String(process.env.PAGE_AGENT_AUTO_SYNC_ENABLED || 'true').trim().toLowerCase();
   if (!['true', 'false'].includes(autoSyncSetting)) throw new Error('PAGE_AGENT_AUTO_SYNC_ENABLED must be true or false');
   const autoSyncEnabled = autoSyncSetting === 'true';
@@ -162,8 +155,8 @@ async function main() {
   } : null;
   const target = path.join(extension, 'builtin-connections/index.json');
   await fs.writeFile(target, JSON.stringify({ version: 1, runtime: 'docker/start.cjs', applicationVersion,
-    autoSyncEnabled, syncVersion, ...(syncTarget ? { syncTarget } : {}), modelApiKeys, clientName, connections: [local, ...builtin.connections] }), { mode: 0o600 });
-  await fs.chmod(target, 0o600); await fs.chown(target, uid, gid);
+    autoSyncEnabled, syncVersion, ...(syncTarget ? { syncTarget } : {}), modelApiKeys, httpMcpServers, clientName, connections: [local, ...builtin.connections] }), { mode: 0o600 });
+  await fs.chmod(target, 0o600);
   if (syncTarget) console.log('启动同步目标：' + JSON.stringify({ ...syncTarget, versionId: syncVersion, enabled: autoSyncEnabled }));
   console.log('启动名称：' + JSON.stringify({ clientName: clientName === undefined ? '(沿用插件名称)' : clientName,
     connectionAlias: local.alias, serverName }));
@@ -175,6 +168,7 @@ async function main() {
   if (stopping) return;
   // Chromium 156's infobar_utils.cc skips the Chrome for Testing banner for test-type=gpu.
   start(browser, ['--start-maximized', '--force-device-scale-factor=' + deviceScaleFactor,
+    '--lang=zh-CN', '--accept-lang=zh-CN,zh',
     '--no-sandbox', '--test-type=gpu', '--no-first-run', '--no-default-browser-check',
     '--password-store=basic', '--user-data-dir=' + profile, '--disk-cache-dir=' + path.join(browserCache, 'chromium'),
     '--disable-extensions-except=' + extension, '--load-extension=' + extension, 'about:blank'],
