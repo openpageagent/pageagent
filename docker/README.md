@@ -370,7 +370,7 @@ Project root must contain manifest.json and MCP server source or bundle: <项目
 源码的 MCP 构建依赖和中间产物仅保留在构建阶段。也可指定 release 目录构建：
 
 ```bash
-./docker/build.sh app ./dist/page-agent-extension-1.2.3
+./docker/build.sh app ./dist/page-agent-extension-1.2.4
 ```
 
 相对路径以当前执行目录为基准，构建时打印实际使用的目录。

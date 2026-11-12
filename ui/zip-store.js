@@ -1,4 +1,4 @@
-// Minimal UTF-8 ZIP writer using the STORE method. No third-party runtime or base64 is needed.
+// UTF-8 ZIP writer (STORE) and reader (optional DEFLATE via the browser).
 (function attachZipStore(root, factory) {
   'use strict';
   var api = factory(root);
@@ -129,17 +129,24 @@
     if (bytes.length > maximumBytes) throw new Error('ZIP archive exceeds the configured byte limit');
     var eocd = -1;
     for (var scan = bytes.length - 22; scan >= Math.max(0, bytes.length - 65557); scan -= 1) {
-      if (view.getUint32(scan, true) === 0x06054b50) { eocd = scan; break; }
+      if (view.getUint32(scan, true) === 0x06054b50 && scan + 22 + view.getUint16(scan + 20, true) === bytes.length) { eocd = scan; break; }
     }
     if (eocd < 0) throw new Error('ZIP end-of-directory record is missing');
     var count = view.getUint16(eocd + 10, true);
     var centralOffset = view.getUint32(eocd + 16, true);
-    if (count > 1000) throw new Error('ZIP archive contains too many entries');
+    var centralEnd = centralOffset + view.getUint32(eocd + 12, true);
+    if (view.getUint16(eocd + 4, true) || view.getUint16(eocd + 6, true)
+        || view.getUint16(eocd + 8, true) !== count || count === 65535 || centralEnd !== eocd) {
+      throw new Error('Multi-volume and ZIP64 archives are not supported');
+    }
+    if (count > (Number(options.maxEntries) || 1000)) throw new Error('ZIP archive contains too many entries');
     var decoder = new TextDecoder('utf-8', { fatal: true });
     var files = [];
     var cursor = centralOffset;
+    var totalSize = 0;
     for (var index = 0; index < count; index += 1) {
-      if (cursor + 46 > bytes.length || view.getUint32(cursor, true) !== 0x02014b50) throw new Error('ZIP central directory is invalid');
+      if (cursor + 46 > centralEnd || view.getUint32(cursor, true) !== 0x02014b50) throw new Error('ZIP central directory is invalid');
+      var flags = view.getUint16(cursor + 8, true);
       var method = view.getUint16(cursor + 10, true);
       var checksum = view.getUint32(cursor + 16, true);
       var compressedSize = view.getUint32(cursor + 20, true);
@@ -148,22 +155,54 @@
       var extraLength = view.getUint16(cursor + 30, true);
       var commentLength = view.getUint16(cursor + 32, true);
       var localOffset = view.getUint32(cursor + 42, true);
-      if (method !== 0 || compressedSize !== size) throw new Error('Only uncompressed conversation ZIP entries are supported');
+      if ((flags & 1) || view.getUint16(cursor + 34, true)
+          || (view.getUint32(cursor + 38, true) >>> 16 & 0xf000) === 0xa000) {
+        throw new Error('Encrypted, linked, or multi-volume ZIP entries are not supported');
+      }
+      if ((method !== 0 && !(options.allowCompressed && method === 8)) || (method === 0 && compressedSize !== size)) {
+        throw new Error('Unsupported ZIP compression method');
+      }
+      if (cursor + 46 + nameLength + extraLength + commentLength > centralEnd) throw new Error('ZIP entry name exceeds archive bounds');
       var name = decoder.decode(bytes.subarray(cursor + 46, cursor + 46 + nameLength));
-      if (!name || name.charAt(0) === '/' || name.split('/').some(function (part) { return part === '..' || !part; })) {
+      var directory = options.allowCompressed && name.endsWith('/');
+      var path = directory ? name.slice(0, -1) : name;
+      if (!path || /[\\:\u0000-\u001f]/.test(path) || path.split('/').some(function (part) { return part === '.' || part === '..' || !part; })) {
         throw new Error('ZIP entry path is unsafe: ' + name);
       }
-      if (localOffset + 30 > bytes.length || view.getUint32(localOffset, true) !== 0x04034b50) throw new Error('ZIP local entry is invalid');
+      totalSize += size;
+      if (totalSize > maximumBytes) throw new Error('Uncompressed ZIP exceeds the configured byte limit');
+      if (localOffset + 30 > centralOffset || view.getUint32(localOffset, true) !== 0x04034b50) throw new Error('ZIP local entry is invalid');
       var localNameLength = view.getUint16(localOffset + 26, true);
       var localExtraLength = view.getUint16(localOffset + 28, true);
       var start = localOffset + 30 + localNameLength + localExtraLength;
-      var end = start + size;
-      if (end > bytes.length) throw new Error('ZIP entry exceeds archive bounds: ' + name);
+      var end = start + compressedSize;
+      if (end > centralOffset || view.getUint16(localOffset + 8, true) !== method
+          || view.getUint16(localOffset + 6, true) !== flags
+          || decoder.decode(bytes.subarray(localOffset + 30, localOffset + 30 + localNameLength)) !== name) {
+        throw new Error('ZIP local entry does not match its directory: ' + name);
+      }
       var data = bytes.slice(start, end);
+      if (method === 8) {
+        var stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+        var reader = stream.getReader();
+        data = new Uint8Array(size);
+        var written = 0;
+        try {
+          while (true) {
+            var chunk = await reader.read();
+            if (chunk.done) break;
+            if (written + chunk.value.length > size) throw new Error('ZIP entry exceeds its declared size: ' + name);
+            data.set(chunk.value, written);
+            written += chunk.value.length;
+          }
+        } finally { await reader.cancel(); }
+        if (written !== size) throw new Error('ZIP entry size mismatch: ' + name);
+      }
       if (crc32(data) !== checksum) throw new Error('ZIP entry checksum mismatch: ' + name);
-      files.push({ name: name, data: data });
+      if (!directory) files.push({ name: name, data: data });
       cursor += 46 + nameLength + extraLength + commentLength;
     }
+    if (cursor !== centralEnd) throw new Error('ZIP central directory size mismatch');
     return files;
   }
 

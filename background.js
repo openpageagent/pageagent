@@ -120,6 +120,7 @@
     'background/session-tab-access.js',
     'background/action-indicator.js',
     'background/release-update.js',
+    'background/extension-update.js',
     'background/mcp-runtime.js',
     'background/node-http.js',
     'background/node-random-data.js',
@@ -2843,6 +2844,7 @@
       },
     }));
     resourceOptions.archiveService = archiveService;
+    resourceOptions.extensionUpdate = globalThis.ExtensionUpdate;
     var appBridge;
     var appViewTabs = new Map();
     chrome.tabs.onRemoved.addListener(function (tabId) { appViewTabs.delete(tabId); });

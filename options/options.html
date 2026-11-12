@@ -37,7 +37,7 @@
         <button class="nav-item" data-section="mcp">连接配置</button>
         <button class="nav-item" data-section="system-settings">系统配置</button>
         <button class="nav-item" data-section="changelog">更新日志</button>
-        <a id="open-release" class="nav-item" href="https://github.com/openpageagent/pageagent/releases/latest" target="_blank" rel="noopener noreferrer" title="最新版本：打开 GitHub 下载页">最新版本</a>
+        <button id="open-release" class="nav-item" data-section="release">最新版本</button>
       </nav>
       <div id="sidebar-footer">
         <button id="btn-export-config" class="btn-secondary" title="按模块导出插件内所有可备份数据">一键导出所有数据</button>
@@ -743,6 +743,49 @@ return result                                          // 返回值写入节点�
         </div>
       </section>
 
+      <section id="section-release" class="section">
+        <header class="section-header">
+          <h2>最新版本</h2>
+          <button id="btn-release-check" class="btn-secondary">检查更新</button>
+        </header>
+        <p class="section-desc">检查最新版本，由插件下载、解压并应用更新。</p>
+        <details class="reference-panel drawer-guide">
+          <summary>手动更新说明</summary>
+          <div class="drawer-guide-content">
+            <p><b>适用范围：</b>通过「加载已解压的扩展程序」安装的插件。</p>
+            <p><b>插件目录：</b>首次需选择当前加载的目录（直接包含 manifest.json）并授权，之后自动使用已记住的目录。可在浏览器扩展管理页开启开发者模式，通过「加载来源」确认目录。</p>
+            <p><b>更新与生效：</b>更新过程中保持本页打开，完成后点击「重新加载插件」即可生效。重新加载会中断插件当前运行的任务。</p>
+          </div>
+        </details>
+        <div class="editor">
+          <h3>手动更新</h3>
+          <div class="form-grid">
+            <div class="form-row">
+              <label for="release-current-version">当前版本</label>
+              <input id="release-current-version" type="text" readonly>
+            </div>
+            <div class="form-row">
+              <label for="release-latest-version">最新版本</label>
+              <input id="release-latest-version" type="text" value="尚未检查" readonly>
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="release-directory">插件目录</label>
+            <div class="release-directory-row">
+              <input id="release-directory" type="text" placeholder="请选择当前加载的插件目录" aria-describedby="release-directory-status" readonly>
+              <button id="btn-release-directory" class="btn-secondary" disabled>选择目录</button>
+            </div>
+            <p id="release-directory-status" class="form-help">正在读取已保存的目录…</p>
+          </div>
+          <p id="release-status" class="form-help" role="status" aria-live="polite">尚未检查更新。</p>
+          <div class="editor-actions">
+            <button id="btn-release-update" class="btn-primary" disabled>手动更新</button>
+            <button id="btn-release-reload" class="btn-danger">重新加载插件</button>
+            <a id="release-page" href="https://github.com/openpageagent/pageagent/releases/latest" target="_blank" rel="noopener noreferrer" title="在 GitHub 查看发布说明（新标签页）" aria-label="在 GitHub 查看发布说明（新标签页）"><span class="release-github-icon" aria-hidden="true">&#xf09b;</span><span>查看发布说明</span></a>
+          </div>
+        </div>
+      </section>
+
       <!-- 更新日志 -->
       <section id="section-changelog" class="section">
         <header class="section-header">
@@ -756,6 +799,11 @@ return result                                          // 返回值写入节点�
           </div>
         </details>
         <div class="help-doc">
+
+          <h3>v1.2.4</h3>
+          <ul>
+            <li><b>插件更新</b>：支持在配置中心检查更新插件。</li>
+          </ul>
 
           <h3>v1.2.3</h3>
           <ul>
@@ -1306,6 +1354,9 @@ return result                                          // 返回值写入节点�
   <script src="options-run-report-controller.js"></script>
   <script src="options-mail-controller.js"></script>
   <script src="options-archive.js"></script>
+  <script src="../background/release-update.js"></script>
+  <script src="../background/extension-update.js"></script>
+  <script src="options-release-controller.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

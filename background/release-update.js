@@ -6,17 +6,7 @@
   var DAY_MS = 24 * 60 * 60 * 1000;
   var pending = null;
 
-  async function checkLatest() {
-    var cached = (await chrome.storage.local.get(STORAGE_KEY))[STORAGE_KEY] || {};
-    var now = Date.now();
-    if (cached.checkedAt && now < cached.checkedAt + DAY_MS) {
-      await chrome.alarms.create(ALARM_NAME, { when: cached.checkedAt + DAY_MS });
-      return;
-    }
-
-    // 请求前记下时间并安排下次检查，断网或后台重启也不会反复请求。
-    await chrome.storage.local.set({ [STORAGE_KEY]: Object.assign({}, cached, { checkedAt: now }) });
-    await chrome.alarms.create(ALARM_NAME, { when: now + DAY_MS });
+  async function fetchLatest() {
     var response = await fetch('https://api.github.com/repos/openpageagent/pageagent/releases/latest', {
       headers: { Accept: 'application/vnd.github+json' },
       cache: 'no-store',
@@ -29,13 +19,33 @@
     if (release.draft || release.prerelease || !/^\d+(?:\.\d+){0,3}$/.test(version)) {
       throw new Error('GitHub Release 版本号无效');
     }
-    await chrome.storage.local.set({
-      [STORAGE_KEY]: {
-        checkedAt: now,
-        version: version,
-        url: 'https://github.com/openpageagent/pageagent/releases/tag/' + encodeURIComponent(tag),
-      },
+    var asset = (release.assets || []).find(function (item) {
+      return item.name === 'page-agent-extension-' + version + '.zip'
+        && item.state === 'uploaded'
+        && String(item.browser_download_url || '').startsWith('https://github.com/openpageagent/pageagent/releases/download/');
     });
+    return {
+      version: version,
+      url: 'https://github.com/openpageagent/pageagent/releases/tag/' + encodeURIComponent(tag),
+      downloadUrl: asset ? asset.browser_download_url : '',
+      size: asset ? asset.size : 0,
+      digest: asset ? asset.digest || '' : '',
+    };
+  }
+
+  async function checkLatest() {
+    var cached = (await chrome.storage.local.get(STORAGE_KEY))[STORAGE_KEY] || {};
+    var now = Date.now();
+    if (cached.checkedAt && now < cached.checkedAt + DAY_MS) {
+      await chrome.alarms.create(ALARM_NAME, { when: cached.checkedAt + DAY_MS });
+      return;
+    }
+
+    // 请求前记下时间并安排下次检查，断网或后台重启也不会反复请求。
+    await chrome.storage.local.set({ [STORAGE_KEY]: Object.assign({}, cached, { checkedAt: now }) });
+    await chrome.alarms.create(ALARM_NAME, { when: now + DAY_MS });
+    var release = await fetchLatest();
+    await chrome.storage.local.set({ [STORAGE_KEY]: Object.assign({ checkedAt: now }, release) });
   }
 
   function check() {
@@ -49,5 +59,5 @@
     return pending;
   }
 
-  globalThis.ReleaseUpdate = { ALARM_NAME: ALARM_NAME, check: check };
+  globalThis.ReleaseUpdate = { ALARM_NAME: ALARM_NAME, check: check, fetchLatest: fetchLatest };
 })();

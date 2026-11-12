@@ -44,6 +44,21 @@ HTTP `/local` 始终指向当前服务端，不受插件绑定影响。文件操
 
 服务端根据认证会话确认来源并拒绝自调用（`FORBIDDEN / SELF_CALL_FORBIDDEN`）。转发请求不能在目标插件中继续转发；来源取消或断线会取消请求，结果未知时不自动重放。插件本地操作仍受连接的目录与桌面授权约束。
 
+### 插件版本与更新
+
+`GET /clients` 的 `version` 为插件当前运行版本。以下路径通过 `POST /clients/{clientId}/arp` 转发调用：
+
+| ARP 调用 | 用途 |
+| --- | --- |
+| `GET /config/extension` | 查询当前版本、最新版本、更新状态及目录授权情况 |
+| `POST /config/extension/updates` | 更新插件；`body.version` 使用查询返回的 `latestVersion` |
+
+`updateAvailable` 表示有新版本，`canUpdate` 表示当前可更新；不可更新时返回 `reason` 和 `message`。版本检查失败时，`latestVersion`、`updateAvailable` 为 `null`。
+
+查询需连接开启读取权限，更新需开启写入权限。插件目录须在目标插件的「最新版本」页选择并授权，位于插件所在机器。授权失效时返回 `DIRECTORY_PERMISSION_REQUIRED`，需在配置页重新授权。
+
+更新成功返回 `appliedVersion` 和 `reloadRequired: true`，需在「最新版本」页重新加载后生效。重新加载前再次更新返回 `RELOAD_REQUIRED`；请求结果未知时，应先查询状态。
+
 ## 连接与目录配置
 
 扩展的「连接配置」管理 WebSocket 服务端连接及授权，`/mcp-servers` 管理外部 HTTP MCP 服务。普通与隐私环境分别保存身份、连接和凭据；各最多 32 条连接，每条最多 64 个目录（含 `startup`）。

@@ -4,7 +4,7 @@
 
 用自然语言操作网页，把重复任务保存为流程，把常用需求做成自己的工具应用。
 
-版本 `1.2.3` · Chrome／Edge 等 Chromium `116+` 浏览器 · [Apache 2.0](LICENSE)
+版本 `1.2.4` · Chrome／Edge 等 Chromium `116+` 浏览器 · [Apache 2.0](LICENSE)
 
 [安装与上手](#安装与上手) · [已实现功能](#已实现功能) · [内置应用](#内置应用) · [MCP Server](#可选-mcp-server) · [打包](#打包) · [文档导航](#文档导航)
 
@@ -90,7 +90,7 @@ node mcp-server/index.js
 
 - 首次构建：`./docker/build.sh all`。
 - 日常更新：`./docker/build.sh app`。
-- 验证打包产物：`./docker/build.sh app ./dist/page-agent-extension-1.2.3`。
+- 验证打包产物：`./docker/build.sh app ./dist/page-agent-extension-1.2.4`。
 - 配置文件：`docker/.env`；运行数据：`data/`。
 
 准备好配置并构建镜像后启动：

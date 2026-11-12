@@ -1118,6 +1118,34 @@ textarea:focus {
 .editor-actions { display: flex; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .editor-actions .spacer { flex: 1; }
 
+/* Manual extension update */
+#section-release > .editor { border-color: var(--border); }
+#section-release .release-directory-row { display: flex; align-items: center; gap: 8px; }
+#section-release .release-directory-row > input { flex: 1; min-width: 0; }
+#section-release .release-directory-row > button { flex-shrink: 0; }
+#section-release .form-help { overflow-wrap: anywhere; }
+#section-release .editor-actions { flex-wrap: wrap; align-items: center; }
+#section-release .editor-actions > button { flex-shrink: 0; }
+#release-page {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 13px;
+  line-height: 1.65;
+  text-decoration: none;
+  text-underline-offset: 3px;
+}
+#release-page > span:last-child { text-decoration: underline; }
+.release-github-icon { font-family: 'FontAwesome'; font-size: 16px; line-height: 1; }
+#release-page:hover { color: var(--accent-hover); }
+#release-page:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 760px) {
+  #section-release .form-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* Flow node editor */
 .flow-editor-header { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 8px; }
 .flow-editor-header .form-row { flex: 1; margin: 0; }

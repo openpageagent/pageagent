@@ -34,8 +34,8 @@
       if (nextPart === currentPart) continue;
       if (nextPart < currentPart) return;
       releaseBadge.hidden = false;
-      aboutButton.title = '新版本 v' + release.version + '，打开 GitHub 下载页';
-      aboutUrl = release.url;
+      aboutButton.title = '新版本 v' + release.version + '，前往手动更新';
+      aboutUrl = chrome.runtime.getURL('options/options.html?section=release');
       return;
     }
   }

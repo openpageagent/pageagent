@@ -84,6 +84,7 @@
   var scheduleController = null;
   var backupController = null;
   var appController = null;
+  var releaseController = null;
   var lifecycle = globalThis.PageAgentLifecycle.create(window);
   var syncEventStream = globalThis.PageAgentSyncEventStream
     && globalThis.PageAgentSyncEventStream.create
@@ -961,6 +962,7 @@
     }
     if (currentSection === 'system-settings') states.push({ dirty: systemProxyDirty, busy: systemSettingsSaving });
     if (appController) states.push(appController.getEditState());
+    if (releaseController) states.push(releaseController.getState());
     if (globalThis.Conversation && globalThis.Conversation.getEditState) states.push(globalThis.Conversation.getEditState());
     if ($('#drawer').classList.contains('active') && drawerEditBaseline) {
       states.push({ dirty: readDrawerEditSignature() !== drawerEditBaseline });
@@ -1033,6 +1035,7 @@
       case 'schedules': if (scheduleController) scheduleController.refresh(); break;
       case 'url-triggers': if (urlTriggerController) urlTriggerController.render(); break;
       case 'logs': renderRuns(); break;
+      case 'release': releaseController.render(); break;
       case 'mcp': renderMCP(); break;
       case 'knowledge':
         if (window.OptionsKnowledgePanel && window.OptionsKnowledgePanel.render) window.OptionsKnowledgePanel.render();
@@ -3587,8 +3590,10 @@
       await globalThis.Conversation.openApp(appId);
     },
   });
+  releaseController = globalThis.OptionsReleaseController.create({ confirm: confirmSettingsAction });
   var appTarget = new URLSearchParams(location.search);
-  switchSection(appTarget.get('section') === 'conversation' || pendingConversationTarget ? 'conversation' : 'apps');
+  switchSection(appTarget.get('section') === 'conversation' || pendingConversationTarget ? 'conversation'
+    : appTarget.get('section') === 'release' ? 'release' : 'apps');
   if (appTarget.get('section') === 'apps') {
     if (appTarget.get('appId')) {
       var appAction = appTarget.get('action');
