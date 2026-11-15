@@ -2260,7 +2260,53 @@ page-code-editor[hidden] { display: none !important; }
   display: grid;
   gap: 8px;
 }
-.backup-app-scope { border-radius: var(--control-radius); }
+.backup-app-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  min-width: 0;
+  margin: 0 0 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  background: var(--bg-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.backup-app-scope > legend {
+  max-width: 100%;
+  padding: 0 4px;
+  color: var(--accent);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.backup-app-scope label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.backup-app-scope input[type="checkbox"] {
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.backup-app-scope label:has(input:disabled) { color: var(--text-secondary); cursor: default; }
+.backup-app-scope input:disabled { cursor: default; }
+.backup-app-permission-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  min-width: 0;
+  flex-basis: 100%;
+}
+.backup-app-permission-group > h5 { flex-basis: 100%; font-size: 13px; font-weight: 500; }
+.backup-app-resource-permissions { min-width: 0; flex-basis: 100%; }
+.backup-app-resource-permissions > .backup-app-permission-group { margin-top: 8px; }
+.backup-app-scope .form-help { flex-basis: 100%; margin: 0; }
 .backup-module-row,
 .backup-module-summary,
 .backup-item-row {
@@ -3911,7 +3957,8 @@ label.conversation-permission-item {
   background: var(--bg);
 }
 
-.conversation-app-binding {
+.conversation-app-binding,
+.conversation-image-references {
   padding-top: 0;
 }
 
@@ -3925,6 +3972,35 @@ label.conversation-permission-item {
   color: var(--text);
   font-size: 13px;
   resize: vertical;
+}
+
+.conversation-image-references {
+  flex-wrap: wrap;
+}
+
+.conversation-image-references:empty {
+  display: none;
+}
+
+.conversation-image-reference {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.conversation-image-reference button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.conversation-image-reference button:hover {
+  color: var(--accent);
 }
 
 .conversation-composer-actions {

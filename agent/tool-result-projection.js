@@ -200,6 +200,11 @@
     else if (descriptor.type === 'field') result = isRecord(data) && descriptor.field ? clone(data[descriptor.field]) : undefined;
     else if (primary && /(?:Interaction|PageWait)$/.test(text(primary.type))) result = compactInteractionData(data);
     else result = clone(data);
+    if (descriptor.type === 'field' && descriptor.field === 'content' && primary && primary.type === 'Knowledge'
+        && isRecord(data) && data.sourceKind === 'mcp' && /^mcp-http:/.test(text(data.source && data.source.key))) {
+      // Keep the connection binding separate from reusable tool documentation.
+      result = { id: data.id, source: clone(data.source), content: result };
+    }
     if (descriptor.appSearchVersion === 1 && descriptor.type === 'data' && primary && /^(?:AppCodeField|AppSourceFile)$/.test(text(primary.type))
         && isRecord(result) && result.mode === 'grep' && Array.isArray(result.matches)) {
       // The API keeps its compatibility fields; the model receives each line

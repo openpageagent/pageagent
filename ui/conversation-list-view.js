@@ -543,6 +543,17 @@
       projected.title = '用户';
       projected.phase = type === 'steering_message_consumed' ? 'steering' : 'user';
       projected.text = userMessageText(event, data);
+      var userMessage = data.message || event.message || data;
+      projected.attachments = (Array.isArray(userMessage.attachments) ? userMessage.attachments : []).filter(function (attachment) {
+        return attachment && attachment.kind === 'image'
+          && /^\/image-artifacts\/[A-Za-z0-9._~-]+$/.test(String(attachment.artifactUri || ''));
+      }).map(function (attachment) {
+        return {
+          type: 'image', artifactUri: attachment.artifactUri, mimeType: attachment.mimeType,
+          name: attachment.name, alt: attachment.name, width: attachment.width, height: attachment.height,
+          byteLength: attachment.size,
+        };
+      });
     } else if (type === 'commentary_completed') {
       projected.kind = 'assistant';
       projected.title = '助手';

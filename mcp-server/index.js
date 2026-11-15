@@ -96,7 +96,10 @@ class PageAgentMCPServer {
     this.mailQueue = createMailQueue(); this.mailRequests = new Set(); this.closing = false;
     this.instructions = '本 MCP 的 /local/* 在服务端直接执行文件、Bash、环境与桌面操作，不依赖插件连接或插件授权，也不需要 mcpClientId、connectionId 或 workspaceId。'
       + '本地任务先 GET /local 获取支持的能力和链接，再 OPTIONS 具体路径获取参数，按声明的方法直接调用；无需经 /clients/{clientId}/arp 转发当前服务端的本地任务，该路径会先经过插件再回到服务端执行，并受插件权限管控。'
-      + '只有访问插件资源才查询 GET /clients 并选择客户端；客户端绑定不改变 /local 的服务端归属。OPTIONS / 查看服务端资源目录。';
+      + '只有访问插件资源才查询 GET /clients 并选择客户端；客户端绑定不改变 /local 的服务端归属。OPTIONS / 查看服务端资源目录。'
+      + '用户要求直接使用「知识中已配置的 HTTP MCP」时，复用目标插件的配置和认证：先 GET /clients 确认目标，再通过 POST /clients/{clientId}/arp 转发 {"method":"GET","request":{"uri":"/mcp-servers"}} 发现已配置服务器。'
+      + '在同一插件内 GET /mcp-servers/{serverId}/tools 获取工具与 schemaHash，按任务选择工具；参数未知时 OPTIONS /mcp-servers/{serverId}/tools/{toolName}/calls，再 POST 该路径，body 包含 arguments 和 schemaHash，沿回执 operationUri 用 GET 读取最终结果。'
+      + '这些插件路径及返回链接均通过同一客户端转发，客户端、服务器和工具不明确时先查询，仍有歧义再询问用户；已有配置可用时直接执行用户任务，无需用户重复提供地址或密钥，也无需新增 MCP 配置。';
     this.toolDefinitions = arp.createToolDefinitions().filter(item => arp.METHODS.includes(item.name)).map(item => ({ ...item,
       description: this.instructions + '\n' + item.description,
       inputSchema: { ...item.inputSchema, properties: { ...item.inputSchema.properties,

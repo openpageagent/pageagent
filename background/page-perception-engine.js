@@ -617,7 +617,11 @@
         output[descriptorIndex].visible = styleVisible(best);
         output[descriptorIndex].inViewport = rects.length > 0;
         output[descriptorIndex].exposed = rects.length > 0 && elementExposed(best, rects);
-        output[descriptorIndex].occluded = !output[descriptorIndex].exposed;
+        // A visible edge does not prove the default center can receive input.
+        // Keep partially exposed targets, but report their center separately.
+        var centerRect = clipRect(best.getBoundingClientRect(), best, false);
+        var centerHit = centerRect && topAt(centerRect.x + centerRect.width / 2, centerRect.y + centerRect.height / 2);
+        output[descriptorIndex].occluded = !composedContains(best, centerHit);
         output[descriptorIndex].text = output[descriptorIndex].exposed
           ? normalized(descriptor.text || descriptor.name)
           : '';
@@ -723,7 +727,7 @@
     function selectorKey(tag, name, value) {
       return String(tag || '') + '\n' + String(name || '') + '\n' + String(value || '');
     }
-    function locatorForSnapshotNode(index, nodeNames, parents, attributesByNode, positionsByNode, selectorCounts, textValue, label) {
+    function locatorForSnapshotNode(index, nodeNames, parents, attributesByNode, positionsByNode, selectorCounts) {
       var tag = String(nodeNames[index] || '').toLowerCase();
       var attrs = attributesByNode[index] || {};
       var candidates = [];
@@ -761,8 +765,9 @@
       }
       var locator = {};
       if (selector) locator.selector = selector;
-      if (textValue) locator.textSelector = compact(textValue, 500);
-      if (label) locator.label = compact(label, 500);
+      // Snapshot text and accessible names can include CSS-generated content
+      // or control values absent from innerText/textContent. Keep them as
+      // display facts, not additional constraints on the generated selector.
       return factContract.normalizeLocator(locator);
     }
     function isExtensionUiNode(attrs, parentExcluded, tagName) {
@@ -916,7 +921,7 @@
           if (!interactive && !elementText) continue;
           var locator = locatorForSnapshotNode(
             index, nodeNames, parents, attributesByNode, positionsByNode,
-            selectorCounts, elementText, name
+            selectorCounts
           );
           targets.push(normalizeCurrentTarget(tabId, documentId, {
             frameId: frameId,
@@ -1496,9 +1501,9 @@
             text: exposedText,
             visible: true,
             inViewport: true,
-            occluded: false,
+            occluded: result.occluded,
             evidence: Object.assign({}, target.evidence || {}, {
-              visualExposure: { source: 'Runtime.elementFromPoint', currentViewport: true, ancestorClipping: true, textSource: 'DOMSnapshot' },
+              visualExposure: { source: 'Runtime.elementFromPoint', currentViewport: true, ancestorClipping: true, occlusionPoint: 'clipped-center', textSource: 'DOMSnapshot' },
             }),
           }));
         } else return;
@@ -1794,8 +1799,12 @@
       var timeoutMs = Math.max(0, Math.min(Number(waitOptions.timeoutMs) || 0, 120000));
       var pollIntervalMs = Math.max(25, Math.min(Number(waitOptions.pollIntervalMs) || 100, 2000));
       var deadline = Date.now() + timeoutMs;
+      var lastError = null;
       function attempt() {
         ensureNotAborted(waitOptions.signal);
+        // A poll delay can exhaust the budget. Preserve the lookup failure
+        // instead of starting another frame read with an expired deadline.
+        if (lastError && Date.now() >= deadline) throw lastError;
         return resolveTargetWithSend(send, tabId, locator, {
           targetRef: waitOptions.targetRef || locator.targetRef || null,
           requireGeometry: waitOptions.requireGeometry !== false,
@@ -1809,6 +1818,7 @@
               minCount: locator.minCount,
             });
             if (Date.now() >= deadline) throw error;
+            lastError = error;
             return abortableDelay(Math.min(pollIntervalMs, Math.max(1, deadline - Date.now())), waitOptions.signal).then(attempt);
           }
           return resolved;
@@ -1816,6 +1826,7 @@
           var code = String(error && error.code || '');
           var retryable = code === 'TARGET_NOT_FOUND' || waitOptions.retryUnavailable === true && code === 'PAGE_STATE_UNAVAILABLE';
           if (!retryable || Date.now() >= deadline) throw error;
+          lastError = error;
           return abortableDelay(Math.min(pollIntervalMs, Math.max(1, deadline - Date.now())), waitOptions.signal).then(attempt);
         });
       }
@@ -1828,6 +1839,85 @@
         send = signalSender(send, resolveOptions.signal);
         return resolveTargetWithSend(send, tabId, locator || {}, resolveOptions);
       });
+    }
+    function pointerHitRuntime(point) {
+      var target = this;
+      if (!target.isConnected) return { connected: false, matches: false, hit: null };
+      // Follow the target's shadow roots, including closed roots accessible
+      // from the target node. A different topmost host remains an obstruction.
+      var roots = [];
+      var node = target;
+      while (node) {
+        var root = node.getRootNode();
+        if (!root.host) break;
+        roots.unshift(root);
+        node = root.host;
+      }
+      var hit = target.ownerDocument.elementFromPoint(point.x, point.y);
+      for (var index = 0; index < roots.length; index += 1) {
+        if (hit !== roots[index].host) break;
+        hit = roots[index].elementFromPoint(point.x, point.y);
+      }
+      node = hit;
+      while (node) {
+        if (node === target) return { connected: true, matches: true, hit: null };
+        node = node.assignedSlot || node.parentNode || node.host;
+      }
+      return {
+        connected: true, matches: false,
+        hit: hit ? { tag: String(hit.nodeName || '').toLowerCase(), id: hit.id || '' } : null,
+      };
+    }
+    async function assertPointerTargetWithSend(send, resolved, point, signal) {
+      // Coordinate-only input has no claimed element to validate. Locator input
+      // must hit that element (or a descendant), regardless of snapshot exposure.
+      if (!resolved || !resolved.target) return;
+      send = signalSender(send, signal);
+      ensureNotAborted(signal);
+      var target = resolved.target;
+      var details = { targetRef: resolved.targetRef, point: factContract.clone(point) };
+      if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+        fail('TARGET_NOT_ACTIONABLE', '目标没有有效的鼠标操作坐标', details);
+      }
+      // Reuse the perception frame transforms. The main document needs no
+      // frame discovery, and elementFromPoint preserves fractional CSS pixels.
+      var contexts = resolved.context && target.frameId === resolved.context.frameId
+        ? [{ frameId: target.frameId, parentFrameId: '', transform: identityTransform() }]
+        : await isolatedContexts(send, signal);
+      var context = contexts.find(function (item) { return item.frameId === target.frameId; });
+      var backendNodeId = target.backendNodeId;
+      while (context) {
+        var targetSend = senderForFrame(send, context.frameId);
+        var objectGroup = 'page-agent-pointer-hit';
+        var localPoint = inverseTransform(context.transform, point);
+        try {
+          var expectedNode = await resolveBackendNodeWithSend(send, context.frameId, backendNodeId, objectGroup);
+          var objectId = expectedNode && expectedNode.object && expectedNode.object.objectId;
+          if (!objectId) fail('TARGET_STALE', '鼠标命中检查的目标节点已失效', details);
+          var response = await targetSend('Runtime.callFunctionOn', {
+            objectId: objectId, functionDeclaration: pointerHitRuntime.toString(),
+            arguments: [{ value: localPoint }], returnByValue: true, silent: true,
+          }, 5000);
+          ensureNotAborted(signal);
+          if (response.exceptionDetails) throw response.exceptionDetails;
+          var result = response.result && response.result.value;
+          if (result && result.connected === false) fail('TARGET_STALE', '鼠标命中检查的目标节点已脱离文档', details);
+          if (!result || result.matches !== true) {
+            fail('TARGET_NOT_ACTIONABLE', '鼠标操作点被遮挡或未命中目标及其子节点', Object.assign({}, details, {
+              frameId: context.frameId, framePoint: localPoint, hitElement: result && result.hit || null,
+            }));
+          }
+        } finally {
+          await rawSender(targetSend)('Runtime.releaseObjectGroup', { objectGroup: objectGroup }, 5000).catch(function () {});
+        }
+        // Also check the iframe in every parent document: its contents can be
+        // locally exposed while a panel above the iframe intercepts input.
+        if (!context.parentFrameId) return;
+        backendNodeId = context.ownerBackendNodeId;
+        var parentFrameId = context.parentFrameId;
+        context = contexts.find(function (item) { return item.frameId === parentFrameId; });
+      }
+      fail('PAGE_STATE_UNAVAILABLE', '鼠标命中检查缺少目标 frame 的上下文', details);
     }
     async function resolveFocusedTargetWithSend(send, tabId, signal) {
       send = signalSender(send, signal);
@@ -2785,6 +2875,7 @@
       perceive: perceive,
       resolveTarget: resolveTarget,
       resolveTargetWithSend: resolveTargetWithSend,
+      assertPointerTargetWithSend: assertPointerTargetWithSend,
       waitForTargetWithSend: waitForTargetWithSend,
       resolveFocusedTargetWithSend: resolveFocusedTargetWithSend,
       readTargetOptionsWithSend: readTargetOptionsWithSend,

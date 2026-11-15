@@ -456,6 +456,9 @@
             return outcome.result;
           }
           pending.catch(function () {});
+          // Raw commands include input, navigation, uploads and arbitrary script.
+          // Keep their original outcome when transport changes; never replay them.
+          if (record.type === 'raw-cdp') return pending;
           // The lease may have been released while the command was in flight
           // (for example, an explicit tab close). Do not resurrect that tab.
           if (released || !state.leases.has(leaseId)) {

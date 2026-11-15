@@ -52,6 +52,9 @@
   var confirmDialogFinish = null;
   var sidebarCollapsed = false;
   var composerDrafts = {};
+  var composerImageDrafts = Object.create(null);
+  var composerImageSequence = 0;
+  var sendingMessage = false;
   var steeringCommandQueuesByTopic = Object.create(null);
   var interruptingModelRequestByTopic = Object.create(null);
   var runInputDrafts = {};
@@ -1088,6 +1091,74 @@
     return 'global';
   }
 
+  function composerImagesHtml(draftKey) {
+    var images = composerImageDrafts[draftKey] || [];
+    if (!images.length) return '';
+    return '<span class="conversation-entry-status-label">引用图片</span>' + images.map(function (image, index) {
+      var name = image.label;
+      return '<span class="conversation-image-reference">'
+        + '<button type="button" class="conversation-entry-status-chip" data-conversation-action="preview-image" data-image-index="' + index + '" title="预览：' + esc(name + ' ' + (image.file.name || '')) + '">' + esc(name) + '</button>'
+        + '<button type="button" data-conversation-action="remove-image" data-image-index="' + index + '" aria-label="移除引用：' + esc(name) + '" title="移除引用">×</button></span>';
+    }).join('');
+  }
+
+  function refreshComposerImages() {
+    var topic = displayedTopic();
+    var container = $('#conversation-composer-images');
+    if (container) container.innerHTML = composerImagesHtml(currentDraftKey(topic, selectedAssistant()));
+    var button = $('#conversation-root [data-conversation-action="send-message"]');
+    if (button) {
+      button.disabled = sendingMessage || !!(topic && (topic.phase === 'stopping' || topic.status === 'cancelling'));
+      button.textContent = sendingMessage ? '发送中…' : '发送';
+    }
+  }
+
+  function addComposerImages(files, draftKey) {
+    var images = composerImageDrafts[draftKey] || [];
+    if (images.length + files.length > 4) { toast('每条消息最多添加 4 张图片', true); return; }
+    if (files.some(function (file) { return !/^image\/(png|jpeg|gif|webp)$/.test(file.type) || !file.size || file.size > 20 * 1024 * 1024; })) {
+      toast('请粘贴不超过 20MB 的 PNG、JPEG、GIF 或 WebP 图片', true);
+      return;
+    }
+    composerImageDrafts[draftKey] = images.concat(files.map(function (file) {
+      return { file: file, label: '[Image ' + (++composerImageSequence) + ']' };
+    }));
+    refreshComposerImages();
+  }
+
+  function handleComposerPaste(event) {
+    if (!event.target || event.target.id !== 'conversation-input' || !event.clipboardData) return;
+    var files = Array.from(event.clipboardData.items || []).filter(function (item) {
+      return item.kind === 'file' && /^image\//.test(item.type);
+    }).map(function (item) { return item.getAsFile(); }).filter(Boolean);
+    if (!files.length) return;
+    if (!event.clipboardData.getData('text/plain')) event.preventDefault();
+    addComposerImages(files, currentDraftKey(displayedTopic(), selectedAssistant()));
+  }
+
+  function removeSubmittedImages(draftKey, images) {
+    var remaining = (composerImageDrafts[draftKey] || []).filter(function (image) { return images.indexOf(image) === -1; });
+    if (remaining.length) composerImageDrafts[draftKey] = remaining;
+    else delete composerImageDrafts[draftKey];
+    refreshComposerImages();
+  }
+
+  async function uploadComposerImages(topicId, images) {
+    var attachments = [];
+    for (var index = 0; index < images.length; index += 1) {
+      var file = images[index].file;
+      var dataUrl = await new Promise(function (resolve, reject) {
+        var reader = new FileReader();
+        reader.onload = function () { resolve(reader.result); };
+        reader.onerror = function () { reject(new Error('读取图片失败，请重新选择')); };
+        reader.onabort = function () { reject(new Error('图片读取已取消')); };
+        reader.readAsDataURL(file);
+      });
+      attachments.push(await sendMessage('IMAGE_ARTIFACT_UPLOAD', { topicId: topicId, name: images[index].label, dataUrl: dataUrl }));
+    }
+    return attachments;
+  }
+
   function runInputTextForTopic(topic) {
     if (!topic || !topic.topicId) return '{}';
     if (Object.prototype.hasOwnProperty.call(runInputDrafts, topic.topicId)) return runInputDrafts[topic.topicId];
@@ -1149,7 +1220,7 @@
       conversationId: topicId,
       assistantId: assistant.id || '',
       serviceId: serviceId,
-      message: { id: commandId + ':message', content: String(input.message || '').trim(), attachments: [] },
+      message: { id: commandId + ':message', content: String(input.message || '').trim(), attachments: input.attachments || [] },
       entry: { type: 'conversation', currentResource: currentResource },
       budgets: {
         maxModelRequests: Math.max(1, Number(assistant.settings && assistant.settings.maxIterations) || 30),
@@ -4007,11 +4078,12 @@
       : (pendingUserInput ? renderPendingUserInput(topic) : (
       '<div class="conversation-composer">'
       + (topic && appBindings[topic.topicId] && appBindings[topic.topicId].active !== false ? '<div class="conversation-entry-status conversation-app-binding"><span class="conversation-entry-status-label">正在编辑应用</span><span class="conversation-entry-status-chip">' + esc(appBindings[topic.topicId].name) + '</span> <a href="' + esc(chrome.runtime.getURL('options/options.html?section=apps&appId=' + appBindings[topic.topicId].appId + '&action=permissions')) + '" target="_blank">权限</a><button type="button" class="conversation-chat-log-btn" data-conversation-action="unbind-app" data-topic-id="' + esc(topic.topicId) + '" title="解除当前话题与应用的绑定">取消</button></div>' : '')
-      + '<textarea id="conversation-input" rows="4" placeholder="描述要创建或修改的应用、流程，或直接提出任务。' + esc(sendShortcutLabel()) + ' 发送。">' + esc(draftValue) + '</textarea>'
+      + '<div id="conversation-composer-images" class="conversation-entry-status conversation-image-references" aria-label="引用图片">' + composerImagesHtml(draftKey) + '</div>'
+      + '<textarea id="conversation-input" rows="4" placeholder="描述任务，可粘贴图片。' + esc(sendShortcutLabel()) + ' 发送。">' + esc(draftValue) + '</textarea>'
       + '<div class="conversation-composer-actions">'
       + '<div class="conversation-composer-service">' + renderGeneratorServiceSelect(serviceSwitchLocked, topic) + '</div>'
       + '<div class="conversation-composer-submit">'
-      + '<button class="btn-primary" data-conversation-action="send-message"' + (stopping ? ' disabled' : '') + '>发送</button>'
+      + '<button class="btn-primary" data-conversation-action="send-message"' + (stopping || sendingMessage ? ' disabled' : '') + '>' + (sendingMessage ? '发送中…' : '发送') + '</button>'
       + (running ? '<button class="btn-danger" data-conversation-action="stop-topic"' + (stopping ? ' disabled' : '') + '>' + (stopping ? '停止中' : '停止') + '</button>' : '')
       + '</div>'
       + '</div>'
@@ -4887,17 +4959,19 @@
       var assistant = await ensureAppDevelopmentAssistant();
       var topicId = app && state.topicOrder.filter(function (id) {
         var topic = state.topics[id], binding = appBindings[id];
-        return topic && !topic.archived && topic.assistantId === assistant.id
+        return topic && topic.assistantId === assistant.id
           && (binding ? binding.appId === appId : id === app.sourceConversationId);
       }).sort(function (left, right) {
-        function boundAt(id) {
+        function bindingChangedAt(id) {
           var binding = appBindings[id], topic = state.topics[id];
-          return Number(binding && binding.boundAt) || Number(topic.updatedAt) || Number(topic.createdAt) || 0;
+          return Number(binding && binding.unboundAt) || Number(binding && binding.boundAt)
+            || Number(topic.updatedAt) || Number(topic.createdAt) || 0;
         }
-        return boundAt(right) - boundAt(left);
+        return bindingChangedAt(right) - bindingChangedAt(left);
       })[0];
       var topic = topicId && state.topics[topicId];
-      if (!topic) {
+      // 最近一次关联已取消时直接新建，不回退到更早的话题。
+      if (!topic || topic.archived || appBindings[topicId] && appBindings[topicId].active === false) {
         newTopicModelServiceId = '';
         topic = await createConversationResource({
           assistantId: assistant.id,
@@ -5901,6 +5975,7 @@
   }
 
   function sendCurrentMessage() {
+    if (sendingMessage) return Promise.resolve();
     var displayed = displayedTopic();
     if (displayed && displayed.archived) {
       toast('归档话题为只读，不能继续对话', true);
@@ -5909,10 +5984,6 @@
     var inputEl = $('#conversation-input');
     var submittedDraft = inputEl ? String(inputEl.value || '') : '';
     var message = submittedDraft.trim();
-    if (!message) {
-      toast('请输入内容或继续指令', true);
-      return Promise.resolve();
-    }
     var assistant = selectedAssistant();
     if (!assistant) {
       toast('请先新建助手', true);
@@ -5924,6 +5995,16 @@
       return Promise.resolve();
     }
     var initialDraftKey = currentDraftKey(topic, assistant);
+    var submittedImages = (composerImageDrafts[initialDraftKey] || []).slice();
+    if (!message && !submittedImages.length) {
+      toast('请输入内容或粘贴图片', true);
+      return Promise.resolve();
+    }
+    if (submittedImages.length > 4) {
+      toast('每条消息最多发送 4 张图片，请先移除多余图片', true);
+      return Promise.resolve();
+    }
+    if (!message) message = '请分析所附图片。';
     var running = topicIsRunning(topic);
     if (running) {
       eventStreamForceFollowTopicId = topic.topicId;
@@ -5933,6 +6014,7 @@
       var steeringGenerationId = topic.runtimeGenerationId;
       if (inputEl) inputEl.value = '';
       if (composerDrafts[initialDraftKey] === submittedDraft) delete composerDrafts[initialDraftKey];
+      removeSubmittedImages(initialDraftKey, submittedImages);
       var steeringQueue = steeringCommandQueuesByTopic[steeringTopicId];
       if (!steeringQueue) {
         steeringQueue = {
@@ -5946,11 +6028,13 @@
       var steeringOrder = steeringQueue.nextOrder++;
       steeringQueue.pendingCount += 1;
       var runtimeInput = steeringQueue.tail.catch(function () {}).then(function () {
+        return uploadComposerImages(steeringTopicId, submittedImages);
+      }).then(function (attachments) {
         return sendConversationCommand('STEER_GENERATION', {
           conversationId: steeringTopicId,
           generationId: steeringGenerationId,
           commandId: steerCommandId,
-          message: { id: steerCommandId + ':message', content: message, attachments: [] },
+          message: { id: steerCommandId + ':message', content: message, attachments: attachments },
         });
       }).then(function (result) {
         if (!result || result.accepted !== true) throw new Error('当前运行未接受这条输入');
@@ -5961,7 +6045,7 @@
         toast('已加入待接收队列');
         return result;
       }).catch(function (err) {
-        steeringQueue.failedDrafts.push({ order: steeringOrder, draft: submittedDraft });
+        steeringQueue.failedDrafts.push({ order: steeringOrder, draft: submittedDraft, images: submittedImages });
         toast(err.message, true);
       }).finally(function () {
         steeringQueue.pendingCount -= 1;
@@ -5969,7 +6053,8 @@
           var failedDraft = steeringQueue.failedDrafts.sort(function (left, right) {
             return left.order - right.order;
           }).map(function (item) { return item.draft; }).join('\n\n');
-          if (failedDraft) {
+          var failedImages = steeringQueue.failedDrafts.reduce(function (images, item) { return images.concat(item.images); }, []);
+          if (failedDraft || failedImages.length) {
             var currentTopic = displayedTopic();
             var currentInput = currentTopic && currentTopic.topicId === steeringTopicId
               ? $('#conversation-input') : null;
@@ -5980,7 +6065,9 @@
               return !!String(value || '').trim();
             }).join('\n\n');
             composerDrafts[initialDraftKey] = restoredDraft;
+            composerImageDrafts[initialDraftKey] = failedImages.concat(composerImageDrafts[initialDraftKey] || []);
             if (currentInput) currentInput.value = restoredDraft;
+            refreshComposerImages();
             toast(steeringQueue.failedDrafts.length + ' 条追加消息失败，已恢复到输入框', true);
           }
           delete steeringCommandQueuesByTopic[steeringTopicId];
@@ -5988,6 +6075,10 @@
         return refresh();
       });
     }
+    sendingMessage = true;
+    refreshComposerImages();
+    composerDrafts[initialDraftKey] = submittedDraft;
+    var draftKey = initialDraftKey;
     var selectedServiceId = currentConversationServiceId(topic);
     var ensure = topic ? Promise.resolve(state) : createConversationResource({
         assistantId: assistant && assistant.id,
@@ -5998,11 +6089,18 @@
         maxToolCalls: assistant && assistant.settings && assistant.settings.maxToolCalls,
         makeActive: true,
         assistantSnapshot: assistantSnapshotFrom(assistant),
-      }).then(function () { return refresh(); });
+      }).then(function (createdTopic) {
+        topic = createdTopic;
+        draftKey = currentDraftKey(topic, assistant);
+        composerDrafts[draftKey] = composerDrafts[initialDraftKey];
+        composerImageDrafts[draftKey] = composerImageDrafts[initialDraftKey] || [];
+        delete composerDrafts[initialDraftKey];
+        delete composerImageDrafts[initialDraftKey];
+        return refresh();
+      });
     return ensure.then(function (nextState) {
       state = nextState || state;
-      topic = topic && state.topics[topic.topicId] || activeTopic();
-      var draftKey = currentDraftKey(topic, assistant);
+      topic = state.topics[topic.topicId] || topic;
       var rename = (!topic.objective && (!topic.name || topic.name === '新话题'))
         ? patchConversationResource(topic.topicId, {
             objective: message,
@@ -6017,20 +6115,32 @@
       }).then(function (resolved) {
         topic = resolved.topic || topic;
         assistant = resolved.assistant || assistant;
-        if (inputEl) inputEl.value = '';
-        delete composerDrafts[initialDraftKey];
-        delete composerDrafts[draftKey];
+        return uploadComposerImages(topic.topicId, submittedImages);
+      }).then(function (attachments) {
         return startTurnWithProjection({
           topic: topic,
           assistant: assistant,
           message: message,
+          attachments: attachments,
           serviceId: currentConversationServiceId(topic),
           onStateChange: refresh,
         });
+      }).then(function (result) {
+        if (composerDrafts[draftKey] === submittedDraft) {
+          delete composerDrafts[draftKey];
+          var currentInput = currentDraftKey(displayedTopic(), selectedAssistant()) === draftKey ? $('#conversation-input') : null;
+          if (currentInput && currentInput.value === submittedDraft) currentInput.value = '';
+        }
+        removeSubmittedImages(draftKey, submittedImages);
+        return result;
       });
     }).catch(function (err) {
       toast(err.message, true);
-    }).finally(refresh);
+    }).finally(function () {
+      sendingMessage = false;
+      refreshComposerImages();
+      return refresh();
+    });
   }
 
   function interruptCurrentModelRequest() {
@@ -6993,6 +7103,15 @@
       selectTopic(target.dataset.topicId);
     } else if (action === 'send-message') {
       sendCurrentMessage();
+    } else if (action === 'preview-image') {
+      var previewDraftKey = currentDraftKey(displayedTopic(), selectedAssistant());
+      var previewImage = (composerImageDrafts[previewDraftKey] || [])[Number(target.dataset.imageIndex)];
+      if (previewImage) imageArtifactClient.previewFile(previewImage.file).catch(function (error) { toast(error.message, true); });
+    } else if (action === 'remove-image') {
+      var imageDraftKey = currentDraftKey(displayedTopic(), selectedAssistant());
+      var imageDraft = composerImageDrafts[imageDraftKey] || [];
+      imageDraft.splice(Number(target.dataset.imageIndex), 1);
+      refreshComposerImages();
     } else if (action === 'submit-user-input') {
       submitPendingUserInput();
     } else if (action === 'stop-topic') {
@@ -7380,6 +7499,7 @@
     if (section) {
       section.addEventListener('keydown', handleKeydown);
       section.addEventListener('copy', handleConversationCopy);
+      section.addEventListener('paste', handleComposerPaste);
     }
     document.addEventListener('click', handleClick);
     document.addEventListener('pointerdown', handleAssistantPointerDown, true);

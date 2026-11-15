@@ -2620,7 +2620,11 @@
       try {
         assertSchema(descriptor.outputSchema, result.schemaValue, 'adapter output');
       } catch (error) {
-        throw arpError('INTERNAL_ERROR', error.message, { stage: 'adapter-output' });
+        // Output validation runs after execution; it cannot undo side effects.
+        throw arpError('INTERNAL_ERROR', error.message, {
+          stage: 'adapter-output',
+          performed: performedOr(result.receipt && result.receipt.performed, unsafe ? 'unknown' : 'no'),
+        });
       }
       var receipt = result.receipt || {};
       if (unsafe) {

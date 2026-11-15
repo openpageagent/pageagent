@@ -42,7 +42,7 @@
       method: { enum: arp.METHODS }, request: { type: 'object', description: '目标客户端的 ARP 工具参数，包含 uri 和该方法的业务参数' },
     }, ['method', 'request']), 'execute') }, '通过此服务端调用目标客户端的 ARP 能力；禁止调用自己', REMOTE_PERMISSION_GUIDANCE.concat([
       '通过返回的客户端链接选择目标，禁止调用 isSelf 客户端。先转发 OPTIONS 到目标资源，再按目标返回的契约执行；目标资源的后续链接仍须经同一客户端转发。',
-      '目标权限按内层 method 和资源契约分类：DELETE 为 delete，GET、OPTIONS 或只读操作为 read，execute/privileged 操作为 execute，其余为 write；外层 POST 只是转发。',
+      '目标权限按内层操作分类：本地文件写入为 write、删除为 delete；原始 CDP 诊断为 read，输入、导航、刷新、弹窗、上传和 JavaScript 为 execute，创建和释放 CDP 会话有 read 或 execute 即可。其他 DELETE 为 delete，GET、OPTIONS 或只读操作为 read，execute/privileged 操作为 execute，其余为 write；外层 POST 只是转发。',
       '以目标最新 OPTIONS 和实际错误为准，不把默认值视为当前授权，也不因外层只提供 POST 或一次错误就断言目标只读。CONNECTION_PERMISSION_DENIED 的 details.permission 指明关闭的操作类别；需要调整时说明目标客户端及对应开关，不要求用户逐项开放 model-services.write 等模块权限。',
     ])),
   ];

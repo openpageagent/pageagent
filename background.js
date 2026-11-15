@@ -2914,9 +2914,9 @@
         }
         if (input.context && input.context.sourceConnectionId && input.request.method !== 'OPTIONS') {
           var permissions = await mcpConnectionPermissions(input.context.sourceConnectionId);
-          var permission = McpContract.arpPermission(input.request.method, input.descriptor);
-          if (!permissions[permission]) return { allowed: false, code: 'FORBIDDEN', message: '此连接未开放该类远程操作',
-            details: { reason: 'CONNECTION_PERMISSION_DENIED', permission: permission } };
+          var required = McpContract.arpPermissionChoices(input.request.method, input.descriptor, input.request.body);
+          if (!required.some(function (permission) { return permissions[permission]; })) return { allowed: false, code: 'FORBIDDEN', message: '此连接未开放该类远程操作',
+            details: { reason: 'CONNECTION_PERMISSION_DENIED', permission: required.join('|') } };
         }
         if (input.context && input.context.appResourceSession) {
           return resourceOptions.appService.authorizeResources(input.context.appResourceSession, input.descriptor.requiredPermissions).then(function () {
@@ -3506,6 +3506,33 @@
     };
   }
 
+  async function uploadConversationImage(payload, sender) {
+    if (!trustedExtensionSender(sender)) throw new Error('仅扩展页面可以上传对话图片');
+    payload = payload || {};
+    var topicId = String(payload.topicId || '').trim();
+    var dataUrl = String(payload.dataUrl || '');
+    var maxBytes = globalThis.ImageArtifactStore.MAX_IMAGE_BYTES;
+    if (!topicId || dataUrl.length > Math.ceil(maxBytes / 3) * 4 + 64
+        || !/^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(dataUrl)) {
+      throw new Error('请选择不超过 20MB 的 PNG、JPEG、GIF 或 WebP 图片');
+    }
+    var state = await globalThis.ConversationState.load({ fresh: true });
+    var topic = state && state.topics && state.topics[topicId];
+    if (!topic || topic.archived) throw new Error('话题不存在或已归档');
+    var response = await fetch(dataUrl);
+    var metadata = await imageArtifactStoreRuntime.put(await response.blob(), {
+      topicId: topicId,
+      sourceKind: 'user-upload',
+      representation: 'original',
+      alt: String(payload.name || '用户图片').slice(0, 500),
+    });
+    return {
+      artifactUri: metadata.artifactUri, kind: 'image', mimeType: metadata.mimeType,
+      name: String(payload.name || '用户图片').slice(0, 256), size: metadata.byteLength,
+      width: metadata.width, height: metadata.height, sha256: metadata.sha256,
+    };
+  }
+
   function getImageArtifactForUi(payload, sender) {
     payload = payload || {};
     var artifactUri = String(payload.artifactUri || '').trim();
@@ -3770,7 +3797,7 @@
     var methods = Object.create(null);
     canonicalResourceRuntime.registry.listRoutes().forEach(function (route) {
       methods[route.template] = Object.keys(route.methods).filter(function (method) {
-        return permissions[McpContract.arpPermission(method, route.methods[method])];
+        return McpContract.arpPermissionChoices(method, route.methods[method]).some(function (permission) { return permissions[permission]; });
       });
     });
     return methods;
@@ -3819,6 +3846,7 @@
       entryContext: pageScoped ? 'page' : 'global',
       origin: 'mcp://local',
       permissionScope: mcpTransportPermissionScope.slice(),
+      remoteArpPermissions: permissions,
       allowedRouteMethods: mcpAllowedRouteMethods(permissions),
       currentResource: uri === '/' ? '' : uri,
       visibleResourceUris: uri && uri !== '/' ? [uri] : [],
@@ -4049,7 +4077,9 @@
           for (var stamp of input.stamps) {
             var meta = await service.store.get('app_meta', stamp.appId);
             var permission = await service.store.get('app_permissions', stamp.appId);
-            if (!meta || !permission || meta.revision !== stamp.stamp.revision || stamp.stamp.dataIncluded !== false && (meta.dataRevision || null) !== stamp.stamp.dataRevision || AppContract.json(permission.generationScope) !== AppContract.json(stamp.stamp.generationScope)) throw AppContract.error('REVISION_CONFLICT', '导出期间应用或生成范围已变化，请重试');
+            if (!meta || !permission || meta.revision !== stamp.stamp.revision || stamp.stamp.dataIncluded !== false && (meta.dataRevision || null) !== stamp.stamp.dataRevision
+                || AppContract.json(permission.generationScope) !== AppContract.json(stamp.stamp.generationScope)
+                || stamp.stamp.permissionGeneration !== undefined && permission.generation !== stamp.stamp.permissionGeneration) throw AppContract.error('REVISION_CONFLICT', '导出期间应用或权限已变化，请重试');
           }
           await service.collect(input.dependencies); return { ok: true };
         }
@@ -4122,6 +4152,15 @@
 
     var recordingMessageResult = conversationRecordingCoordinator.handleMessage(message, sender, sendResponse);
     if (recordingMessageResult.handled) return recordingMessageResult.keepChannel ? true : undefined;
+
+    if (message && message.type === 'IMAGE_ARTIFACT_UPLOAD') {
+      uploadConversationImage(message.payload, sender).then(function (value) {
+        sendResponse({ ok: true, payload: value });
+      }, function (error) {
+        sendResponse({ ok: false, error: error && error.message || String(error || '上传图片失败') });
+      });
+      return true;
+    }
 
     if (message && message.type === 'IMAGE_ARTIFACT_GET') {
       getImageArtifactForUi(message.payload, sender).then(function (value) {

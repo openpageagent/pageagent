@@ -28,7 +28,8 @@
     aboutUrl = projectUrl;
     if (!release || !release.version || !release.url) return;
     var latest = release.version.split('.').map(Number);
-    var current = chrome.runtime.getManifest().version.split('.').map(Number);
+    var manifest = chrome.runtime.getManifest();
+    var current = (manifest.version_name || manifest.version).split('.').map(Number);
     for (var i = 0; i < Math.max(latest.length, current.length); i++) {
       var nextPart = latest[i] || 0, currentPart = current[i] || 0;
       if (nextPart === currentPart) continue;

@@ -950,7 +950,9 @@
         ? (input.clickType === 'dblclick' ? 'doubleClick' : (input.clickType === 'contextmenu' ? 'contextClick' : 'click'))
         : (kind === 'select' ? 'select' : kind);
       var actionSpec = null;
-      if (input.sensitive !== true) {
+      // Drag has no editable Flow projection. Return its execution receipt
+      // without publishing a pageAction node the runtime would reject.
+      if (input.sensitive !== true && actionKind !== 'drag') {
         var reusableInput = Object.assign({}, input);
         ['clickType', 'expect', 'locator', 'sensitive', 'timeoutMs', 'visualEvidence'].forEach(function (key) { delete reusableInput[key]; });
         if (actionKind === 'select') {

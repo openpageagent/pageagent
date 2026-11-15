@@ -2583,8 +2583,9 @@
       '2. 操作服务端本地文件、命令或桌面时，先 GET /local 查看工作目录和能力，沿返回链接调用；无需选择插件。先用 OPTIONS 查询具体操作的参数。',
       '3. 操作浏览器时，先 GET /clients，按名称和 ID 选择已就绪的目标，再调用 POST，参数为 {"uri":"/clients/{clientId}/arp","body":{"method":"GET","request":{"uri":"/page/current"}}}，将 {clientId} 替换为查询到的 ID。',
       '4. 发现目标插件能力时，将内层 method 改为 OPTIONS、request.uri 改为 /。后续页面请求和响应链接仍通过同一客户端转发，不自动换目标。',
-      '5. 外部调用不创建或启动 Flow、脚本、对话、定时任务或应用动作；这些任务在扩展内管理。',
-      '6. 断线、取消或结果未知时，先核对实际效果，不自动重试有副作用的操作。'
+      '5. 用户要求直接使用知识中已配置的 HTTP MCP 时，复用目标插件的配置和认证：先 GET /clients 确认目标，再按第 3 步的转发结构访问 GET /mcp-servers、GET /mcp-servers/{serverId}/tools，按任务选择服务器和工具。参数未知时 OPTIONS /mcp-servers/{serverId}/tools/{toolName}/calls，再 POST 该路径，body 包含 arguments 和目录返回的 schemaHash；沿回执 operationUri 用 GET 读取最终结果。以上调用均通过同一客户端转发，无需重复配置地址或密钥，目标仍有歧义时再询问用户。',
+      '6. 外部调用不创建或启动 Flow、脚本、对话、定时任务或应用动作；这些任务在扩展内管理。',
+      '7. 断线、取消或结果未知时，先核对实际效果，不自动重试有副作用的操作。'
     ].join('\n');
   }
 

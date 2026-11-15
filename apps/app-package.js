@@ -38,6 +38,14 @@
     C.slug(item.slug);
     if (typeof item.name !== 'string' || !item.name.trim() || !item.slots || !item.slots.draft && !item.slots.published) throw new Error('应用包缺少名称或源码槽位');
     if (item.name.length > C.limits.nameLength) throw new Error('应用名称最多 ' + C.limits.nameLength + ' 个字符');
+    if (item.permissions !== undefined) {
+      var permissions = item.permissions;
+      if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)
+          || Object.keys(permissions).some(function (key) { return key !== 'enabled' && key !== 'resources'; })
+          || typeof permissions.enabled !== 'boolean' || !Array.isArray(permissions.resources)
+          || permissions.resources.some(function (name) { return typeof name !== 'string' || !/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/.test(name); })
+          || new Set(permissions.resources).size !== permissions.resources.length) throw new Error('应用备份权限格式无效');
+    }
     Object.keys(item.slots).forEach(function (slot) {
       if (slot !== 'draft' && slot !== 'published') throw new Error('应用包只允许 draft 和 published 两个槽位');
       C.validateCode(item.slots[slot], scope, { parameterFiles: item.sourceFiles });
@@ -138,6 +146,10 @@
         }
         t.get('app_permissions', item.appId, function (old) {
           var p = builtin && old ? Object.assign({}, old) : store.initialPermissions(item.appId, scope);
+          if (!builtin && item.permissions) {
+            p.enabled = item.permissions.enabled;
+            p.resources = item.permissions.resources.slice();
+          }
           var permissionsInitialized = builtin && current && current.__builtinPermissionsInitialized === true;
           // Earlier installers could save the declaration without applying it. Repair once,
           // then preserve user choices regardless of permission generation or package updates.
@@ -148,7 +160,7 @@
             permissionsInitialized = true;
           }
           p.generation = old ? old.generation + 1 : 1;
-          if (builtin && old) p.channelGeneration = (old.channelGeneration || 1) + 1;
+          if (old) p.channelGeneration = (old.channelGeneration || 1) + 1;
           t.store('app_permissions').put(p);
           var preserveData = item.dataIncluded === false;
           if (preserveData) dataBytes = current && current.dataBytes || 0;

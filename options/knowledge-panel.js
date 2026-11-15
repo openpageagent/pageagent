@@ -11,6 +11,8 @@
   var renderSequence = 0;
   var loading = false;
   var pendingReload = false;
+  var reloadTimer = 0;
+  var renderedSections = new WeakMap();
   var searchTimer = 0;
   var composingSearch = null;
   var knowledgeLoadSequence = 0;
@@ -1455,32 +1457,51 @@
     if (skipCapture !== true) captureDrafts();
     var element = $('#knowledge-root');
     if (!element) return;
+    if (composingSearch) { pendingReload = true; return; }
+    var scroller = document.scrollingElement;
+    var scrollTop = scroller ? scroller.scrollTop : 0;
     // innerHTML 重建会替换搜索框节点导致失焦；重建后恢复焦点与光标。
     var active = document.activeElement;
     var restoreSearch = isSearchInput(active);
     var searchId = restoreSearch ? active.id : '';
     var caret = restoreSearch ? active.selectionStart : 0;
-    var skillSection = section === 'skill' && element.querySelector('.knowledge-skill-section');
-    var knowledgeSection = section === 'knowledge' && element.querySelector('.knowledge-domain-section');
-    if (skillSection) skillSection.outerHTML = renderSkillSection();
-    else if (knowledgeSection) knowledgeSection.outerHTML = renderKnowledgeSection();
-    else element.innerHTML = '<div id="knowledge-task-status">' + renderTaskStatus() + '</div>'
-        + '<fieldset class="knowledge-content"' + (taskRunning() || saving ? ' disabled' : '') + '>'
-        + renderMcpSection() + renderSkillSection() + renderKnowledgeSection() + '</fieldset>';
+    var content = element.querySelector('.knowledge-content');
+    if (!content) {
+      element.innerHTML = '<div id="knowledge-task-status"></div><fieldset class="knowledge-content">'
+        + '<div class="knowledge-mcp-section"></div><div class="knowledge-skill-section"></div>'
+        + '<div class="knowledge-domain-section"></div></fieldset>';
+      content = element.querySelector('.knowledge-content');
+      section = '';
+    }
+    content.disabled = taskRunning() || saving;
+    updateTaskStatus();
+    [
+      ['mcp', '.knowledge-mcp-section', renderMcpSection],
+      ['skill', '.knowledge-skill-section', renderSkillSection],
+      ['knowledge', '.knowledge-domain-section', renderKnowledgeSection],
+    ].forEach(function (entry) {
+      if (section && section !== entry[0]) return;
+      var current = content.querySelector(entry[1]);
+      var html = entry[2]();
+      if (renderedSections.get(current) === html) return;
+      current.outerHTML = html;
+      renderedSections.set(content.querySelector(entry[1]), html);
+    });
     element.querySelectorAll('[data-indeterminate]').forEach(function (input) { input.indeterminate = true; });
     refreshMcpButtons();
     if (restoreSearch) {
       var search = $('#' + searchId);
       if (search) {
-        search.focus();
+        search.focus({ preventScroll: true });
         try { search.setSelectionRange(caret, caret); } catch (_) {}
       }
     }
+    if (scroller) scroller.scrollTop = scrollTop;
     refreshPendingResources();
   }
 
   function refreshPendingResources() {
-    if (!pendingReload || loading || saving || taskRunning() || deps.lifecycle.isDestroyed()
+    if (!pendingReload || reloadTimer || loading || saving || taskRunning() || deps.lifecycle.isDestroyed()
         || !deps.isActive() || composingSearch || knowledgeDraft || skillDraft || skillImportDraft || mcpDraft || mcpDrawer) return;
     render();
   }
@@ -1489,6 +1510,8 @@
     if (!initialized) init(deps);
     if (taskRunning()) return Promise.resolve();
     var sequence = ++renderSequence;
+    root.clearTimeout(reloadTimer);
+    reloadTimer = 0;
     loading = true;
     pendingReload = false;
     captureDrafts();
@@ -2355,13 +2378,18 @@
     if (refreshButton) refreshButton.addEventListener('click', function () { render(); });
     if (newButton) newButton.addEventListener('click', newKnowledge);
     var mcpStorageKey = root.chrome.extension.inIncognitoContext ? 'mcp_http_servers_incognito' : 'mcp_http_servers';
+    deps.lifecycle.add(function () { root.clearTimeout(reloadTimer); });
     deps.lifecycle.subscribe(root.chrome.storage.onChanged, function (changes, area) {
       if (area !== 'local' || !Object.keys(changes).some(function (key) {
         return key === root.Knowledge.STORAGE_KEY || key === mcpStorageKey
           || key === 'arp_skill_catalog' || key.indexOf('arp_skill_catalog:item:') === 0;
       })) return;
       pendingReload = true;
-      refreshPendingResources();
+      root.clearTimeout(reloadTimer);
+      reloadTimer = root.setTimeout(function () {
+        reloadTimer = 0;
+        refreshPendingResources();
+      }, 150);
     });
   }
 

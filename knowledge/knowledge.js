@@ -570,6 +570,62 @@
     });
   }
 
+  function syncMcpTools(args) {
+    var serverId = String(args && args.serverId || '').trim();
+    if (!serverId || !Array.isArray(args.items)) throw new Error('MCP 知识同步需要 serverId 和 items');
+    var prefix = 'mcp-http:' + serverId + ':tool:';
+    var archived = 0;
+    return update(function (state) {
+      var existingByKey = Object.create(null);
+      Object.keys(state.items).forEach(function (id) {
+        var item = state.items[id];
+        if (item.sourceKind === 'mcp' && item.source.key.indexOf(prefix) === 0) {
+          existingByKey[item.source.key] = item;
+        }
+      });
+      var liveKeys = new Set();
+      var addedIds = [];
+      var changed = false;
+      var now = Date.now();
+      args.items.forEach(function (raw) {
+        var key = String(raw && raw.source && raw.source.key || '');
+        if (key.indexOf(prefix) !== 0 || key.length === prefix.length || liveKeys.has(key)) {
+          throw new Error('MCP 知识来源不匹配或重复: ' + key);
+        }
+        liveKeys.add(key);
+        var existing = existingByKey[key];
+        var item = normalizeItem(Object.assign({}, existing || {}, raw, {
+          id: existing ? existing.id : nowId('kn'),
+          type: 'mcp',
+          sourceKind: 'mcp',
+          source: Object.assign({}, raw.source, { kind: 'mcp', remoteSync: true, managed: 'remote' }),
+          archived: false,
+          createdAt: existing ? existing.createdAt : now,
+          updatedAt: existing ? existing.updatedAt : now,
+        }));
+        if (existing && AgentResourceProtocol.stableStringify(item) === AgentResourceProtocol.stableStringify(existing)) return;
+        item.updatedAt = now;
+        state.items[item.id] = item;
+        if (!existing) addedIds.push(item.id);
+        changed = true;
+      });
+      Object.keys(existingByKey).forEach(function (key) {
+        var item = existingByKey[key];
+        if (liveKeys.has(key) || item.archived) return;
+        item.archived = true;
+        item.content = item.summary || item.title;
+        item.updatedAt = now;
+        archived += 1;
+        changed = true;
+      });
+      if (!changed) return false;
+      state.order = addedIds.concat(state.order || []);
+      return state;
+    }).then(function () {
+      return { provider: 'built-in-knowledge', synced: args.items.length, archived: archived };
+    });
+  }
+
   function syncBuiltinSkillCatalog(args) {
     args = args || {};
     var packages = Array.isArray(args.packages) ? args.packages : [];
@@ -789,6 +845,7 @@
     getMany: getMany,
     saveAuto: saveAuto,
     upsert: upsert,
+    syncMcpTools: syncMcpTools,
     syncBuiltinSkillCatalog: syncBuiltinSkillCatalog,
     remove: remove,
     removeManagedSource: removeManagedSource,

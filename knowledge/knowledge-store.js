@@ -693,6 +693,8 @@
       return enqueue(function () {
         return loadDirect(false).then(function (state) {
           return Promise.resolve().then(function () { return mutator(state); }).then(function (next) {
+            // An explicit no-op must not emit a storage change notification.
+            if (next === false) return state;
             return writeDirect(next || state);
           });
         });

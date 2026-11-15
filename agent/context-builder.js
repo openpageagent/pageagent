@@ -159,6 +159,18 @@
       if (consumed[event.sequence]) return;
       if (event.type === 'user_message_appended' || event.type === 'steering_message_appended') {
         var message = event.payload && (event.payload.message || event.payload) || {};
+        var content = clone(message.content === undefined ? message : message.content);
+        var images = (Array.isArray(message.attachments) ? message.attachments : []).filter(function (attachment) {
+          return attachment && attachment.kind === 'image'
+            && /^\/image-artifacts\/[A-Za-z0-9._~-]+$/.test(String(attachment.artifactUri || ''));
+        }).flatMap(function (attachment) {
+          return [{ type: 'text', text: attachment.name || '图片' }, {
+            type: 'image', artifactUri: attachment.artifactUri, mimeType: attachment.mimeType,
+            alt: attachment.name, width: attachment.width, height: attachment.height,
+            byteLength: attachment.size,
+          }];
+        });
+        if (images.length) content = (Array.isArray(content) ? content : [{ type: 'text', text: String(content || '') }]).concat(images);
         units.push({
           kind: event.type === 'steering_message_appended' ? 'steering' : 'user',
           startSequence: event.sequence,
@@ -166,7 +178,7 @@
           turnId: event.turnId,
           generationId: event.generationId,
           atomicComplete: true,
-          messages: [{ role: 'user', content: clone(message.content === undefined ? message : message.content) }],
+          messages: [{ role: 'user', content: content }],
           sourceEvents: [event],
         });
         consumed[event.sequence] = true;
@@ -284,13 +296,60 @@
     return units;
   }
 
-  function compactToolProjection(messages) {
+  function compactMcpResult(message, mcpContent) {
+    var call = message.resourceCall || {};
+    var args = call.arguments || {};
+    if (!/^(GET|OPTIONS)$/.test(call.name) || args.responseMode === 'full') return message.content;
+    var uri = text(args.uri).split('?')[0];
+    var toolDefinition = /^\/mcp-servers\/[^/]+\/tools(?:\/[^/]+)?$/.test(uri)
+      || call.name === 'OPTIONS' && /^\/mcp-servers\/[^/]+\/tools\/[^/]+\/calls$/.test(uri);
+    if (!toolDefinition && !/^\/knowledge(?:\/|$)/.test(uri)) return message.content;
+    var content = message.content;
+    if (!content || typeof content !== 'object' || Array.isArray(content) || content.ok === false) return content;
+    var hasSharedContent = false;
+    function visit(value, pointer, enabled) {
+      if (!value || typeof value !== 'object') return;
+      if (Array.isArray(value)) {
+        value.forEach(function (item, index) { visit(item, pointer + '/' + index, enabled); });
+        return;
+      }
+      enabled = enabled || value.sourceKind === 'mcp' || value.source && value.source.kind === 'mcp';
+      Object.keys(value).forEach(function (key) {
+        var fieldPointer = pointer + '/' + key.replace(/~/g, '~0').replace(/\//g, '~1');
+        if (enabled && /^(summary|description|content|inputSchema|outputSchema|lines|before|after)$/.test(key)) {
+          var serialized = stableStringify(value[key]);
+          if (!serialized) return;
+          var previous = mcpContent.seen.get(serialized);
+          var location = { resultId: message.toolCallId, jsonPointer: fieldPointer };
+          var reference = { sameContentAs: previous || location };
+          if (JSON.stringify(reference).length >= serialized.length) return;
+          hasSharedContent = true;
+          if (previous) {
+            value[key] = reference;
+            mcpContent.hasReferences = true;
+          } else {
+            mcpContent.seen.set(serialized, location);
+          }
+          return;
+        }
+        visit(value[key], fieldPointer, enabled);
+      });
+    }
+    visit(content, '', toolDefinition);
+    // Provider adapters may rename tool-call IDs; this in-content label survives.
+    if (hasSharedContent) content.contextResultId = message.toolCallId;
+    return content;
+  }
+
+  function compactToolProjection(messages, mcpContent) {
+    mcpContent = mcpContent || { seen: new Map(), hasReferences: false };
     return messages.map(function (message) {
       if (message.role !== 'tool') return clone(message);
+      message = clone(message);
       return {
         role: 'tool',
         toolCallId: message.toolCallId,
-        content: clone(message.content),
+        content: compactMcpResult(message, mcpContent),
       };
     });
   }
@@ -375,9 +434,12 @@
         };
       });
     }
-    function flattenUnits(units) {
+    function flattenUnits(units, mcpContent) {
       var messages = [];
-      units.forEach(function (unit) { messages = messages.concat(compactToolProjection(unit.messages || [])); });
+      // Rebuild from the retained raw results on each request. References never
+      // point across a summary checkpoint, and appending results keeps the prefix stable.
+      mcpContent = mcpContent || { seen: new Map(), hasReferences: false };
+      units.forEach(function (unit) { messages = messages.concat(compactToolProjection(unit.messages || [], mcpContent)); });
       return messages;
     }
     function prependProfileGuidance(messages, profileGuidance) {
@@ -550,7 +612,8 @@
       var tailUnits = units.filter(function (unit) { return unit.endSequence > throughSequence; });
       // The Provider sees one Journal-ordered stream. Re-bucketing by turn and
       // concatenating later can reorder a prefix during recovery or steering.
-      var tailMessages = flattenUnits(tailUnits);
+      var mcpContent = { seen: new Map(), hasReferences: false };
+      var tailMessages = flattenUnits(tailUnits, mcpContent);
       var currentUnits = tailUnits.filter(function (unit) { return unit.turnId === input.turnId; });
       var historyUnits = tailUnits.filter(function (unit) { return unit.turnId !== input.turnId; });
       var historyMessages = flattenUnits(historyUnits);
@@ -591,6 +654,11 @@
         : dynamic.currentResource || input.entry && input.entry.currentResource || '/';
       var promptInput = {
         applicationContext: applicationContext,
+        hasMcpContentReferences: mcpContent.hasReferences,
+        hasUserImages: tailMessages.some(function (message) {
+          return message.role === 'user' && Array.isArray(message.content)
+            && message.content.some(function (part) { return part && part.type === 'image'; });
+        }),
         surface: input.surface,
         entry: Object.assign({}, input.entry || {}, { currentResource: currentResource }),
         currentResource: currentResource,

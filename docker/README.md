@@ -184,6 +184,8 @@ PAGE_AGENT_DISPLAY_SCALE='3'
 
 **升级或迁移时，保留 `docker/.env` 和整个 `data/`。**
 
+重建容器沿用原 `data/` 时，插件配置、授权和配对凭据会保留。启动时指定的客户端名称（`PAGE_AGENT_CLIENT_NAME` 或内置连接文件中的 `clientName`）和模型密钥（`PAGE_AGENT_MODEL_API_KEY_*`）优先于插件中的设置。
+
 | 宿主机位置 | 容器内位置 | 用途 |
 | --- | --- | --- |
 | 当前项目根目录 | `/app` | 文件与 Bash 操作的默认工作目录 |
@@ -220,6 +222,8 @@ data/
 ## 添加额外连接
 
 容器默认创建本机连接 `container-local`，用作同步源和备份目标。该 ID 保留；默认开放 ARP 读、写、删除权限，关闭执行权限，本地文件目录只读。
+
+内置连接的别名、远程操作权限（`arpPermissions`）和目录配置（`workspaces`）仅在首次创建或地址变更时应用；ID 和地址未变时沿用已保存设置。`PAGE_AGENT_LOCAL_CONNECTION_ALIAS` 仅用于初始化本机连接别名。
 
 需要连接其他服务端时：
 
@@ -263,6 +267,8 @@ ID 须以 `container-` 开头且不重复；地址须能从容器内访问，`12
 
 在 `docker/.env` 中设置 `PAGE_AGENT_HTTP_MCP_SERVERS_FILE=/data/page-agent/http-mcp-servers.json`。修改文件或环境变量后，重新创建容器生效。
 
+同一 ID 和地址下，启动 JSON 中指定的字段优先，省略的可选字段及 Cookie 开关沿用已保存设置。Token、Header 设为空字符串表示清除；地址变更时，未重新提供的认证信息会清空，Cookie 开关关闭。
+
 从清单移除条目会删除对应服务器记录并归档工具知识，手工添加的其他服务器保留。
 
 ## 备份与同步
@@ -296,6 +302,8 @@ ID 须以 `container-` 开头且不重复；地址须能从容器内访问，`12
 | `PAGE_AGENT_AUTO_SYNC_ENABLED` | `true` | 默认开启；设为 `false` 可关闭 |
 
 未指定版本时不执行启动同步，正常连接重连不重复同步。升级、回退或切换桶时修改目标并重新创建容器，保留 `data/`。
+
+指定版本并开启自动同步后，每次浏览器启动都会应用该版本，覆盖同步范围内的本地配置；关闭自动同步时保留本地配置。
 
 备份写入桶与同步读取桶独立配置。桶属于各自服务端，相同名称不表示同一个桶：
 
@@ -370,7 +378,7 @@ Project root must contain manifest.json and MCP server source or bundle: <项目
 源码的 MCP 构建依赖和中间产物仅保留在构建阶段。也可指定 release 目录构建：
 
 ```bash
-./docker/build.sh app ./dist/page-agent-extension-1.2.4
+./docker/build.sh app ./dist/page-agent-extension-1.2.5
 ```
 
 相对路径以当前执行目录为基准，构建时打印实际使用的目录。

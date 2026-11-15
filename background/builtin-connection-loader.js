@@ -145,8 +145,13 @@
           }
         }
         for (var httpServer of httpMcpServers) {
-          await options.httpMcpManager.upsertServer(Object.assign({ bearerToken: '', headersText: '', useBrowserCookies: false }, httpServer,
+          var previousHttp = existingHttp.servers.find(function (server) { return server.id === httpServer.id; });
+          // Omitted settings retain local edits; credentials must not follow a changed endpoint.
+          var httpDefaults = previousHttp && previousHttp.url === new URL(httpServer.url).toString()
+            ? {} : { bearerToken: '', headersText: '', useBrowserCookies: false };
+          var savedHttp = await options.httpMcpManager.upsertServer(Object.assign(httpDefaults, httpServer,
             { owner: { scope: 'container' } }));
+          httpServer.enabled = savedHttp.server.enabled;
         }
         await chrome.storage.local.set({ [httpMcpIdsKey]: httpMcpServers.map(function (entry) { return entry.id; }) });
       }

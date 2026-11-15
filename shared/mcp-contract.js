@@ -23,6 +23,33 @@
   var DIRECTORY_OPERATIONS = Object.freeze({ read: 'read', grep: 'read', write: 'write',
     delete: 'write', bash: 'execute', locate: 'read' });
   var DESKTOP_OPERATIONS = Object.freeze(['keyboard', 'mouse', 'clipboard', 'screenshot', 'application', 'window']);
+  // One catalog drives raw CDP discovery, validation and remote authorization.
+  var CDP_COMMAND_PERMISSIONS = Object.freeze({
+    'Accessibility.getFullAXTree': 'read',
+    'Accessibility.getPartialAXTree': 'read',
+    'DOM.describeNode': 'read',
+    'DOM.getAttributes': 'read',
+    'DOM.getBoxModel': 'read',
+    'DOM.getDocument': 'read',
+    'DOM.getNodeForLocation': 'read',
+    'DOM.getOuterHTML': 'read',
+    'DOM.querySelector': 'read',
+    'DOM.querySelectorAll': 'read',
+    'DOM.setFileInputFiles': 'execute',
+    'Input.dispatchDragEvent': 'execute',
+    'Input.dispatchKeyEvent': 'execute',
+    'Input.dispatchMouseEvent': 'execute',
+    'Input.dispatchTouchEvent': 'execute',
+    'Input.insertText': 'execute',
+    'Page.captureScreenshot': 'read',
+    'Page.captureSnapshot': 'read',
+    'Page.getLayoutMetrics': 'read',
+    'Page.handleJavaScriptDialog': 'execute',
+    'Page.navigate': 'execute',
+    'Page.reload': 'execute',
+    'Runtime.evaluate': 'execute',
+    'Runtime.callFunctionOn': 'execute',
+  });
   var COMMON = ['type', 'transportProtocol', 'serverId', 'clientId', 'transportSessionId', 'requestId'];
   var FRAME_FIELDS = Object.freeze({
     hello: ['protocol', 'clientInfo', 'serverName', 'version', 'platform', 'startupWorkingDirectory', 'capabilities', 'environment'],
@@ -82,10 +109,23 @@
     Object.keys(value).forEach(function (key) { if (typeof value[key] !== 'boolean') fail('INVALID_PERMISSION'); });
     return value;
   }
-  function arpPermission(method, contract) {
+  function arpPermission(method, contract, body) {
+    if (method === 'POST' && contract && contract.relation === 'local-delete') return 'delete';
+    if (method === 'POST' && contract && contract.relation === 'send-cdp-command') {
+      var command = body && body.method;
+      return typeof command === 'string' && own(CDP_COMMAND_PERMISSIONS, command) ? CDP_COMMAND_PERMISSIONS[command] : 'execute';
+    }
     if (method === 'DELETE') return 'delete';
     if (method === 'GET' || method === 'OPTIONS' || contract && ['safe', 'read'].includes(contract.safety)) return 'read';
     return contract && ['execute', 'privileged'].includes(contract.safety) ? 'execute' : 'write';
+  }
+  function arpPermissionChoices(method, contract, body) {
+    var relation = contract && contract.relation;
+    // Both diagnostic and interactive callers need to acquire and release leases.
+    if (method === 'POST' && relation === 'create-cdp-session'
+        || method === 'DELETE' && relation === 'detach-cdp-session'
+        || method === 'POST' && relation === 'send-cdp-command' && body === undefined) return ['read', 'execute'];
+    return [arpPermission(method, contract, body)];
   }
   function workspacePath(value, style) {
     if (typeof value !== 'string' || !value || value.length > 4096 || value.includes('\0')) fail('INVALID_PATH');
@@ -391,10 +431,11 @@
     return null;
   }
   return Object.freeze({ LIMITS: LIMITS, DIRECTORY_OPERATIONS: DIRECTORY_OPERATIONS, DESKTOP_OPERATIONS: DESKTOP_OPERATIONS,
+    CDP_COMMAND_PERMISSIONS: CDP_COMMAND_PERMISSIONS,
     CONFIGURATION: CONFIGURATION, configurationCompatibility: configurationCompatibility,
     TRANSPORT: 'page-agent/2', AUTH: 'auth/1', PAIRING: 'v1', LOCAL: 'local/2', record: record, own: own, fail: fail,
     fields: fields, id: id, alias: alias, serverName: serverName, uniqueAliases: uniqueAliases, permissions: permissions,
-    closedPermissions: closedPermissions, arpPermissions: arpPermissions, arpPermission: arpPermission,
+    closedPermissions: closedPermissions, arpPermissions: arpPermissions, arpPermission: arpPermission, arpPermissionChoices: arpPermissionChoices,
     workspacePath: workspacePath, defaultWorkspaceAlias: defaultWorkspaceAlias,
     url: url, configure: configure, caller: caller, frame: frame, authFrame: authFrame, password: password,
     communicationKey: communicationKey, resultTarget: resultTarget });

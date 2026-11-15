@@ -230,7 +230,7 @@
     return (bytes / (1024 * 1024)).toFixed(1) + ' MiB';
   }
 
-  function renderAttachments(attachments, topicId) {
+  function renderAttachments(attachments, topicId, referencesOnly) {
     function acquisitionLabel(value) {
       var labels = {
         'page-resource-cache': '页面缓存',
@@ -247,10 +247,16 @@
       return labels[String(value || '')] || '';
     }
     return (attachments || []).map(function (item) {
+      if (referencesOnly) {
+        var label = item.name || item.alt || '图片';
+        return '<span class="conversation-user-image-reference" data-image-artifact-reference data-image-artifact="' + esc(item.artifactUri) + '" data-topic-id="' + esc(topicId || '') + '">'
+          + '<button type="button" data-image-artifact-action="open" title="查看图片：' + esc(label) + '">' + esc(label) + '</button>'
+          + '<span class="conversation-image-placeholder" data-image-artifact-placeholder hidden></span></span>';
+      }
       var representation = String(item.representation || '') === 'rendered' ? '渲染截图' : '原图';
       var dimensions = Number(item.width) > 0 && Number(item.height) > 0
         ? Math.round(Number(item.width)) + '×' + Math.round(Number(item.height)) : '';
-      var meta = [representation, acquisitionLabel(item.acquisitionSource), dimensions, formatBytes(item.byteLength)].filter(Boolean).join(' · ');
+      var meta = [item.name, representation, acquisitionLabel(item.acquisitionSource), dimensions, formatBytes(item.byteLength)].filter(Boolean).join(' · ');
       return '<figure class="conversation-image-attachment" data-image-artifact="' + esc(item.artifactUri) + '" data-topic-id="' + esc(topicId || '') + '">'
         + '<button type="button" class="conversation-image-preview" data-image-artifact-action="open" title="查看大图">'
         + '<img data-image-artifact-img alt="' + esc(item.alt || '页面图片') + '" hidden>'
@@ -310,10 +316,12 @@
       ? (kind === 'error' ? '<p class="conversation-error-text">' + esc(text) + '</p>' : renderMarkdown(text))
       : '');
     if (executionSummary) detailHtml = '<p class="conversation-event-summary">' + esc(executionSummary) + '</p>' + detailHtml;
-    var attachmentHtml = renderAttachments(eventAttachments(event, options), optionValue(options, 'topicId', event.topicId || ''));
+    var attachmentHtml = renderAttachments(eventAttachments(event, options), optionValue(options, 'topicId', event.topicId || ''), kind === 'user');
     var application = options.applicationLinks === false ? null : applicationResult(event.result || event.detail || event.text);
     if (options.applicationLinks !== false && !application && event.text) application = applicationResult(event.text);
-    if (attachmentHtml) detailHtml += '<div class="conversation-image-attachments">' + attachmentHtml + '</div>';
+    if (attachmentHtml) detailHtml += kind === 'user'
+      ? '<div class="conversation-user-image-references"><span>引用图片</span>' + attachmentHtml + '</div>'
+      : '<div class="conversation-image-attachments">' + attachmentHtml + '</div>';
     var collapsible = optionValue(options, 'collapsible', (kind === 'tool' || kind === 'tool-result'
       || kind === 'llm-request' || kind === 'llm-response') && !!(summary || detailHtml) && !attachmentHtml);
     var attrs = ' data-conversation-event-index="' + esc(index) + '"'
@@ -427,6 +435,7 @@
     '.conversation-event-summary{margin-top:6px!important;color:var(--text-secondary)!important;font-size:12px!important;}',
     '.conversation-event page-code-editor{display:block;min-width:0;width:100%;--code-height:220px;max-height:40vh;margin:6px 0;}',
     '.conversation-image-attachments{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,360px));gap:8px;margin-top:8px;}.conversation-image-attachment{max-width:360px;margin:0;border:1px solid var(--border);border-radius:var(--control-radius);overflow:hidden;background:var(--bg-muted);}.conversation-image-preview{display:grid;width:100%;min-height:96px;max-height:280px;padding:0;place-items:center;overflow:hidden;border:0;background:var(--bg-secondary);cursor:zoom-in;}.conversation-image-preview img{display:block;width:100%;height:auto;max-height:280px;object-fit:contain;}.conversation-image-placeholder{padding:8px;color:var(--text-secondary);font-size:12px;}.conversation-image-attachment figcaption{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;color:var(--text-secondary);font-size:11px;}.conversation-image-attachment figcaption button{padding:3px 7px;border:1px solid var(--control-border);border-radius:var(--control-radius);background:var(--control-bg);color:var(--accent);cursor:pointer;}.conversation-image-attachment.is-missing .conversation-image-placeholder{color:var(--danger);}',
+    '.conversation-user-image-references{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:8px;color:var(--text-secondary);font-size:12px;}.conversation-user-image-reference{max-width:100%;}.conversation-user-image-reference button{max-width:100%;padding:0;overflow:hidden;border:0;background:transparent;color:var(--text);font:inherit;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;}.conversation-user-image-reference button:hover{color:var(--accent);}.conversation-user-image-reference.is-missing .conversation-image-placeholder{color:var(--danger);}',
     '.conversation-image-lightbox{position:fixed;z-index:2147483647;inset:0;display:grid;place-items:center;padding:8px;background:rgba(0,0,0,.82);}.conversation-image-lightbox img{max-width:calc(100vw - 64px);max-height:calc(100vh - 64px);object-fit:contain;box-shadow:0 8px 36px rgba(0,0,0,.5);}.conversation-image-lightbox button{position:absolute;top:14px;right:18px;width:38px;height:38px;border:1px solid rgba(255,255,255,.65);border-radius:50%;background:rgba(0,0,0,.45);color:#fff;font-size:28px;line-height:1;cursor:pointer;}',
     '.conversation-event-user{border-left-color:var(--accent)}.conversation-event-assistant{border-left-color:var(--success)}.conversation-event-tool,.conversation-event-tool-result,.conversation-event-run{border-left-color:var(--transmitting)}.conversation-event-llm-request,.conversation-event-llm-response{border-left-color:var(--value)}.conversation-event-warn,.conversation-event-reasoning{border-left-color:var(--warn)}.conversation-event-error{border-left-color:var(--danger)}.conversation-error-text{color:var(--danger)!important;}',
     '.conversation-steering-queue{flex:0 0 auto;margin:0;padding:8px;border-top:1px solid var(--border);background:var(--bg-secondary);color:var(--text);}.conversation-steering-queue header{display:flex;align-items:center;gap:8px;margin-bottom:6px;}.conversation-steering-queue header b{color:var(--accent);font-size:12px;font-weight:600;}.conversation-steering-queue header span{margin-left:auto;color:var(--text-secondary);font-size:11px;}.conversation-steering-interrupt{min-height:26px;padding:3px 8px;border:1px solid var(--danger);border-radius:5px;background:transparent;color:var(--danger);cursor:pointer;font-size:11px;font-weight:600;}.conversation-steering-interrupt:hover,.conversation-steering-interrupt:focus-visible{background:color-mix(in srgb,var(--danger) 10%,transparent);outline:none;}.conversation-steering-interrupt:disabled{cursor:default;opacity:.45;}.conversation-steering-queue ol{display:grid;gap:5px;margin:0;padding:0;list-style:none;}.conversation-steering-queue li{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:6px 8px;border:1px solid var(--border);border-radius:var(--control-radius);background:var(--bg);font-size:12px;}.conversation-steering-queue li span{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;}.conversation-steering-queue li small{flex:0 0 auto;color:var(--warn);font-size:10px;white-space:nowrap;}',

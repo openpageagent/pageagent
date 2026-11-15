@@ -3,14 +3,15 @@
   'use strict';
   var commonJs = typeof module === 'object' && module.exports;
   var core = commonJs ? require('../../resources/protocol/index.js') : root.AgentResourceProtocol;
+  var mcpContract = commonJs ? require('../../shared/mcp-contract.js') : root.McpContract;
   var nodeCrypto = null;
   if (commonJs) {
     try { nodeCrypto = require('crypto'); } catch (_) { nodeCrypto = null; }
   }
-  var api = factory(root, core, nodeCrypto);
+  var api = factory(root, core, nodeCrypto, mcpContract);
   if (commonJs) module.exports = api;
   else if (root) root.BrowserResourceAdapter = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (root, core, nodeCrypto) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (root, core, nodeCrypto, mcpContract) {
   'use strict';
   if (!core) throw new Error('BrowserResourceAdapter requires AgentResourceProtocol');
 
@@ -52,25 +53,7 @@
   };
   var CURRENT_EXTENSION_BROWSER_GUIDANCE = '该资源由当前 Page Agent 扩展实例直接读取，是 runtime_context 所属扩展可见浏览器状态的权威来源。外部 MCP 返回的窗口或标签页属于其连接环境，不能替代当前扩展环境的事实。';
 
-  // Keep this bounded diagnostic surface exact and intentionally read-only.
-  // Page input is owned by PageActionEngine; raw CDP is neither a second action
-  // path nor a failure fallback. Navigation, permission, storage, network mutation,
-  // and arbitrary Runtime evaluation stay unavailable here.
-  var CDP_COMMAND_ALLOWLIST = Object.freeze({
-    'Accessibility.getFullAXTree': true,
-    'Accessibility.getPartialAXTree': true,
-    'DOM.describeNode': true,
-    'DOM.getAttributes': true,
-    'DOM.getBoxModel': true,
-    'DOM.getDocument': true,
-    'DOM.getNodeForLocation': true,
-    'DOM.getOuterHTML': true,
-    'DOM.querySelector': true,
-    'DOM.querySelectorAll': true,
-    'Page.captureScreenshot': true,
-    'Page.captureSnapshot': true,
-    'Page.getLayoutMetrics': true,
-  });
+  var CDP_COMMAND_ALLOWLIST = mcpContract.CDP_COMMAND_PERMISSIONS;
 
   function isCdpCommandAllowed(methodName) {
     var name = typeof methodName === 'string' ? methodName.trim() : '';
@@ -250,6 +233,7 @@
       new core.RouteContract({
         template: '/browser/cdp-sessions', resourceType: 'CdpSessionCollection', relation: 'cdp-sessions',
         summary: '为浏览器自动化创建一个 debugger 会话', tags: ['browser', 'cdp', 'privileged'],
+        guidance: ['远程连接具有读取或执行权限即可创建会话；后续命令分别按读取或执行权限检查。'],
         methods: {
           POST: method({
             inputSchema: { type: 'object', properties: { tabId: { type: 'integer', minimum: 1 }, protocolVersion: { type: 'string', enum: ['1.3'], description: '声明性字段：实际 attach 版本固定为 1.3。' } }, required: ['tabId'], additionalProperties: false },
@@ -262,8 +246,9 @@
       new core.RouteContract({
         template: '/browser/cdp-sessions/{sessionId}', resourceType: 'CdpSession', relation: 'cdp-session',
         summary: '读取或分离一个 debugger 会话', tags: ['browser', 'cdp', 'privileged'],
+        guidance: ['DELETE 仅释放本调用方的调试会话；远程连接具有读取或执行权限即可释放，不要求删除权限。'],
         methods: {
-          GET: method({ inputSchema: { type: 'object', additionalProperties: false }, outputSchema: true, safety: 'privileged', permissions: ['browser.debugger'] }),
+          GET: method({ inputSchema: { type: 'object', additionalProperties: false }, outputSchema: true, safety: 'read', permissions: ['browser.debugger'] }),
           DELETE: method({
             inputSchema: null, outputSchema: true, safety: 'privileged', idempotency: 'inherent', permissions: ['browser.debugger'],
             preconditions: ['if-match'], relation: 'detach-cdp-session',
@@ -272,7 +257,12 @@
       }),
       new core.RouteContract({
         template: '/browser/cdp-sessions/{sessionId}/commands', resourceType: 'CdpCommand', relation: 'send-cdp-command',
-        summary: '通过现有 debugger 会话发送一条白名单命令', tags: ['browser', 'cdp', 'privileged'],
+        summary: '通过现有 debugger 会话发送诊断、输入、导航、刷新、弹窗、上传或 JavaScript 命令；命令成功仅表示协议调用完成，业务结果须另行读取确认', tags: ['browser', 'cdp', 'privileged'],
+        guidance: [
+          '诊断命令使用远程读取权限，输入、导航、刷新、弹窗、上传和 JavaScript 使用远程执行权限；OPTIONS 只列出当前连接获准的命令。',
+          'DOM.setFileInputFiles 的 files 是浏览器所在机器的绝对文件路径。Runtime.evaluate 和 Runtime.callFunctionOn 始终按执行授权。',
+          '原始命令发出后发生连接变化时不自动重发；结果未知时先读取页面核实。',
+        ],
         methods: {
           POST: method({
             inputSchema: {
@@ -294,7 +284,7 @@
           GET: method({
             inputSchema: { type: 'object', properties: {}, additionalProperties: false },
             outputSchema: { type: 'object', properties: { id: { type: 'string' }, sessionId: { type: 'string' }, method: { type: 'string' }, performed: { type: 'string' }, result: true }, required: ['id', 'sessionId', 'method', 'performed'], additionalProperties: true },
-            safety: 'privileged', permissions: ['browser.debugger'], relation: 'cdp-command',
+            safety: 'read', permissions: ['browser.debugger'], relation: 'cdp-command',
           }),
         },
       }),
@@ -406,6 +396,7 @@
       links: [
         { rel: 'self', href: uri, method: 'GET' },
         { rel: 'send-cdp-command', href: uri + '/commands', method: 'POST' },
+        { rel: 'detach-cdp-session', href: uri, method: 'DELETE' },
         { rel: 'introspect', href: uri, method: 'OPTIONS' },
       ],
     };
@@ -631,7 +622,11 @@
 
     function sendCdp(session, methodName, params, timeoutMs) {
       if (!session || !session.lease) return Promise.reject(core.arpError('RESOURCE_GONE', 'CDP 会话 lease 不可用'));
-      return session.lease.send(methodName, params || {}, timeoutMs).then(function (result) { return result === undefined ? null : result; });
+      // Dialogs may block the command queue; use the manager's dialog-only lane.
+      var send = methodName === 'Page.handleJavaScriptDialog' ? session.lease.sendUrgent : session.lease.send;
+      return send(methodName, params || {}, timeoutMs).then(function (result) { return result === undefined ? null : result; }).catch(function (error) {
+        throw translateError(error, CDP_COMMAND_ALLOWLIST[methodName] === 'read' ? 'no' : 'unknown');
+      });
     }
 
     function assertTargetScope(binding, tab) {
@@ -805,12 +800,13 @@
         return verifyOwnedSession(context, request.params.sessionId).then(function (retained) {
           return sendCdp(retained, body.method, body.params || {}, body.timeoutMs).then(function (result) {
             var uri = '/browser/cdp-sessions/' + encodeSegment(retained.id) + '/commands/' + encodeSegment(commandId);
-            var data = { id: commandId, sessionId: retained.id, method: body.method, performed: 'yes', result: result };
+            var performed = CDP_COMMAND_ALLOWLIST[body.method] === 'read' ? 'no' : 'yes';
+            var data = { id: commandId, sessionId: retained.id, method: body.method, performed: performed, result: result };
             retainOperationResult(commandResults, commandId, { sessionId: retained.id, owner: securityBinding(context), data: data });
             return {
               statusCode: 201,
               primary: operationRepresentation(uri, 'CdpCommand', data, 'session', '/browser/cdp-sessions/' + encodeSegment(retained.id)),
-              receipt: { performed: 'yes', state: 'succeeded', operationUri: uri }, schemaValue: data,
+              receipt: { performed: performed, state: 'succeeded', operationUri: uri }, schemaValue: data,
             };
           });
         });
@@ -914,11 +910,19 @@
       return Promise.resolve({ exists: true });
     }
 
-    function descriptor(route, methodName, href) {
+    function descriptor(route, methodName, href, context) {
       var contract = route.methods[methodName];
+      var inputSchema = contract.inputSchema;
+      if (contract.relation === 'send-cdp-command' && context && context.remoteArpPermissions) {
+        inputSchema = Object.assign({}, inputSchema, { properties: Object.assign({}, inputSchema.properties, {
+          method: Object.assign({}, inputSchema.properties.method, { enum: Object.keys(CDP_COMMAND_ALLOWLIST).filter(function (command) {
+            return context.remoteArpPermissions[CDP_COMMAND_ALLOWLIST[command]] === true;
+          }) }),
+        }) });
+      }
       return new core.CapabilityDescriptor({
         method: methodName, href: href, relation: contract.relation || route.relation,
-        summary: contract.summary || route.summary, inputSchema: contract.inputSchema,
+        summary: contract.summary || route.summary, inputSchema: inputSchema,
         outputSchema: contract.outputSchema, safety: contract.safety, idempotency: contract.idempotency,
         execution: contract.execution, requiredPermissions: contract.permissions,
         requiredPreconditions: contract.preconditions, patchMediaTypes: contract.patchMediaTypes,
@@ -930,7 +934,11 @@
       var matched = routes.find(function (route) { return !!route.match(uri); });
       if (!matched) return [];
       if (matched.template.indexOf('/cdp-sessions') !== -1 && !privilegedVisible(context)) return [];
-      return Object.keys(matched.methods).map(function (methodName) { return descriptor(matched, methodName, uri); });
+      return Object.keys(matched.methods).filter(function (methodName) {
+        return !context || !context.remoteArpPermissions || mcpContract.arpPermissionChoices(methodName, matched.methods[methodName]).some(function (permission) {
+          return context.remoteArpPermissions[permission] === true;
+        });
+      }).map(function (methodName) { return descriptor(matched, methodName, uri, context); });
     }
 
     if (supportsDebugger && typeof cdpSessionManager.onDetach === 'function') {

@@ -13,6 +13,7 @@ async function exportApp(appId, includeData, limit) {
   if (meta.bytes - (includeData ? 0 : meta.dataBytes || 0) > limit) throw new Error('应用超出当前 JSON 备份大小上限，请缩小范围或取消业务数据');
   var permission = await store.get('app_permissions', appId);
   var item = { appId: appId, name: meta.name, slug: meta.slug || null, icon: meta.icon, description: meta.description, createdAt: meta.createdAt, sourceConversationId: meta.sourceConversationId, unpublished: meta.unpublished, generationScope: permission.generationScope, dataIncluded: includeData, slots: {}, assets: [], data: [] };
+  item.permissions = { enabled: permission.enabled, resources: (permission.resources || []).slice() };
   for (var slot of Object.keys(meta.slots)) {
     var record = store.required(await store.get('app_code', [appId, slot]));
     if (record.revision !== meta.slots[slot].revision) throw AppContract.error('REVISION_CONFLICT', '导出期间应用已变化，请重试');
@@ -38,8 +39,8 @@ async function exportApp(appId, includeData, limit) {
   }
   var current = store.required(await store.get('app_meta', appId));
   var currentPermission = store.required(await store.get('app_permissions', appId));
-  if (current.revision !== meta.revision || includeData && current.dataRevision !== meta.dataRevision || AppContract.json(currentPermission.generationScope) !== AppContract.json(permission.generationScope)) throw AppContract.error('REVISION_CONFLICT', '导出期间内容、数据或生成范围已变化，请重试');
-  item.exportStamp = { revision: meta.revision, dataRevision: meta.dataRevision || null, dataIncluded: includeData, generationScope: permission.generationScope };
+  if (current.revision !== meta.revision || includeData && current.dataRevision !== meta.dataRevision || currentPermission.generation !== permission.generation) throw AppContract.error('REVISION_CONFLICT', '导出期间内容、数据或权限已变化，请重试');
+  item.exportStamp = { revision: meta.revision, dataRevision: meta.dataRevision || null, dataIncluded: includeData, generationScope: permission.generationScope, permissionGeneration: permission.generation };
   item.exportBytes = new Blob([JSON.stringify(item)]).size;
   if (item.exportBytes > limit) throw new Error('应用序列化后超出 JSON 备份大小上限');
   return item;

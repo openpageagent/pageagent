@@ -196,7 +196,7 @@
         visible: function (_context, href) { return href.indexOf('{') < 0; },
         methods: { POST: {
           inputSchema: definition.inputSchema, outputSchema: { type: 'object' },
-          safety: isRead(name, {}) ? 'read' : 'execute',
+          safety: isRead(name, {}) ? 'read' : name === 'write' || name === 'delete' ? 'write' : 'execute',
           idempotency: 'keyed', execution: 'sync', permissions: ['local.execute'], preconditions: [],
           relation: 'local-' + name, summary: definition.summary,
         } },

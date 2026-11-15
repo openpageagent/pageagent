@@ -212,8 +212,8 @@
     }
     try {
       var manifest = await readDirectoryManifest(directory, current);
-      state.directoryVersion = manifest.version;
-      state.reloadRequired = typeof manifest.version === 'string' && newerVersion(manifest.version, current.version);
+      state.directoryVersion = manifest.version_name || manifest.version;
+      state.reloadRequired = newerVersion(state.directoryVersion, current.version_name || current.version);
       if (manifest.version !== current.version) {
         state.reason = state.reloadRequired ? 'RELOAD_REQUIRED' : 'DIRECTORY_VERSION_MISMATCH';
         state.message = state.reloadRequired ? '更新已写入，请在「最新版本」页重新加载插件。' : '插件目录版本不一致，请重新选择当前加载的目录。';
@@ -224,7 +224,8 @@
 
   async function getStatus() {
     var current = chrome.runtime.getManifest();
-    var state = { currentVersion: current.version, latestVersion: null, updateAvailable: null,
+    var currentVersion = current.version_name || current.version;
+    var state = { currentVersion: currentVersion, latestVersion: null, updateAvailable: null,
       directoryConfigured: null, directoryName: '', writePermission: null, directoryVersion: null,
       reloadRequired: false, updating: false, canUpdate: false, reason: null, message: '',
       settingsUrl: chrome.runtime.getURL('options/options.html?section=release') };
@@ -233,7 +234,7 @@
     catch (error) { state.reason = 'CHECK_FAILED'; state.message = '检查更新失败：' + error.message; }
     if (release) {
       state.latestVersion = release.version;
-      state.updateAvailable = newerVersion(release.version, current.version);
+      state.updateAvailable = newerVersion(release.version, currentVersion);
       state.message = state.updateAvailable ? '发现新版本 v' + release.version + '。' : '当前已是最新版本。';
     }
     await navigator.locks.request('page-agent-extension-update', { mode: 'shared', ifAvailable: true }, async function (lock) {
@@ -259,6 +260,7 @@
   async function update(options) {
     options = options || {};
     var current = chrome.runtime.getManifest();
+    var currentVersion = current.version_name || current.version;
     var status = options.status || function () {};
     return navigator.locks.request('page-agent-extension-update', { ifAvailable: true }, async function (lock) {
       if (!lock) throw failure('UPDATE_IN_PROGRESS', '插件正在更新，请等待完成。', 'RESOURCE_BUSY');
@@ -279,7 +281,7 @@
         catch (error) { throw failure('CHECK_FAILED', '检查更新失败：' + error.message, 'UPSTREAM_FAILED'); }
       }
       if (options.version && options.version !== release.version) throw failure('RELEASE_CHANGED', '最新版本已变化，请重新查询后更新。');
-      if (!newerVersion(release.version, current.version)) throw failure('UP_TO_DATE', '当前已是最新版本。');
+      if (!newerVersion(release.version, currentVersion)) throw failure('UP_TO_DATE', '当前已是最新版本。');
       if (!release.downloadUrl) throw failure('RELEASE_ASSET_MISSING', '此版本尚未提供插件 ZIP 包。');
       checkAbort(options.signal);
       var files;
@@ -290,7 +292,7 @@
       }
       checkAbort(options.signal);
       var result = await applyFiles(directory, files, status, options.signal);
-      return Object.assign(result, { currentVersion: current.version, appliedVersion: release.version, reloadRequired: true,
+      return Object.assign(result, { currentVersion: currentVersion, appliedVersion: release.version, reloadRequired: true,
         message: '更新已写入，请在「最新版本」页重新加载插件。',
         settingsUrl: chrome.runtime.getURL('options/options.html?section=release') });
     });

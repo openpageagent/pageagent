@@ -497,27 +497,14 @@
               if (!server || server.enabled !== true) throw new Error('MCP Server 不存在或已停用');
               var tools = await readSelectedCollection(serverUri + '/tools');
               var projectedTools = tools.map(function (tool) {
-                var callUri = serverUri + '/tools/' + uriSegment(tool.name) + '/calls';
-                var schemaHash = text(tool.schemaHash);
+                var definitionUri = serverUri + '/tools/' + uriSegment(tool.name);
                 return {
                   name: text(tool.name),
                   description: String(tool.description || ''),
-                  callUri: callUri,
-                  schemaHash: schemaHash,
-                  argumentsSchema: clone(tool.inputSchema || { type: 'object', properties: {}, additionalProperties: true }),
-                  invocation: {
-                    providerTool: 'POST',
-                    providerArguments: {
-                      uri: callUri,
-                      body: {
-                        arguments: '<必须匹配 argumentsSchema 的 MCP 工具参数>',
-                        schemaHash: schemaHash,
-                      },
-                    },
-                    completion: '从返回回执读取 operationUri，再用 Provider GET 读取该 URI 直到调用结束',
-                  },
+                  definitionUri: definitionUri,
+                  callUri: definitionUri + '/calls',
                 };
-              }).filter(function (tool) { return tool.name && tool.schemaHash; });
+              }).filter(function (tool) { return tool.name; });
               return {
                 value: {
                   id: serverId,
@@ -534,9 +521,26 @@
         ]).then(function (groups) {
           var skillResults = groups[0];
           var mcpResults = groups[1];
+          var mcpServers = mcpResults.map(function (result) { return result.value; }).filter(Boolean);
+          var descriptions = new Map();
+          mcpServers.forEach(function (server) {
+            server.tools.forEach(function (tool) {
+              // Only share identical discovery text. Each connection still owns
+              // its definition URI, schema and invocation target.
+              var key = JSON.stringify([tool.name, tool.description]);
+              var entry = descriptions.get(key);
+              if (!entry) {
+                entry = { name: tool.name, description: tool.description, connections: [] };
+                descriptions.set(key, entry);
+              }
+              entry.connections.push({ serverId: server.id, definitionUri: tool.definitionUri, callUri: tool.callUri });
+            });
+            delete server.tools;
+          });
           return {
             skills: skillResults.map(function (result) { return result.value; }).filter(Boolean),
-            mcpServers: mcpResults.map(function (result) { return result.value; }).filter(Boolean),
+            mcpServers: mcpServers,
+            mcpTools: Array.from(descriptions.values()),
             resourceUris: mcpResults.reduce(function (uris, result) {
               return uris.concat(result.resourceUris || []);
             }, []),
@@ -735,6 +739,7 @@
               ? {
                 role: 'external-integration',
                 servers: selectedResources.mcpServers,
+                tools: selectedResources.mcpTools,
               } : null,
             selectedResourceWarnings: selectedResources && selectedResources.warnings.length
               ? selectedResources.warnings : null,

@@ -87,7 +87,7 @@
       type: { type: 'string', enum: WAIT_CONDITION_TYPES.slice() },
       locator: LOCATOR_SCHEMA,
       fromUrl: { type: 'string', maxLength: 4000 },
-      pattern: { type: 'string', maxLength: 1000 },
+      pattern: { type: 'string', maxLength: 1000, description: 'url_matches 对完整 URL 做 JavaScript 正则搜索（默认忽略大小写）；子串模式无需添加 .*，整串匹配请使用 ^ 和 $。' },
       text: { type: 'string', minLength: 1, maxLength: 10000 },
       state: { type: 'string', enum: ['loading', 'interactive', 'complete'] },
       value: { type: 'string', maxLength: 10000 },
@@ -98,8 +98,8 @@
       enabled: { type: 'boolean' },
       editable: { type: 'boolean' },
       connected: { type: 'boolean' },
-      timeoutMs: { type: 'integer', minimum: WAIT_TIMEOUT_MIN_MS, maximum: WAIT_TIMEOUT_MAX_MS },
-      pollIntervalMs: { type: 'integer', minimum: WAIT_POLL_INTERVAL_MIN_MS, maximum: WAIT_POLL_INTERVAL_MAX_MS },
+      timeoutMs: { type: 'integer', minimum: WAIT_TIMEOUT_MIN_MS, maximum: WAIT_TIMEOUT_MAX_MS, description: '条件的最长等待时间；作为动作 expect 时从派发完成后计时，受动作剩余总时限约束，省略时使用动作剩余时限。' },
+      pollIntervalMs: { type: 'integer', minimum: WAIT_POLL_INTERVAL_MIN_MS, maximum: WAIT_POLL_INTERVAL_MAX_MS, description: '条件未满足时重新读取页面的间隔，默认 100 ms。' },
     },
     required: ['type'],
     additionalProperties: false,
@@ -230,7 +230,7 @@
     type: 'object',
     properties: {
       id: { type: 'string' },
-      kind: { type: 'string', enum: ['click', 'fill', 'select', 'scroll', 'wait'] },
+      kind: { type: 'string', enum: ['click', 'fill', 'select', 'scroll', 'drag', 'wait'] },
       status: { type: 'string', enum: ['confirmed', 'unconfirmed', 'failed'] },
       performed: { type: 'string', enum: ['yes', 'no', 'unknown'] },
       conditionMet: { type: 'boolean' },
@@ -1208,7 +1208,9 @@
     var recovery = '';
     if (sourceCode === 'PAGE_STATE_UNAVAILABLE') {
       recovery = '已知 Page 资源的实时页面状态暂不可用。通过 GET /page/current?start=0&maxChars=10000 这一 canonical 恢复入口重新观测；不要把它当作路由或目标资源不存在，也不要猜测其他路径。';
-    } else if (/^(?:TARGET_NOT_FOUND|TARGET_STALE|TARGET_NOT_ACTIONABLE)$/.test(sourceCode)) {
+    } else if (sourceCode === 'TARGET_NOT_ACTIONABLE') {
+      recovery = '目标当前无法接收鼠标输入。调用 GET /page/current?start=0&maxChars=10000 重新观测，结合错误中的实际操作点和命中元素处理遮挡或调整操作点，再决定下一步。';
+    } else if (/^(?:TARGET_NOT_FOUND|TARGET_STALE)$/.test(sourceCode)) {
       recovery = 'locator 无法在实时页面中解析。调用 GET /page/current?start=0&maxChars=10000，从当前实时 PageState 中选择规范 locator，再决定下一步。绝不要猜测替代 locator。';
     } else if (sourceCode === 'TRANSPORT_INTERRUPTED') {
       recovery = '输入传输在操作过程中关闭。不要重放该操作。调用 GET /page/current 读取最新 PageState，根据新事实判断结果，并在选定规范 locator 后再继续。';

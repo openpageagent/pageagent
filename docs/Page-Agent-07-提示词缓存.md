@@ -22,6 +22,8 @@ MCP 连接、权限、审计和环境状态按轮更新，不改变稳定前缀�
 Journal 消息按 sequence 全序展开，guidance 和运行时更新追加到前缀末尾，不插回已有消息之间。
 System Core 保持系统规则的权威，guidance 是 user 层方法，运行时上下文是事实数据；缓存位置不授予额外权限。
 
+模型上下文中，MCP 知识和工具定义里的相同内容仅在引用更短时使用 `sameContentAs`。引用通过 `resultId` 匹配结果的 `contextResultId`，由 `jsonPointer` 定位字段。首次内容完整保留，后续结果不改写已发送消息。摘要压缩后从保留的原始结果重建引用。
+
 ## 缓存周期
 
 以下变化会开启新的 cache epoch：

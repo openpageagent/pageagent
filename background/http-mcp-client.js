@@ -24,6 +24,7 @@
     var addLog = deps.addLog || function () {};
     var sessions = {};
     var sessionInitializations = {};
+    var updateQueue = Promise.resolve();
     var clientInfo = Object.assign({
       name: 'Page Agent Extension',
       title: 'Page Agent',
@@ -237,9 +238,13 @@
     }
 
     function update(mutator) {
-      return loadRaw().then(function (state) {
-        return saveRaw(mutator(state) || state);
+      var operation = updateQueue.then(function () {
+        return loadRaw().then(function (state) {
+          return saveRaw(mutator(state) || state);
+        });
       });
+      updateQueue = operation.catch(function () {});
+      return operation;
     }
 
     function listServers(args) {
@@ -774,43 +779,40 @@
       return 'mcp-http:' + server.id + ':tool:' + String(tool.name || '').trim();
     }
 
-    function toolKnowledgeContent(server, tool) {
+    function toolKnowledgeContent(tool) {
       var lines = [
         '远端 MCP Streamable HTTP 工具。',
         '',
-        'Server ID: ' + server.id,
-        'Server: ' + server.name,
-        'Endpoint: ' + server.url,
         'Tool: ' + tool.name,
       ];
       if (tool.title) lines.push('Title: ' + tool.title);
       if (tool.description) lines.push('Description: ' + tool.description);
-      if (server.serverInstructions) {
-        lines.push('', 'Server Instructions:', server.serverInstructions);
-      }
-      lines.push('', 'Input Schema:', JSON.stringify(tool.inputSchema || { type: 'object' }, null, 2));
-      if (tool.outputSchema) lines.push('', 'Output Schema:', JSON.stringify(tool.outputSchema, null, 2));
-      if (tool.execution) lines.push('', 'Execution:', JSON.stringify(tool.execution, null, 2));
-      lines.push('', '对话调用方式:', '使用 call_http_mcp_tool({ serverId: "' + server.id + '", toolName: "' + tool.name + '", arguments: { ... }, timeoutMs }) 调用。');
+      lines.push('', '对话调用方式（ARP）:',
+        '复用本条知识 source 中的连接配置和认证。路径中的 {serverId}、{toolName} 分别使用 source.serverId、source.toolName，并进行 URL 编码。',
+        '服务说明通过 GET /mcp-servers/{serverId} 读取；参数结构以工具目录为准，知识条目不保存副本。',
+        '先 GET /mcp-servers/{serverId}/tools/{toolName} 获取当前参数定义和 schemaHash；参数不明确时 OPTIONS /mcp-servers/{serverId}/tools/{toolName}/calls。',
+        '再 POST /mcp-servers/{serverId}/tools/{toolName}/calls，body 包含 arguments 和读取到的 schemaHash，可选 timeoutMs。沿回执 operationUri 用 GET 读取到 succeeded、failed 或 interrupted。',
+        '外部 Agent 经 Page Agent MCP Server 使用时，先 GET /clients 确认目标插件；以上调用及结果查询均通过 POST /clients/{clientId}/arp 转发，body 使用 method 和 request，目标路径放 request.uri，目标 POST 的参数放 request.body。');
       return lines.join('\n');
     }
 
-    function upsertToolKnowledge(server, tool) {
-      if (!knowledge || typeof knowledge.upsert !== 'function') return Promise.resolve(null);
+    function toolKnowledgeItem(server, tool) {
       var title = 'MCP HTTP 工具: ' + (tool.title || tool.name);
-      var summary = (server.name ? server.name + ' / ' : '') + (tool.description || tool.name);
+      var summary = tool.description || tool.name;
       var tags = ['MCP', 'HTTP MCP', 'Streamable HTTP', server.name, tool.name].filter(Boolean);
-      return knowledge.upsert({
+      return {
         type: 'mcp',
         sourceKind: 'mcp',
         remoteSync: true,
         title: title,
         summary: compactString(summary, 700),
-        content: toolKnowledgeContent(server, tool),
+        content: toolKnowledgeContent(tool),
         tags: tags,
         source: {
           kind: 'mcp',
           key: knowledgeKey(server, tool),
+          serverId: server.id,
+          serverName: server.name,
           toolName: tool.name,
           uri: server.url,
           remoteSync: true,
@@ -818,44 +820,12 @@
         },
         confidence: 0.9,
         archived: false,
-      });
-    }
-
-    function archiveStaleKnowledge(server, liveKeys) {
-      if (!knowledge || typeof knowledge.list !== 'function' || typeof knowledge.upsert !== 'function') return Promise.resolve({ archived: 0 });
-      var archived = 0;
-      var cursor = 0;
-      function page() {
-        return knowledge.list({ sourceKind: 'mcp', includeArchived: true, cursor: cursor, limit: 120 }).then(function (result) {
-          var items = result && result.items || [];
-          var chain = Promise.resolve();
-          items.forEach(function (item) {
-            var key = item && item.source && item.source.key || '';
-            if (key.indexOf('mcp-http:' + server.id + ':tool:') !== 0 || liveKeys[key] || item.archived) return;
-            chain = chain.then(function () {
-              archived += 1;
-              return knowledge.upsert({
-                id: item.id,
-                title: item.title,
-                content: item.summary || item.title,
-                sourceKind: 'mcp',
-                remoteSync: true,
-                source: Object.assign({}, item.source || {}, { remoteSync: true, managed: 'remote' }),
-                archived: true,
-              });
-            });
-          });
-          return chain.then(function () {
-            cursor = result && result.nextCursor !== null && result.nextCursor !== undefined ? result.nextCursor : null;
-            return cursor !== null ? page() : { archived: archived };
-          });
-        });
-      }
-      return page();
+      };
     }
 
     function archiveServerKnowledge(serverId) {
-      return archiveStaleKnowledge({ id: String(serverId || '') }, {});
+      if (!knowledge) return Promise.resolve({ archived: 0 });
+      return knowledge.syncMcpTools({ serverId: serverId, items: [] });
     }
 
     function deleteServerKnowledge(serverId) {
@@ -1082,7 +1052,6 @@
         if (!server.enabled) throw new Error('HTTP MCP Server 已停用: ' + server.id);
         return listToolsForServer(server, { timeoutMs: input.timeoutMs }).then(function (tools) {
           var session = sessions[server.id] || {};
-          var liveKeys = {};
           var savedServer;
           return updateServerAfterProbe(server, {
             tools: tools,
@@ -1095,14 +1064,10 @@
             serverInstructions: session.instructions || '',
           }).then(function (updated) {
             savedServer = updated;
-            var chain = Promise.resolve();
-            tools.forEach(function (tool) {
-              liveKeys[knowledgeKey(savedServer, tool)] = true;
-              chain = chain.then(function () { return upsertToolKnowledge(savedServer, tool); });
-            });
-            return chain;
-          }).then(function () {
-            return archiveStaleKnowledge(savedServer, liveKeys);
+            return knowledge ? knowledge.syncMcpTools({
+              serverId: savedServer.id,
+              items: tools.map(function (tool) { return toolKnowledgeItem(savedServer, tool); }),
+            }) : { archived: 0 };
           }).then(function (stale) {
             log('HTTP MCP 工具已同步到知识: ' + savedServer.name + ' tools=' + tools.length);
             return {

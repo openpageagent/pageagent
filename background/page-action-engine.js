@@ -39,9 +39,9 @@
       return Number.isFinite(Number(deadline)) ? Math.max(0, Number(deadline) - Date.now()) : Number.POSITIVE_INFINITY;
     }
     function actionTimeout(operation) {
-      return new factContract.PageFactError('ACTION_TIMEOUT', String(operation || '页面动作') + ' 超过统一时限', {
-        performed: 'unknown',
-      });
+      // The execution failure handler determines performed from dispatched
+      // mutations. PageFactError's third argument is diagnostic details.
+      return new factContract.PageFactError('ACTION_TIMEOUT', String(operation || '页面动作') + ' 超过统一时限');
     }
     function actionCancelled(signal) {
       var error = new factContract.PageFactError('ACTION_CANCELLED', '页面动作随生成取消', {});
@@ -328,6 +328,11 @@
         }) };
       }
     }
+    function confirmationDeadline(intent, actionDeadline) {
+      if (!intent.expect) return actionDeadline;
+      var timeoutMs = Math.max(100, Math.min(Number(intent.expect.timeoutMs) || intent.timeoutMs, 120000));
+      return Math.min(actionDeadline, Date.now() + timeoutMs);
+    }
     async function awaitActionReadiness(intent, baseline, plan, resolved, records, actionDeadline) {
       var dispatched = records.some(function (record) { return record.mutation === true && record.accepted === true; });
       if (!dispatched) {
@@ -342,6 +347,7 @@
         return await readinessBarrier.waitForAction(intent.tabId, baseline, Object.assign({}, plan, {
           since: Date.now(),
           deadline: deadline,
+          pollIntervalMs: intent.expect ? Number(intent.expect.pollIntervalMs) || 100 : plan.pollIntervalMs,
           signal: intent.signal,
           // newTab expectations need post-action browser facts that only the
           // final receipt reads; every other expectation is polled here.
@@ -561,11 +567,21 @@
                 }
                 return shown;
               }
-              if (operation === 'pointer.click') return mouseClick(command, payload.point, payload.clickType);
-              if (operation === 'pointer.move') return movePointer(command, payload.point, 'none', 0);
+              if (operation === 'pointer.click' || operation === 'pointer.move') {
+                await perception.assertPointerTargetWithSend(send, payload.resolved, payload.point, intent.signal);
+                return operation === 'pointer.click'
+                  ? mouseClick(command, payload.point, payload.clickType)
+                  : movePointer(command, payload.point, 'none', 0);
+              }
               if (operation === 'pointer.wheel') return mouseWheel(command, payload.point, payload.deltaX, payload.deltaY);
               if (operation === 'pointer.scrollGesture') return scrollGesture(command, payload.point, payload.deltaX, payload.deltaY, payload.speed);
-              if (operation === 'pointer.drag') return dragPointer(command, payload.from, payload.to, payload.steps, payload.dragData);
+              if (operation === 'pointer.drag') {
+                // Check both endpoints before any input, using the final points
+                // after offsets and visual feedback have been applied.
+                await perception.assertPointerTargetWithSend(send, payload.source, payload.from, intent.signal);
+                await perception.assertPointerTargetWithSend(send, payload.destination, payload.to, intent.signal);
+                return dragPointer(command, payload.from, payload.to, payload.steps, payload.dragData);
+              }
               if (operation === 'keyboard.press') return pressKey(command, payload.key, payload.modifiers);
               if (operation === 'text.insert') return insertText(command, payload.text);
               if (operation === 'platform.read') return platform();
@@ -879,8 +895,9 @@
         }
       // 4. the CDP command queue is released → 5. wait for readiness while this
       // tab's action queue is still held, so the next action cannot interleave.
+      var verificationDeadline = confirmationDeadline(intent, actionDeadline);
       if (readinessBaseline) {
-        derivedFacts.readiness = await awaitActionReadiness(intent, readinessBaseline, readinessPlanned, resolved, records, actionDeadline);
+        derivedFacts.readiness = await awaitActionReadiness(intent, readinessBaseline, readinessPlanned, resolved, records, verificationDeadline);
       }
       if (!startedMs) {
         startedMs = requestedMs;
@@ -941,6 +958,7 @@
         browserFactsError: browserFactsError,
         targetRef: resolved && resolved.targetRef || intent.targetRef || null,
         derivedFacts: derivedFacts,
+        deadline: verificationDeadline,
       };
       var receipt = await abortablePromise(verification.createReceipt(receiptInput), intent.signal);
       return Object.freeze({ receipt: receipt, actionFacts: actionFacts, browserFacts: browserFacts, derivedFacts: factContract.clone(derivedFacts), error: null });
@@ -989,6 +1007,7 @@
             browserFactsError: error,
             targetRef: resolved && resolved.targetRef || intent.targetRef || null,
             derivedFacts: derivedFacts,
+            deadline: verificationDeadline || actionDeadline,
           });
           return Object.freeze({ receipt: clickReceipt, actionFacts: clickFacts, browserFacts: { facts: [], newTabs: [], ambiguous: false }, derivedFacts: factContract.clone(derivedFacts), error: null });
         }
@@ -1148,12 +1167,13 @@
       }
       var allFieldsProcessed = results.length === fieldsInput.length;
       var readinessFacts = preparation ? { preReadiness: preparation.report } : {};
+      var verificationDeadline = confirmationDeadline(aggregateIntent, aggregateDeadline);
       if (preparation && preparation.baseline) {
         readinessFacts.navigationBaseline = preparation.baseline.navigation;
         var commands = results.reduce(function (all, child) {
           return all.concat(child.receipt && child.receipt.actionFacts && child.receipt.actionFacts.commands || []);
         }, []);
-        readinessFacts.readiness = await awaitActionReadiness(aggregateIntent, preparation.baseline, aggregatePlan, null, commands, aggregateDeadline);
+        readinessFacts.readiness = await awaitActionReadiness(aggregateIntent, preparation.baseline, aggregatePlan, null, commands, verificationDeadline);
       } else if (preparation) readinessFacts.readiness = preparation.report;
       var readinessWarnings = [readinessFacts.preReadiness, readinessFacts.readiness].filter(function (report, index, reports) {
         return report && report.warning && reports.indexOf(report) === index;
@@ -1168,6 +1188,7 @@
         startedAt: aggregateStartedAt,
         completedAt: completedAt,
         durationMs: Date.now() - aggregateStartedMs,
+        deadline: verificationDeadline,
       }), aggregateIntent.signal);
       var derivedFacts = Object.assign({ ok: receipt.status === 'confirmed' && allFieldsProcessed, total: fieldsInput.length, processed: results.length, passed: confirmed, confirmed: confirmed, unconfirmed: unconfirmed, failed: failed, results: results }, readinessFacts);
       var aggregateError = null;

@@ -354,9 +354,13 @@
             workspaces: [{ id: 'startup', kind: 'startup', alias: '工作目录', permissions: { read: true, write: false, execute: false } }],
           };
           item.builtinId = definition.id;
-          item.alias = definition.alias; item.url = url;
-          item.arpPermissions = copy(c.arpPermissions(definition.arpPermissions));
-          if (definition.workspaces) item.workspaces = copy(definition.workspaces);
+          item.url = url;
+          // Packaged defaults initialize a connection; saved settings survive restarts.
+          if (!sameServer) {
+            item.alias = definition.alias;
+            item.arpPermissions = copy(c.arpPermissions(definition.arpPermissions));
+            if (definition.workspaces) item.workspaces = copy(definition.workspaces);
+          }
           ensureStartupRead(item);
           if (JSON.stringify(item) !== JSON.stringify(previous)) {
             if (previous) { item.configRevision = previous.configRevision + 1; item.grantRevision = previous.grantRevision + 1; }

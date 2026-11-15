@@ -5,6 +5,7 @@
 
   function create(options) {
     var current = chrome.runtime.getManifest();
+    var currentVersion = current.version_name || current.version;
     var checkButton = document.getElementById('btn-release-check');
     var updateButton = document.getElementById('btn-release-update');
     var directoryButton = document.getElementById('btn-release-directory');
@@ -15,7 +16,7 @@
     var supported = typeof window.showDirectoryPicker === 'function';
     var release = null, directory = null, directoryLoaded = false;
     var checking = false, updating = false, completed = false, initialized = false;
-    document.getElementById('release-current-version').value = 'v' + current.version;
+    document.getElementById('release-current-version').value = 'v' + currentVersion;
 
     function status(message, error) {
       statusElement.textContent = message;
@@ -25,7 +26,7 @@
     function controls() {
       checkButton.disabled = checking || updating || completed;
       updateButton.disabled = !supported || !directoryLoaded || checking || updating || completed
-        || !release || !release.downloadUrl || !updater.newerVersion(release.version, current.version);
+        || !release || !release.downloadUrl || !updater.newerVersion(release.version, currentVersion);
       directoryButton.disabled = !supported || !directoryLoaded || checking || updating || completed;
       directoryButton.textContent = directory ? '更换目录' : '选择目录';
       reloadButton.disabled = updating;
@@ -56,7 +57,7 @@
         document.getElementById('release-latest-version').value = 'v' + release.version;
         document.getElementById('release-page').href = release.url;
         if (!supported) status('当前浏览器不支持选择并写入插件目录，请使用支持此功能的 Chrome 或 Edge。', true);
-        else if (!updater.newerVersion(release.version, current.version)) status('当前已是最新版本。');
+        else if (!updater.newerVersion(release.version, currentVersion)) status('当前已是最新版本。');
         else if (!release.downloadUrl) status('此版本尚未提供插件 ZIP 包，请稍后重新检查。', true);
         else status('发现新版本，可点击「手动更新」。');
       } catch (error) {

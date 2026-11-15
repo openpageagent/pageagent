@@ -1299,7 +1299,7 @@
       var exportedAt = pkg.exportedAt ? fmtTime(Date.parse(pkg.exportedAt)) : '未知时间';
       $('#drawer-title').textContent = '一键导入备份数据';
       $('#drawer-content').innerHTML =
-        '<details class="reference-panel drawer-guide"><summary>备份导入说明</summary><div class="drawer-guide-content"><p><b>合并与替换：</b>合并按 ID/key 覆盖所选数据；替换会替换所选 Flow/FlowGroup 集合。</p><p><b>应用权限：</b>可选择本机生成范围；导入后 SDK 关闭，需到应用权限中启用。</p></div></details>'
+        '<details class="reference-panel drawer-guide"><summary>备份导入说明</summary><div class="drawer-guide-content"><p><b>合并与替换：</b>合并按 ID/key 覆盖所选数据；替换会替换所选 Flow/FlowGroup 集合。</p><p><b>应用权限：</b>默认保留应用导出时的权限，可在下方取消勾选关闭。旧备份未记录的 SDK 开关和模块权限保持关闭。</p></div></details>'
         + '<section class="drawer-section"><h4>导入方式</h4>'
         + '<div class="backup-import-meta">备份时间：' + esc(exportedAt) + ' · v' + esc(pkg.version) + '</div>'
         + '<div class="backup-import-meta"><label><input type="radio" name="backup-import-mode" value="merge" checked> 合并</label> '
@@ -1311,13 +1311,25 @@
         + '</div>'
         + '<div class="backup-module-list" id="backup-import-list">' + rows + '</div></section>';
       if (pkg.modules.apps) {
+        var capabilityLabels = { 'data.read': '读取本应用数据', 'data.write': '保存本应用数据', 'data.delete': '删除本应用数据', 'actions.run': '运行绑定的流程或脚本' };
         var scopes = Object.keys(pkg.modules.apps.items).map(function (id) {
           var item = pkg.modules.apps.items[id];
-          return '<fieldset class="backup-app-scope"><legend>' + esc(item.name) + ' · 本机生成范围（导入后 SDK 仍关闭）</legend>' + root.AppContract.CAPABILITIES.map(function (capability) {
-            return '<label><input type="checkbox" data-app-import-scope="' + esc(id) + '" value="' + esc(capability) + '"' + ((item.generationScope || []).indexOf(capability) !== -1 ? ' checked' : '') + '>' + esc(capability) + '</label>';
-          }).join(' ') + '</fieldset>';
+          var permissions = item.permissions, sdkEnabled = permissions && permissions.enabled === true;
+          var resources = permissions && Array.isArray(permissions.resources) ? permissions.resources : [];
+          return '<fieldset class="backup-app-scope"><legend>' + esc(item.name) + ' · 导入权限</legend>'
+            + (permissions === undefined ? '<p class="form-help">旧备份未记录 SDK 开关和模块权限，导入后这两项保持关闭。</p>' : '')
+            + '<div class="backup-app-permission-group"><h5>SDK 开关</h5>'
+            + '<label><input type="checkbox" data-app-import-sdk="' + esc(id) + '"' + (sdkEnabled ? ' checked' : ' disabled') + '>允许 SDK 调用' + (sdkEnabled ? '' : '（未开启）') + '</label></div>'
+            + '<div class="backup-app-permission-group"><h5>应用数据与绑定动作范围</h5>' + root.AppContract.CAPABILITIES.map(function (capability) {
+              var enabled = (item.generationScope || []).indexOf(capability) !== -1;
+              return '<label title="' + esc(capability) + '"><input type="checkbox" data-app-import-scope="' + esc(id) + '" value="' + esc(capability) + '"' + (enabled ? ' checked' : ' disabled') + '>' + esc(capabilityLabels[capability]) + '</label>';
+            }).join('') + '</div>'
+            + '<details class="backup-app-resource-permissions"><summary>插件模块权限（' + resources.length + ' 项）</summary><div class="backup-app-permission-group">'
+            + (resources.length ? resources.map(function (name) {
+              return '<label><input type="checkbox" data-app-import-resource="' + esc(id) + '" value="' + esc(name) + '" checked>' + esc(name) + '</label>';
+            }).join('') : '<p class="form-help">备份中没有已开启的模块权限。</p>') + '</div></details></fieldset>';
         }).join('');
-        $('#drawer-content').insertAdjacentHTML('beforeend', '<section class="drawer-section"><h4>应用生成范围</h4>' + scopes + '</section>');
+        $('#drawer-content').insertAdjacentHTML('beforeend', '<section class="drawer-section"><h4>应用权限</h4><p class="form-help">以下勾选项是应用在导出时已经开启的权限，默认保留，可取消勾选关闭。SDK 总开关关闭时，其他权限不会生效。</p>' + scopes + '</section>');
       }
       $('#drawer-actions').innerHTML =
         '<button class="btn-primary" data-action="confirm-import-backup">导入所选数据</button>'
@@ -2512,7 +2524,7 @@
         add('mailSettings', function () { return applyMailSettingsBackupImport(pkg, plan); });
       }
       if (hasOwn(plan, 'apps')) {
-        add('apps', function () { return root.AppBackup.importApps(pkg, plan, preflight.appScopes, preflight.appExpected, preflight.assistantIdMap).then(function (result) { return '应用 ' + result.count + ' 项（SDK 未授权）'; }); });
+        add('apps', function () { return root.AppBackup.importApps(pkg, plan, preflight.appScopes, preflight.appExpected, preflight.assistantIdMap).then(function (result) { return '应用 ' + result.count + ' 项（权限已按导入选择保存）'; }); });
       }
       return steps;
     }
@@ -2589,8 +2601,18 @@
           if (preflight.importMode !== 'merge') throw new Error('导入应用及其共享依赖请使用“合并”，以保留兼容资源及其他应用的配置');
           var scopes = {};
           root.AppBackup.selected(preflight.package, preflight.plan).forEach(function (id) {
-            var inputs = $all('[data-app-import-scope]').filter(function (input) { return input.dataset.appImportScope === id; });
-            scopes[id] = inputs.length ? inputs.filter(function (input) { return input.checked; }).map(function (input) { return input.value; }) : preflight.package.modules.apps.items[id].generationScope;
+            var item = Object.assign({}, preflight.package.modules.apps.items[id]);
+            preflight.package.modules.apps.items[id] = item;
+            var inputs = $all('#drawer-content [data-app-import-scope]').filter(function (input) { return input.dataset.appImportScope === id; });
+            scopes[id] = inputs.length ? inputs.filter(function (input) { return input.checked; }).map(function (input) { return input.value; }) : item.generationScope;
+            var sdkInput = $all('#drawer-content [data-app-import-sdk]').find(function (input) { return input.dataset.appImportSdk === id; });
+            if (sdkInput && item.permissions && typeof item.permissions.enabled === 'boolean' && Array.isArray(item.permissions.resources)) {
+              var resourceInputs = $all('#drawer-content [data-app-import-resource]').filter(function (input) { return input.dataset.appImportResource === id; });
+              item.permissions = Object.assign({}, item.permissions, {
+                enabled: item.permissions.enabled && sdkInput.checked,
+                resources: item.permissions.resources.filter(function (name) { return typeof name !== 'string' || resourceInputs.some(function (input) { return input.value === name && input.checked; }); }),
+              });
+            }
           });
           preflight.appScopes = scopes;
           var appCheck = await root.AppBackup.preflight(preflight.package, preflight.plan, scopes, !!preflight.mcpMapping, confirm);

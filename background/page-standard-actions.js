@@ -304,7 +304,7 @@
       var coordinates = context.resolved && context.resolved.coordinates;
       var clickKind = String(context.intent.kind || 'click');
       await perform(context, 'pointer.show', { kind: clickKind, resolved: context.resolved });
-      await perform(context, 'pointer.click', { point: coordinates, clickType: clickKind });
+      await perform(context, 'pointer.click', { point: coordinates, clickType: clickKind, resolved: context.resolved });
       if (input.activation === 'keyboard' || input.activation === 'both') {
         await perform(context, 'keyboard.press', { key: 'Enter', modifiers: 0 });
       }
@@ -315,7 +315,7 @@
     async function executeHover(context) {
       var coordinates = context.resolved && context.resolved.coordinates;
       await perform(context, 'pointer.show', { kind: 'hover', resolved: context.resolved });
-      await perform(context, 'pointer.move', { point: coordinates });
+      await perform(context, 'pointer.move', { point: coordinates, resolved: context.resolved });
       return { resolved: context.resolved };
     }
 
@@ -323,7 +323,7 @@
       var resolved = context.resolved;
       if (resolved) {
         await perform(context, 'pointer.show', { kind: 'press', resolved: resolved });
-        await perform(context, 'pointer.click', { point: resolved.coordinates, clickType: 'click' });
+        await perform(context, 'pointer.click', { point: resolved.coordinates, clickType: 'click', resolved: resolved });
       }
       var combination = keyCombination(context.input.key || 'Enter');
       await perform(context, 'keyboard.press', combination);
@@ -356,7 +356,7 @@
       var commit = String(input.commit || '').toLowerCase();
       var replace = input.replace !== undefined ? input.replace !== false : context.intent.kind !== 'type';
       await perform(context, 'pointer.show', { kind: 'fill', resolved: resolved });
-      await perform(context, 'pointer.click', { point: resolved.coordinates, clickType: 'click' });
+      await perform(context, 'pointer.click', { point: resolved.coordinates, clickType: 'click', resolved: resolved });
       if (replace) {
         var info = await perform(context, 'platform.read');
         await perform(context, 'keyboard.press', { key: 'a', modifiers: info.os === 'mac' ? 4 : 2 });
@@ -447,7 +447,7 @@
           businessState(context, 'select', true, { mode: 'native', selectedOption: selectedOption });
           return { resolved: resolved };
         }
-        await perform(context, 'pointer.click', { point: resolved.coordinates, clickType: 'click' });
+        await perform(context, 'pointer.click', { point: resolved.coordinates, clickType: 'click', resolved: resolved });
         await perform(context, 'keyboard.press', { key: 'Home', modifiers: 0 });
         var enabledIndex = selectState.options.filter(function (option) { return !option.disabled; }).findIndex(function (option) { return option.index === chosenIndex; });
         for (var arrowIndex = 0; arrowIndex < enabledIndex; arrowIndex += 1) await perform(context, 'keyboard.press', { key: 'ArrowDown', modifiers: 0 });
@@ -470,7 +470,7 @@
         });
         return { resolved: resolved };
       }
-      await perform(context, 'pointer.click', { point: resolved.coordinates, clickType: 'click' });
+      await perform(context, 'pointer.click', { point: resolved.coordinates, clickType: 'click', resolved: resolved });
       var searchDelayMs = Math.max(50, Number(input.searchDelayMs) || 100);
       await perform(context, 'delay', { ms: searchDelayMs, operation: 'dropdown-open' });
       if (input.search) {
@@ -485,7 +485,7 @@
           dropdownWaitMs: input.dropdownWaitMs || 5000,
         });
       }
-      await perform(context, 'pointer.click', { point: optionTarget.coordinates, clickType: 'click' });
+      await perform(context, 'pointer.click', { point: optionTarget.coordinates, clickType: 'click', resolved: optionTarget });
       context.derivedFacts.selectMode = 'custom';
       context.derivedFacts.selectedOption = { text: optionTarget.target.text || optionTarget.target.name, value: optionTarget.target.value, targetRef: optionTarget.targetRef };
       var customAfter = await refreshTarget(context, resolved);
@@ -518,7 +518,7 @@
         throw pageError('INVALID_ACTION_INPUT', '单选按钮不能通过再次点击取消；请选择同组中的其他单选项', { targetRef: resolved.targetRef });
       }
       await perform(context, 'pointer.show', { kind: 'check', resolved: resolved });
-      await perform(context, 'pointer.click', { point: resolved.coordinates, clickType: 'click' });
+      await perform(context, 'pointer.click', { point: resolved.coordinates, clickType: 'click', resolved: resolved });
       var checkedTarget = await refreshTarget(context, resolved);
       var checkedAfter = checkedTarget && checkedTarget.target ? checkedTarget.target.checked : null;
       context.derivedFacts.checkedAfter = checkedAfter;
@@ -732,7 +732,7 @@
       var steps = Math.max(2, Math.min(Number(input.steps) || 12, 60));
       await perform(context, 'pointer.show', { kind: 'drag', resolved: resolved });
       var dragData = normalizeDragData(input);
-      await perform(context, 'pointer.drag', { from: from, to: to, steps: steps, dragData: dragData });
+      await perform(context, 'pointer.drag', { from: from, to: to, steps: steps, dragData: dragData, source: resolved, destination: targetResolved });
       context.derivedFacts.dragTargetRef = targetResolved.targetRef;
       context.derivedFacts.dragSource = { targetRef: resolved.targetRef, coordinates: from };
       context.derivedFacts.dragDestination = { targetRef: targetResolved.targetRef, coordinates: to };

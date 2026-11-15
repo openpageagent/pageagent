@@ -800,6 +800,13 @@ return result                                          // 返回值写入节点�
         </details>
         <div class="help-doc">
 
+          <h3>v1.2.5</h3>
+          <ul>
+            <li><b>对话图片</b>：支持粘贴图片、编号引用与预览。</li>
+            <li><b>应用导入</b>：优化应用权限，支持导入时逐项关闭。</li>
+            <li><b>应用对话</b>：优化取消关联后复用旧话题的问题。</li>
+          </ul>
+
           <h3>v1.2.4</h3>
           <ul>
             <li><b>插件更新</b>：支持在配置中心检查更新插件。</li>
@@ -1173,6 +1180,8 @@ return result                                          // 返回值写入节点�
           <summary>远程操作权限说明</summary>
           <div class="mcp-info">
             <p><b>作用范围：</b>控制外部 Agent 和其他客户端通过此连接操作当前插件的权限。</p>
+            <p><b>浏览器调试：</b>诊断读取使用「读取／查询」，页面输入、导航、上传和脚本使用「执行」；调试会话的创建和释放有其中任一权限即可。</p>
+            <p><b>文件操作：</b>经插件写入、删除服务端文件分别需要「创建／修改」「删除」，并同时满足目录写入授权。删除开关不判断页面点击、脚本或命令的业务含义。</p>
           </div>
         </details>
         <form id="mcp-arp-permissions-form">
@@ -1313,6 +1322,7 @@ return result                                          // 返回值写入节点�
   <script src="conversation-assistant-state-runtime.js"></script>
   <script src="conversation-state.js"></script>
   <script src="../shared/page-data-contract.js"></script>
+  <script src="../shared/mcp-contract.js"></script>
   <script src="../background/agent-page-service.js"></script>
   <script src="../resources/services/resource-service.js"></script>
   <script src="../resources/services/agent-configuration-resource-service.js"></script>
@@ -1348,7 +1358,6 @@ return result                                          // 返回值写入节点�
   <script src="../shared/schedule-utils.js"></script>
   <script src="options-schedule-controller.js"></script>
   <script src="options-url-trigger-controller.js"></script>
-  <script src="../shared/mcp-contract.js"></script>
   <script src="options-backup-controller.js"></script>
   <script src="options-app-controller.js"></script>
   <script src="options-run-report-controller.js"></script>

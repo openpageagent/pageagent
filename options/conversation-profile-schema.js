@@ -453,6 +453,18 @@
 
   var APP_DEVELOPER_PARAMETER_GUIDANCE = '应用必须声明 code.parameters，默认复用平台的空参数声明 mode=none，省略 input 或传 {} 均可正常打开。只按当前业务需求增加字段、示例与处理逻辑，不为接入机制额外添加 query 等示例字段或表单。简单赋值可用 form 映射到已有控件，需要联动时提供 applyParameters(input) 模块。保存前核对每个声明字段均有处理，不能把打开成功当作适配或业务成功。具体格式按应用 RouteContract 和按需读取的生成指引执行。';
 
+  var APP_DEVELOPER_LAYOUT_GUIDANCE = [
+    '【默认推荐布局：双栏工作台】',
+    '双栏工作台是所有类型应用的默认推荐布局，与默认 UI 主题配套使用；除非用户明确指定其他布局，否则按此结构开发，不为布局重复询问。采用“顶部全局栏 + 上排控制区 + 中部双栏主体 + 底部反馈区”的单页结构，按从左到右、从上到下的操作顺序组织内容，减少来回切页。各区域承载当前应用的实际功能，简单应用精简控件并合并无内容的区域，保持整体结构。',
+    '- 顶栏：左侧图标与应用名称；需要步骤导航时在中间展示；右侧集中放全局状态与设置等辅助入口。连接状态、历史、保存等内容仅在业务需要时提供。',
+    '- 上排控制区：左侧放来源选择、输入条件与全局参数，筛选靠近对应内容；右侧集中放主要操作、必要的操作摘要或预览及主按钮。操作范围和结果方向应清晰，按钮可用状态反映实际前置条件，业务需要确认时就近提供，避免散落或重复的操作入口。',
+    '- 中部双栏占主要空间：左侧组织输入、内容或对象，右侧展示对应详情、编辑配置、待处理内容或输出预览。根据当前功能确定左右职责，保持清晰的关联与流向；同类内容较多时可用页签切换，不堆叠重复面板。',
+    '- 区域内按“标题与工具栏 → 内容 → 就近操作”组织。使用列表时，列表头放标题、数量及必要的搜索、刷新或新增，列表项展示名称、关键摘要与选中状态，全选、添加、移除等操作就近放在底部。明确勾选、当前选中项与操作范围的含义，操作方向与左右流向一致。',
+    '- 底部反馈区：集中展示状态、进度、结果或错误，可使用通栏结果，也可按需要分为“左侧进度或结果 + 右侧过程日志”。结果已有主体展示区时，底部只补充必要状态，不重复展示；日志仅在业务需要时提供。空态、加载、禁用和错误状态应清楚且能指导下一步。',
+    '- 空间安排：桌面端充分利用页面宽度，双栏接近等宽、上下对齐、间距统一；中部随可用高度伸展，长列表和日志在各自区域滚动，区域标题与操作栏保持可见。避免用固定大高度制造空白；窄屏按任务顺序改为单列，不挤压表单或让整页横向溢出。',
+    '- 视觉表达：复用默认 UI 主题及其变量，以浅色页面底、白色面板、浅灰输入区、细边框、小圆角和克制的强调色区分层次，标题清楚、辅助文字弱化、表单标签对齐。已有应用沿用当前主题；只实现当前任务需要的区域与交互，不为套布局新增历史、配置、日志或确认流程。',
+  ].join('\n');
+
   function buildTemplatePrompt(kind) {
     if (kind === 'default') {
       return '处理未限定专精流程的通用任务。以用户本次要求的交付物为目标，在已配置能力范围内直接回答或完成操作。';
@@ -472,6 +484,8 @@
         '- 插件能力：按需使用已授权的 SDK、ARP、用户已选择或配置的 MCP 与 Skill；遵守应用生成指引和实际资源契约，不为开发便利自行扩展环境或权限。能力不足时说明具体缺口。',
         '- 验证范围：默认只做静态检查，核对源码逻辑、接口契约、权限声明和改动差异；不编写测试代码、不执行测试，不主动运行应用或业务动作来验证功能，功能测试由用户完成。只有用户明确要求时才调整验证范围。',
         '- 编辑方式：使用应用资源提供的编辑接口提交明确的局部修改，逐项核对编辑内容；禁止通过任何脚本批量替换源码。',
+        '',
+        APP_DEVELOPER_LAYOUT_GUIDANCE,
         '',
         '【应用开发流程】',
         '处理应用的创建、修改和修复，交付符合用户需求的 HTML、CSS、JavaScript、主题及功能声明。',
@@ -559,9 +573,11 @@
       '按用户要求保存草稿或发布应用，以资源写入回执确认结果；逐项对照用户要求说明实现、静态检查和待用户验证的内容。保存成功或 diff 正确不等于功能已验证，不宣称未实际验证的交互或业务链路已经可用。',
     ].join('\n');
     var currentPrompt = buildTemplatePrompt('app-developer');
-    if (prompt === currentPrompt.replace('\n' + APP_DEVELOPER_PARAMETER_GUIDANCE, '')) return currentPrompt;
+    var previousLayoutPrompt = currentPrompt.replace(APP_DEVELOPER_LAYOUT_GUIDANCE + '\n\n', '');
+    if (prompt === previousLayoutPrompt) return currentPrompt;
+    if (prompt === previousLayoutPrompt.replace('\n' + APP_DEVELOPER_PARAMETER_GUIDANCE, '')) return currentPrompt;
     var previousParameterGuidance = '应用必须声明 code.parameters，明确支持的参数、示例与实际适配过程；优先使用平台默认表单映射，复杂交互提供 applyParameters(input) 模块，无参数需求时明确声明不接收。保存前核对每个声明字段均有处理，不能把打开成功当作适配或业务成功。具体格式按应用 RouteContract 和按需读取的生成指引执行。';
-    if (prompt === currentPrompt.replace(APP_DEVELOPER_PARAMETER_GUIDANCE, previousParameterGuidance)) return currentPrompt;
+    if (prompt === previousLayoutPrompt.replace(APP_DEVELOPER_PARAMETER_GUIDANCE, previousParameterGuidance)) return currentPrompt;
     var isPreviousDefault = previousSourceGuidance.some(function (sourceGuidance) {
       return prompt === [
         '处理应用的创建、修改和修复，交付符合用户需求的 HTML、CSS、JavaScript、主题及功能声明。围绕本次需求做必要修改，优先复用已有应用和依赖。',

@@ -119,13 +119,12 @@
   }
 
   async function preview(value, figure) {
-    if (!root.document || !value || !value.url) return;
-    var loaded = null;
-    var previewUrl = value.url;
-    try {
-      loaded = await loadVariant(figure, 'original');
-      previewUrl = URL.createObjectURL(loaded.blob);
-    } catch (_) {}
+    if (!root.document || !value || (!value.url && !value.blob)) return;
+    var loaded = value.blob ? { blob: value.blob, metadata: value.metadata || {} } : null;
+    if (figure) {
+      try { loaded = await loadVariant(figure, 'original'); } catch (_) {}
+    }
+    var previewUrl = loaded ? URL.createObjectURL(loaded.blob) : value.url;
     if (closeActiveLightbox) closeActiveLightbox();
     var host = root.document.createElement('div');
     host.id = 'page-agent-image-lightbox';
@@ -148,7 +147,7 @@
     overlay.innerHTML = '<header class="conversation-image-toolbar"><div class="conversation-image-identity"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h12l4 4v14H4zM16 3v5h5M7 16l3-3 2 2 2-2 3 3M9 9h.01" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="conversation-image-title"></span><span class="conversation-image-meta"></span></div><div class="conversation-image-actions"><button type="button" data-lightbox-action="download" aria-label="下载图片" title="下载"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 20h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button type="button" data-lightbox-action="close" aria-label="关闭图片查看器" title="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></div></header><div class="conversation-image-stage"><img alt="页面图片大图"></div><footer class="conversation-image-footer" aria-hidden="true"></footer>';
     var metadata = loaded && loaded.metadata || value.metadata || {};
     var mimeType = String(metadata.mimeType || loaded && loaded.blob && loaded.blob.type || 'image/png');
-    var fileName = String(metadata.id || 'page-image') + '.' + fileExtension(mimeType);
+    var fileName = String(metadata.name || (String(metadata.id || 'page-image') + '.' + fileExtension(mimeType)));
     var dimensions = Number(metadata.width) > 0 && Number(metadata.height) > 0
       ? Math.round(Number(metadata.width)) + '×' + Math.round(Number(metadata.height)) : '';
     var title = overlay.querySelector('.conversation-image-title');
@@ -218,6 +217,18 @@
       event.preventDefault();
       event.stopPropagation();
       var figure = action.closest('[data-image-artifact]');
+      if (figure && figure.hasAttribute('data-image-artifact-reference')) {
+        if (figure.dataset.imageArtifactLoading === 'true') return;
+        figure.dataset.imageArtifactLoading = 'true';
+        loadVariant(figure, 'original').then(function (loaded) {
+          figure.classList.remove('is-missing');
+          var placeholder = figure.querySelector('[data-image-artifact-placeholder]');
+          if (placeholder) placeholder.hidden = true;
+          return preview({ blob: loaded.blob, metadata: loaded.metadata });
+        }).catch(function (error) { showMissing(figure, error && error.message || error); })
+          .finally(function () { delete figure.dataset.imageArtifactLoading; });
+        return;
+      }
       var value = figure && objectUrls.get(figure);
       if (!value) { if (figure) hydrateFigure(figure); return; }
       if (action.getAttribute('data-image-artifact-action') === 'open') {
@@ -233,7 +244,7 @@
     objectUrls.forEach(function (_, figure) { if (!figure.isConnected) releaseFigure(figure); });
     ensureObserver(container);
     installActions(container);
-    return Promise.all(Array.prototype.map.call(container.querySelectorAll('[data-image-artifact]'), hydrateFigure));
+    return Promise.all(Array.prototype.map.call(container.querySelectorAll('[data-image-artifact]:not([data-image-artifact-reference])'), hydrateFigure));
   }
 
   if (root && typeof root.addEventListener === 'function') {
@@ -263,6 +274,9 @@
       return runtimeRequest({ topicId: String(topicId || '') }, 'IMAGE_ARTIFACT_RELEASE_TOPIC');
     },
     hydrate: hydrate,
+    previewFile: function (file) {
+      return preview({ blob: file, metadata: { name: file.name, mimeType: file.type } });
+    },
     releaseFigure: releaseFigure,
   });
 });

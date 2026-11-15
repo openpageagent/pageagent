@@ -39,7 +39,8 @@ async function versionExtension() {
   const digest = hash.digest();
   const version = [0, 2, 4, 6].map(offset => digest.readUInt16BE(offset));
   version[0] = version[0] || 1;
-  delete manifest.version_name;
+  // Keep the release version visible while Chromium uses the build fingerprint.
+  manifest.version_name = releaseVersion;
   manifest.version = version.join('.');
   const background = await fs.readFile(path.join(extension, manifest.background.service_worker), 'utf8');
   manifest.background.service_worker = 'background-' + manifest.version + '.js';

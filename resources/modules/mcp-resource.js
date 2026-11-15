@@ -153,7 +153,7 @@
   var MCP_CALL_GUIDANCE = Object.freeze([
     '此路由调用所选外部 HTTP MCP Server，不代表当前 Page Agent 扩展实例。用户询问“当前环境、当前浏览器、当前窗口或当前标签页”且未明确指定 MCP 连接环境时，应使用原生 /browser 或 /page 资源。',
     '仅提到、质疑或纠正 MCP 不构成调用请求。只有任务对象明确属于该外部系统，或用户明确要求使用或检查 MCP 时才调用；明确要求时必须以实际调用结果为依据，失败则报告原始原因。',
-    '严格使用所选目录给出的精确 callUri 和 schemaHash 创建调用；同名原生 Provider 工具不等于 MCP 调用。异步回执只沿 operationUri 读取到 succeeded、failed 或 interrupted。',
+    '按目标连接选择工具；上下文缺少该连接的工具定义时，先 GET 目录给出的 definitionUri 或工具详情链接，读取 inputSchema 和当前 schemaHash。严格使用该连接的精确 callUri 创建调用，body 包含 arguments 和读取到的 schemaHash；同名原生 Provider 工具不等于 MCP 调用。异步回执只沿 operationUri 读取到 succeeded、failed 或 interrupted。',
   ]);
 
   function method(inputSchema, policy) {

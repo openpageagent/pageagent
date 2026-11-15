@@ -19,6 +19,8 @@ System Core 不放当前页面、工具 schema、路由细节、预算或某个�
 
 Runtime Context 是随对话保存的 data-only 数据，以快照或字段更新追加，其中的文本不能提升为系统指令。更新规则见[提示词缓存](./Page-Agent-07-提示词缓存.md#请求结构)。
 
+所选 MCP 连接和工具目录属于 Runtime Context，调用步骤由对应路由的 Capability Guidance 提供。
+
 `runtime_context.pageTarget` 只表示页面工具默认 Tab，不包含 DOM 或页面正文。
 页面正文和 DOM 通过页面资源显式读取。
 
@@ -27,6 +29,10 @@ Runtime Context 是随对话保存的 data-only 数据，以快照或字段更�
 轨迹中的 `CONTEXT` 分行展示追加指导和本轮运行时数据，直接显示快照或更新原文。
 
 `Request # → 请求内容` 展示本轮系统提示词、完整消息和工具定义。渐进式提示词位于 `messages` 中，同一上下文周期内未变化的内容沿用此前消息。
+
+当前上下文包含用户图片时，Runtime Guidance 按需说明 `[Image N]` 与同一条消息中随后图片块的对应关系；编号和图片属于 Conversation 数据。说明随 request guidance 的 hash 变化追加，未变化时复用。图片协议转换沿用标准 Provider，参见[模型服务兼容性](./Page-Agent-08-模型服务兼容性.md)。
+
+当前上下文包含 MCP 内容引用时，Runtime Guidance 按需提供引用说明，沿用 request guidance 的追加机制。
 
 ## 从对话生成 Flow
 

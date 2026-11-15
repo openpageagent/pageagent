@@ -241,6 +241,59 @@
       }
       return false;
     }
+    function waitForActionExpectation(condition, context) {
+      ensureNotAborted(context.signal);
+      var timeoutMs = Math.max(contract.WAIT_TIMEOUT_MIN_MS, Math.min(
+        Number(condition.timeoutMs) || Number(context.timeoutMs) || 10000, contract.WAIT_TIMEOUT_MAX_MS
+      ));
+      var pollIntervalMs = Math.max(contract.WAIT_POLL_INTERVAL_MIN_MS, Math.min(
+        Number(condition.pollIntervalMs) || 100, contract.WAIT_POLL_INTERVAL_MAX_MS
+      ));
+      var deadline = Date.now() + timeoutMs;
+      if (Number(context.deadline) > 0) deadline = Math.min(deadline, Number(context.deadline));
+      if (Date.now() >= deadline) return Promise.resolve(false);
+      // The deadline also bounds an in-flight read, not just the delay between
+      // attempts. Abort only this read scope when confirmation time runs out.
+      return new Promise(function (resolve, reject) {
+        var controller = new AbortController();
+        var parentSignal = context.signal;
+        var settled = false;
+        var pollTimer = null;
+        var deadlineTimer = setTimeout(function () { finish(null, false); }, Math.max(1, deadline - Date.now()));
+        function finish(error, matched) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(deadlineTimer);
+          clearTimeout(pollTimer);
+          if (parentSignal) parentSignal.removeEventListener('abort', onAbort);
+          if (!matched) controller.abort(error || new facts.PageFactError('EXPECTATION_TIMEOUT', '动作确认超过时限'));
+          if (error) reject(error);
+          else resolve(matched);
+        }
+        function onAbort() {
+          try { ensureNotAborted(parentSignal); }
+          catch (error) { finish(error, false); }
+        }
+        if (parentSignal) {
+          parentSignal.addEventListener('abort', onAbort, { once: true });
+          if (parentSignal.aborted) { onAbort(); return; }
+        }
+        async function poll() {
+          try {
+            if (Date.now() >= deadline) { finish(null, false); return; }
+            var matched = await evaluateCondition(condition, Object.assign({}, context, {
+              timeoutMs: Math.max(1, deadline - Date.now()), signal: controller.signal,
+            }));
+            if (settled) return;
+            ensureNotAborted(parentSignal);
+            if (Date.now() >= deadline) { finish(null, false); return; }
+            if (matched) { finish(null, true); return; }
+            pollTimer = setTimeout(poll, Math.min(pollIntervalMs, deadline - Date.now()));
+          } catch (error) { finish(error, false); }
+        }
+        poll();
+      });
+    }
     async function verify(input) {
       input = input || {};
       var intent = input.intent || {};
@@ -285,23 +338,31 @@
             reason: '显式 expectation 已在页面就绪等待中满足',
           });
         }
-        var conditionMet;
-        conditionMet = await evaluateCondition(expectation, {
+        var conditionContext = {
           intent: intent,
           browser: browser,
           browserFactsError: input.browserFactsError || null,
           targetRef: targetRef,
           baseline: input.baseline || derivedFacts.navigationBaseline || null,
           timeoutMs: input.timeoutMs || intent.timeoutMs || null,
+          deadline: input.deadline,
           signal: input.signal || intent.signal || null,
-        });
+        };
+        // Readiness and standalone waits own their polling. Only action
+        // receipts opt in here, including actions without a readiness barrier.
+        // newTab is decided from captured browser facts, not a live page read.
+        var shouldWait = input.waitForExpectation === true && String(expectation.kind || expectation.type || '') !== 'newTab';
+        var conditionMet = shouldWait
+          ? await waitForActionExpectation(expectation, conditionContext)
+          : await evaluateCondition(expectation, conditionContext);
         return contract.createVerdict({
           status: conditionMet ? 'confirmed' : 'failed',
           performed: performedFrom(actionFacts),
           conditionMet: conditionMet,
           signals: signals,
           evidence: evidence,
-          reason: conditionMet ? '显式 expectation 已满足' : '显式 expectation 未满足',
+          reason: conditionMet ? '显式 expectation 已满足'
+            : (shouldWait ? '显式 expectation 在确认时限内未满足' : '显式 expectation 未满足'),
         });
       }
       if (intent.kind === 'handleDialog' && derivedFacts.dialog) {
@@ -373,7 +434,8 @@
       var intent = input.intent || {};
       var actionFacts = input.actionFacts || {};
       var derivedFacts = input.derivedFacts || {};
-      var verification = await verify(input);
+      var verification = await verify(Object.assign({}, input, { waitForExpectation: true }));
+      var completedAt = new Date().toISOString();
       var browser = browserSummary(input.browserFacts);
       var navigationFacts = derivedFacts.navigation ? [Object.assign({ kind: 'navigation', sources: ['cdp'] }, derivedFacts.navigation)] : [];
       var newNavigationTarget = null;
@@ -411,7 +473,8 @@
         newNavigationTarget: newNavigationTarget,
         browserFacts: browser.facts || [],
         startedAt: actionFacts.startedAt || intent.startedAt,
-        completedAt: actionFacts.completedAt || new Date().toISOString(), durationMs: actionFacts.durationMs,
+        completedAt: completedAt,
+        durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(actionFacts.startedAt || intent.startedAt || completedAt)),
         warnings: actionFacts.warnings || [],
       });
     }
@@ -793,8 +856,11 @@
           actionFacts: actionFacts,
           browserFacts: { facts: browserFacts, newTabs: newTabCandidates, ambiguous: ambiguousNewTab },
           derivedFacts: input.derivedFacts,
+          waitForExpectation: true,
+          deadline: input.deadline,
         });
       }
+      var completedAt = new Date().toISOString();
       return contract.createReceipt({
         actionId: intent.actionId,
         source: intent.source,
@@ -808,8 +874,8 @@
         newNavigationTarget: newNavigationTarget,
         browserFacts: browserFacts,
         startedAt: actionFacts.startedAt,
-        completedAt: actionFacts.completedAt,
-        durationMs: input.durationMs,
+        completedAt: completedAt,
+        durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(actionFacts.startedAt || completedAt)),
         warnings: actionFacts.warnings,
       });
     }

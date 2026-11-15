@@ -387,7 +387,10 @@
         var app = appId === null ? null : await summary(appId);
         var current = await chrome.storage.local.get(bindingKey), bindings = current[bindingKey] || {};
         if (app) bindings[conversationId] = { appId: appId, name: app.name, revision: app.revision, boundAt: Date.now() };
-        else if (bindings[conversationId]) bindings[conversationId].active = false;
+        else if (bindings[conversationId]) {
+          bindings[conversationId].active = false;
+          bindings[conversationId].unboundAt = Date.now();
+        }
         await chrome.storage.local.set({ [bindingKey]: bindings });
         if (app) store.emit(appId, 'bound');
         return bindings[conversationId] || null;
