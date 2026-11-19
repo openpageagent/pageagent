@@ -247,15 +247,15 @@
         if (builtin) badges += '<span class="badge builtin">内置</span>';
         return '<div class="item-card' + (draft && draft.id === page.id ? ' selected' : '') + (builtin ? ' builtin' : '') + '" role="button" tabindex="0" data-action="edit-page" data-id="' + esc(page.id) + '">'
           + '<span class="item-title">' + esc(page.label || '(未命名)') + '</span>'
-          + '<span class="item-sub">' + esc(page.url) + '</span>'
           + badges
+          + '<span class="item-sub">' + esc(page.url) + '</span>'
+          + '<span class="item-card-end">' + itemIdHtml(page.id)
           + (builtin
             ? '<button class="btn-small" disabled title="内置页面不能直接修改，请先复制">修改</button>'
               + '<button class="btn-small btn-danger-outline" disabled title="内置页面不能删除">删除</button>'
               + '<button class="btn-small" data-action="copy-page" data-id="' + esc(page.id) + '">复制</button>'
             : '')
-          + itemIdHtml(page.id)
-          + '</div>';
+          + '</span></div>';
       });
       renderEditor();
       return { ok: true, draftOpen: !!draft };

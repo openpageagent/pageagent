@@ -1,73 +1,65 @@
-// The extension owns the account; the connected MCP Server performs SMTP delivery.
+// The browser stores references only; SMTP credentials and delivery live on the server.
 (function (root) {
   'use strict';
 
-  function create(chromeApi, getWebSocketClient) {
+  function create(chromeApi, getWebSocketClient, callServerArp) {
     var settings = root.PageAgentMailSettings;
-
+    function unwrap(envelope) {
+      if (!envelope || !envelope.status) throw new Error('服务端邮件响应无效');
+      if (envelope.status.code >= 400) throw root.AgentResourceProtocol.arpError(
+        envelope.error && envelope.error.code || 'UPSTREAM_FAILED', envelope.error && envelope.error.message || '邮件操作失败',
+        { performed: envelope.receipt && envelope.receipt.performed || 'unknown', retryable: false, details: envelope.error && envelope.error.details });
+      return envelope.primary && envelope.primary.data;
+    }
     async function load() {
       var stored = await chromeApi.storage.local.get(settings.SETTINGS_KEY);
-      return settings.normalize(stored[settings.SETTINGS_KEY]);
+      return settings.normalizeBinding(stored[settings.SETTINGS_KEY]);
     }
-
+    async function accounts(connectionId) {
+      var data = unwrap(await callServerArp(connectionId, 'GET', { uri: '/bots' }, { actorId: 'mail:settings' }));
+      return data.items.filter(function (item) { return item.adapter === 'mail'; });
+    }
     async function save(value) {
-      var config = settings.validate(value, true);
-      var patch = {};
-      patch[settings.SETTINGS_KEY] = config;
+      var config = settings.validateBinding(value, true);
+      if (config.accountId && !config.connectionId) throw new Error('请选择服务端连接');
+      var patch = {}; patch[settings.SETTINGS_KEY] = config;
       await chromeApi.storage.local.set(patch);
       return config;
     }
-
     async function setEnabled(enabled) {
       if (typeof enabled !== 'boolean') throw new Error('邮件通知开关必须为布尔值');
-      var config = await load();
-      config.enabled = enabled;
-      return save(config);
+      // Preserve legacy credentials until the user explicitly saves a server binding.
+      var stored = await chromeApi.storage.local.get(settings.SETTINGS_KEY);
+      var raw = Object.assign({}, stored[settings.SETTINGS_KEY], { enabled: enabled });
+      var patch = {}; patch[settings.SETTINGS_KEY] = raw;
+      await chromeApi.storage.local.set(patch);
+      return settings.normalizeBinding(raw);
     }
-
     async function send(input, options) {
       options = options || {};
       var stored = await load();
-      if (!stored.enabled) {
-        var error = new Error('邮件通知已关闭，请先在连接配置中启用');
-        error.retryable = false;
-        throw error;
-      }
+      if (!stored.enabled) throw root.AgentResourceProtocol.arpError('FORBIDDEN', '邮件通知已关闭，请先在连接配置中启用', { performed: 'no' });
+      var config = settings.validateBinding(options.config || stored);
       var message = settings.prepareMessage(input);
-      var config = settings.validate(options.config || stored);
-      if (!config.connectionId) throw new Error('请明确选择用于发送邮件的服务端连接');
-      if (options.context && options.context.sourceConnectionId && options.context.sourceConnectionId !== config.connectionId) throw new Error('CROSS_CONNECTION_FORWARDING_DISABLED');
-      var client = typeof getWebSocketClient === 'function' ? getWebSocketClient(config.connectionId) : null;
-      if (!client || !client.isConnected()) throw new Error('请先在「连接配置」中启用并连接 MCP Server');
-      var status = client.getStatus();
-      if (!status.serverInfo.capabilities.mail.supported) throw new Error('所选服务端不支持邮件');
-      if (!status.serverInfo.capabilities.audit.available) throw root.AgentResourceProtocol.arpError('TEMPORARILY_UNAVAILABLE', '服务端审计不可用，邮件尚未发送', { performed: 'no', retryable: false, details: { reason: 'AUDIT_UNAVAILABLE' } });
-      var context = options.context || {};
-      async function correlation(value) { if (!value) return null; return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(String(value)) ? String(value) : root.AgentResourceProtocol.sha256(String(value)); }
-      var caller = { kind: context.sourceConnectionId ? 'external' : context.runId ? 'flow' : 'ui', actorId: context.actorId || 'mail:runtime',
-        conversationId: context.conversationId || null, runId: context.runId || null, parentRequest: context.parentRequest || null };
-      caller.actorId = await correlation(caller.actorId); caller.conversationId = await correlation(caller.conversationId); caller.runId = await correlation(caller.runId);
-      var smtpConfig = Object.assign({}, config); delete smtpConfig.connectionId;
-      try { return await client.sendMail({ config: smtpConfig, message: message }, { signal: options.signal, caller: caller }); }
-      catch (error) { throw root.AgentResourceProtocol.arpError(error.code || 'UPSTREAM_FAILED', error.message, { performed: error.performed || 'unknown', retryable: false,
-        details: { reason: error.reason, audit: error.audit, target: { connectionId: config.connectionId, serverId: status.serverId } } }); }
+      var context = Object.assign({}, options.context || {});
+      if (options.signal) context.abortSignal = options.signal;
+      if (context.appResourceSession) await root.PageAgentApps.authorizeResources(context.appResourceSession, ['mail-settings.execute']);
+      return unwrap(await callServerArp(config.connectionId, 'POST', {
+        uri: '/bots/accounts/' + encodeURIComponent(config.accountId) + '/mail', body: message,
+        idempotencyKey: crypto.randomUUID(),
+      }, context));
     }
-
     async function getStatus() {
       var config = await load();
-      var client = config.connectionId && typeof getWebSocketClient === 'function' ? getWebSocketClient(config.connectionId) : null;
+      var client = config.connectionId && getWebSocketClient(config.connectionId);
       var status = client && client.getStatus();
-      return {
-        enabled: config.enabled,
-        connectionId: config.connectionId,
-        reason: !config.connectionId ? 'TARGET_REQUIRED' : status && status.reason || (status && status.ready ? null : 'CONNECTION_NOT_READY'),
+      return { enabled: config.enabled, connectionId: config.connectionId, accountId: config.accountId,
+        reason: !config.connectionId || !config.accountId ? 'TARGET_REQUIRED' : status && status.reason || (status && status.ready ? null : 'CONNECTION_NOT_READY'),
         connected: !!(status && status.ready),
-        supported: !!(status && status.ready && status.serverInfo && status.serverInfo.capabilities.mail.supported),
-      };
+        supported: !!(status && status.ready && status.serverInfo && status.serverInfo.capabilities.mail.supported
+          && status.serverInfo.capabilities.mail.protocol === 'bot-mail/1') };
     }
-
-    return Object.freeze({ load: load, save: save, setEnabled: setEnabled, send: send, getStatus: getStatus });
+    return Object.freeze({ load: load, save: save, setEnabled: setEnabled, send: send, getStatus: getStatus, accounts: accounts });
   }
-
   root.MailClient = Object.freeze({ create: create });
 })(globalThis);

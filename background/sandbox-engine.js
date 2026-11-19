@@ -118,7 +118,7 @@
       var execId = 'exec_' + Date.now() + '_' + (++execSeq);
 
       return new Promise(function (resolve, reject) {
-        var timer = setTimeout(function () {
+        var timer = options.persistent === true ? null : setTimeout(function () {
           abortScript(execId, '脚本执行超时 (' + timeoutMs + 'ms)');
         }, timeoutMs);
 
@@ -131,6 +131,7 @@
           // 运行会话可注入自己的 API 桥（变量上下文/页面 tab 按会话隔离）与中止标签
           apiCall: options.nodeExecutionApiCall || options.apiCall || null,
           tag: options.tag || '',
+          persistent: options.persistent === true,
           addLog: options.nodeExecutionAddLog || options.addLog || addLog,  // 支持会话级日志函数
           signal: options.signal || null,
           abortListener: null,
@@ -147,7 +148,7 @@
         }
 
         if (!runningScripts[execId]) return;
-        sendToSandbox({ type: 'SCRIPT_RUN', execId: execId, code: code, timeoutMs: timeoutMs })
+        sendToSandbox({ type: 'SCRIPT_RUN', execId: execId, code: code, timeoutMs: timeoutMs, persistentTag: options.persistent === true ? options.tag : '' })
           .catch(function (err) {
             finishScript(execId, { ok: false, error: err.message });
           });
@@ -184,7 +185,7 @@
     function abortAll(reason) {
       var ids = Object.keys(runningScripts);
       for (var i = 0; i < ids.length; i++) {
-        abortScript(ids[i], reason || '流程已停止');
+        if (!runningScripts[ids[i]].persistent) abortScript(ids[i], reason || '流程已停止');
       }
     }
 

@@ -8,7 +8,7 @@ const { LIMITS } = require('../shared/mcp-contract');
 
 function unavailable() { return Object.assign(new Error('持久审计不可用'), { code: 'TEMPORARILY_UNAVAILABLE', reason: 'AUDIT_UNAVAILABLE' }); }
 function digest(value) { return createHash('sha256').update(value).digest('hex'); }
-const EVENTS = new Set(['auth.succeeded', 'auth.denied', 'pairing.created', 'pairing.revoked', 'password.changed',
+const EVENTS = new Set(['auth.succeeded', 'auth.denied', 'connection.closed', 'pairing.created', 'pairing.revoked', 'password.changed',
   'grants.changed', 'request.received', 'authorization.denied', 'execution.intent', 'execution.started', 'process.spawned',
   'cancel.requested', 'execution.finished', 'execution.unconfirmed', 'audit.recovered']);
 const CONTEXT_FIELDS = ['transportSessionId', 'requestId', 'parentRequest', 'principal', 'caller', 'callerAssurance',
@@ -26,6 +26,42 @@ class AuditLog {
   status(value) {
     if (this.available === value) return;
     this.available = value; this.onStatus(value);
+  }
+  async recent() {
+    const names = (await fs.readdir(this.directory)).filter(name => name === 'audit.jsonl' || /^audit-.*\.jsonl$/.test(name));
+    const files = (await Promise.all(names.map(async name => {
+      try { return { name, time: (await fs.stat(path.join(this.directory, name))).mtimeMs }; }
+      catch (error) { if (error.code !== 'ENOENT') throw error; return null; }
+    }))).filter(Boolean);
+    files.sort((a, b) => b.time - a.time);
+    const items = [];
+    let remaining = 4 * 1024 * 1024;
+    for (const file of files) {
+      if (items.length >= 100 || remaining <= 0) break;
+      let handle;
+      try {
+        handle = await fs.open(path.join(this.directory, file.name), 'r');
+        const { size } = await handle.stat(), length = Math.min(size, remaining);
+        const buffer = Buffer.alloc(length), { bytesRead } = await handle.read(buffer, 0, length, size - length);
+        remaining -= length;
+        const lines = buffer.subarray(0, bytesRead).toString('utf8').split('\n');
+        if (size > length) lines.shift();
+        for (const line of lines.reverse()) {
+          if (!line || items.length >= 100) continue;
+          let record; try { record = JSON.parse(line); } catch (_) { continue; }
+          // Connection lifecycle belongs to runtime diagnostics; retain legacy records on disk.
+          if (record.event === 'connection.closed') continue;
+          // The console displays metadata only; commands and request bodies stay on disk.
+          items.push({ timestamp: record.timestamp, event: record.event, operation: record.operation,
+            clientId: record.principal?.clientId || record.claimedClientId || record.principal?.id,
+            transport: record.principal?.transport, decision: record.decision,
+            performed: record.receipt?.performed, errorReason: record.errorReason,
+            requestId: record.requestId, address: record.event === 'auth.succeeded' ? record.parameters?.address : undefined });
+        }
+      } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      finally { await handle?.close(); }
+    }
+    return { items, limit: 100, scanBytes: 4 * 1024 * 1024 };
   }
   async init(recoverUnfinished = true) {
     await fs.mkdir(this.directory, { recursive: true, mode: 0o700 });

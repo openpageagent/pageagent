@@ -17,8 +17,11 @@
     var connectionText = '正在读取状态…';
     var statusLoading = false;
     var availableConnections = [];
+    var availableAccounts = [];
+    var accountsConnectionId = '';
+    var accountLoadVersion = 0;
     var testResult = { message: '', error: false };
-    var keys = { connectionId: 'connection-id', host: 'host', port: 'port', security: 'security', username: 'username', password: 'password', from: 'from', fromName: 'from-name' };
+    var keys = { connectionId: 'connection-id', accountId: 'account-id' };
     async function refreshConnections() {
       var response = await chrome.runtime.sendMessage({ type: 'ARP_RESOURCE_REQUEST', payload: { method: 'GET', request: { uri: '/connections?limit=100' } } });
       var envelope = response && (response.payload || response.envelope || response.result);
@@ -29,12 +32,36 @@
       items.forEach(function (connection) { select.add(new Option(connection.alias + ' · ' + connection.state, connection.id)); });
       if (selected && !items.some(function (item) { return item.id === selected; })) select.add(new Option('已失效的连接 · ' + selected, selected));
       select.value = selected;
+      await refreshAccounts();
       updateSelectedStatus();
+    }
+
+    async function refreshAccounts() {
+      var version = ++accountLoadVersion;
+      var connectionId = input('connection-id').value;
+      var items = [], error = null;
+      try { if (connectionId) items = await request('MAIL_ACCOUNTS', { connectionId: connectionId }); }
+      catch (failure) { error = failure; }
+      if (version !== accountLoadVersion || connectionId !== input('connection-id').value) return;
+      availableAccounts = items; accountsConnectionId = connectionId;
+      var select = input('account-id'), selected = select.value;
+      select.replaceChildren(new Option(error ? error.message : '请选择已授权的邮件账号', ''));
+      items.forEach(function (item) { select.add(new Option(item.name + ' · ' + item.state, item.id)); });
+      if (selected && !items.some(function (item) { return item.id === selected; })) select.add(new Option('未找到或暂不可用 · ' + selected, selected));
+      select.value = selected;
+      updateSelectedStatus();
+    }
+
+    function serverReady(connection) {
+      return !!(connection && connection.ready && connection.capabilities && connection.capabilities.mail
+        && connection.capabilities.mail.supported && connection.capabilities.mail.protocol === 'bot-mail/1'
+        && connection.capabilities.audit.available);
     }
 
     function updateSelectedStatus() {
       var connection = availableConnections.find(function (item) { return item.id === input('connection-id').value; });
-      mailReady = !!(connection && connection.ready && connection.capabilities && connection.capabilities.mail.supported && connection.capabilities.audit.available);
+      var account = accountsConnectionId === input('connection-id').value && availableAccounts.find(function (item) { return item.id === input('account-id').value; });
+      mailReady = serverReady(connection) && !!(account && account.enabled);
       connectionText = connection ? connection.alias + ' · ' + (mailReady ? '已就绪' : connection.reason || connection.state) : '请选择可用的邮件服务端';
       syncControls();
     }
@@ -48,13 +75,12 @@
     function renderConnectionSummary() {
       if (!savedConfig) return;
       var connection = availableConnections.find(function (item) { return item.id === savedConfig.connectionId; });
-      var ready = !!(connection && connection.ready && connection.capabilities && connection.capabilities.mail.supported && connection.capabilities.audit.available);
-      var configured = !!(savedConfig.host && savedConfig.from && savedConfig.connectionId);
-      var title = savedConfig.host ? savedConfig.host + ':' + savedConfig.port : 'SMTP 服务器';
-      var description = savedConfig.host
-        ? (savedConfig.security === 'starttls' ? 'STARTTLS' : 'TLS') + ' · ' + (connection ? connection.alias : '未连接服务端')
-        : '尚未配置发件账户';
-      var from = savedConfig.from || '未设置发件邮箱';
+      var ready = serverReady(connection);
+      var configured = !!(savedConfig.accountId && savedConfig.connectionId);
+      var account = accountsConnectionId === savedConfig.connectionId && availableAccounts.find(function (item) { return item.id === savedConfig.accountId; });
+      var title = account ? account.name : '服务端邮件账号';
+      var description = configured ? (connection ? connection.alias : '未连接服务端') : '尚未绑定服务端邮件账号';
+      var from = savedConfig.accountId || '请在服务端创建账号后选择';
       input('summary-title').textContent = input('summary-title').title = title;
       input('summary-description').textContent = input('summary-description').title = description;
       input('summary-from').textContent = input('summary-from').title = from;
@@ -127,14 +153,15 @@
     function readConfig() {
       var config = { enabled: mailEnabled };
       Object.keys(keys).forEach(function (key) { config[key] = input(keys[key]).value; });
-      return settings.validate(config);
+      return settings.validateBinding(config);
     }
     function render(config, enabledOnly) {
-      config = settings.normalize(config);
+      config = settings.normalizeBinding(config);
       savedConfig = config;
       mailEnabled = config.enabled;
       if (!enabledOnly) {
         if (config.connectionId && !Array.from(input('connection-id').options).some(function (option) { return option.value === config.connectionId; })) input('connection-id').add(new Option(config.connectionId, config.connectionId));
+        if (config.accountId && !Array.from(input('account-id').options).some(function (option) { return option.value === config.accountId; })) input('account-id').add(new Option(config.accountId, config.accountId));
         Object.keys(keys).forEach(function (key) { input(keys[key]).value = config[key]; });
         refreshConnections().catch(function () {});
       }
@@ -143,9 +170,9 @@
     options.lifecycle.subscribe(chrome.storage.onChanged, function (changes, area) {
       if (area !== 'local' || !changes[settings.SETTINGS_KEY]) return;
       var change = changes[settings.SETTINGS_KEY];
-      var previous = settings.normalize(change.oldValue);
-      var current = settings.normalize(change.newValue);
-      // Toggling the switch must not overwrite unsaved SMTP fields.
+      var previous = settings.normalizeBinding(change.oldValue);
+      var current = settings.normalizeBinding(change.newValue);
+      // Toggling the switch must not overwrite an unsaved account selection.
       render(current, isDirty() || Object.keys(keys).every(function (key) { return previous[key] === current[key]; }));
     });
     async function request(type, payload) {
@@ -178,7 +205,11 @@
         showStatus(error.message || '邮件通知开关保存失败', true);
       } finally { setBusy(false); }
     });
-    options.lifecycle.listen(input('connection-id'), 'change', updateSelectedStatus);
+    options.lifecycle.listen(input('connection-id'), 'change', function () {
+      input('account-id').value = ''; availableAccounts = [];
+      updateSelectedStatus(); refreshAccounts();
+    });
+    options.lifecycle.listen(input('account-id'), 'change', updateSelectedStatus);
 
     options.lifecycle.listen(form, 'submit', async function (event) {
       event.preventDefault();
@@ -216,7 +247,7 @@
           cc: settings.recipients(testForm.querySelector('#mail-test-cc').value, '抄送'),
           bcc: settings.recipients(testForm.querySelector('#mail-test-bcc').value, '密送'),
           subject: 'Page Agent 邮件通知测试',
-          body: '这是一封 Page Agent 测试邮件，用于验证当前 SMTP 配置和附件发送。',
+          body: '这是一封 Page Agent 测试邮件，用于验证服务端邮件账号和附件发送。',
         };
         if (!message.to.length && !message.cc.length && !message.bcc.length) throw new Error('请至少填写一个测试收件地址');
         var files = Array.from(testForm.querySelector('#mail-test-attachments').files || []);

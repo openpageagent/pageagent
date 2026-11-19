@@ -15,7 +15,7 @@
   ]);
   var RESOURCE_TOOL_NAMES = Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
   var CONTROL_TOOL_NAMES = Object.freeze(['ASK_USER']);
-  var INTERACTIVE_SURFACES = Object.freeze(['options', 'page']);
+  var INTERACTIVE_SURFACES = Object.freeze(['options', 'page', 'messaging']);
   var ACTIVE_REQUEST_STATES = Object.freeze(['starting', 'running']);
   var SURFACE_MATRIX = Object.freeze({
     options: Object.freeze({
@@ -25,6 +25,10 @@
     page: Object.freeze({
       streamOutput: true, askUser: true, steering: true,
       userCancel: true, reasoning: true, grantSource: 'assistant-policy+page-scope',
+    }),
+    messaging: Object.freeze({
+      streamOutput: true, askUser: true, steering: true,
+      userCancel: true, reasoning: false, grantSource: 'assistant-policy',
     }),
     sidepanel: Object.freeze({
       streamOutput: false, askUser: false, steering: false,

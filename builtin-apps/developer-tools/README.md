@@ -1,6 +1,6 @@
 # 开发者工具箱
 
-Page Agent 内置的离线工具集合，覆盖加密校验、编解码、文本与数据处理、数值与时间转换、内容生成和网络文本处理。应用、流程、脚本和对话共用插件的 `/utilities` 能力，完整工具与操作对应关系见 [TOOL-MAP.md](./TOOL-MAP.md)。
+Page Agent 内置的离线工具集合，覆盖加密校验、编解码、文本与数据处理、数值与时间转换、内容生成和网络文本处理。应用、流程、脚本和对话共用扩展的 `/utilities` 能力，完整工具与操作对应关系见 [TOOL-MAP.md](./TOOL-MAP.md)。
 
 ## 使用
 
@@ -9,7 +9,7 @@ Page Agent 内置的离线工具集合，覆盖加密校验、编解码、文本
 - **处理内容**：按页面提示输入文本、选择文件或调整参数。实时工具随输入更新，生成工具按页面按钮生成或刷新；支持复制结果、下载文件及二维码、条形码预览。
 - **对话联动**：对话可通过 `POST /apps/app_developer_tools/open` 传入 `{input:{toolId,input,operation?}}`，直接打开指定工具并填入文本。多个工具的计算通过 `/utilities` 串联。启动约定可从应用摘要的 `slots.published.customBehavior` 读取，示例见[应用文档](../../docs/Page-Agent-13-应用.md#内置开发工具联动)。
 - **管理常用**：在同一列表中勾选工具，新勾选的工具追加到常用末尾。已选项左侧显示六点标记，可直接拖拽整行排序；悬停时右侧显示三点按钮，点击后可选择「置顶」。聚焦已选行后也支持方向键移动、Home 置顶、End 置底；调整后点击「保存」。默认常用包含 Docker → Compose。
-- **独立配置**：常用工具及顺序按应用 ID 独立保存，立即写入本机应用数据，无需保存插件全局配置；内置应用更新保留已有设置，不保存工具输入或结果。「恢复默认」后需点击「保存」才生效。
+- **独立配置**：常用工具及顺序按应用 ID 独立保存，立即写入本机应用数据，无需保存扩展全局配置；内置应用更新保留已有设置，不保存工具输入或结果。「恢复默认」后需点击「保存」才生效。
 - **权限**：工具调用需要开启 SDK，并允许 `utilities.read`、`utilities.execute`；保存常用配置还需应用数据读写权限。权限被关闭时，可在「应用权限」中调整，或「重置为默认权限」后保存。
 
 ## 流程、脚本与对话
@@ -65,7 +65,7 @@ const digest = response.primary.data.value;
 
 ## 开发与维护
 
-本应用的界面 JS/CSS 和默认主题通过 `sourceFiles` 安装到 `code.files`，支持「复制后修改」。副本的「源码文件」页签和对话接口均可编辑这些文件，发布和导出会携带原文。公共工具算法仍使用插件的 `/utilities` 服务。
+本应用的界面 JS/CSS 和默认主题通过 `sourceFiles` 安装到 `code.files`，支持「复制后修改」。副本的「源码文件」页签和对话接口均可编辑这些文件，发布和导出会携带原文。公共工具算法仍使用扩展的 `/utilities` 服务。
 
 | 文件 | 职责 |
 | --- | --- |
@@ -81,6 +81,6 @@ const digest = response.primary.data.value;
 - 修改应用 JSON 后，同步 [builtin-apps/index.json](../index.json) 中的 SHA-256 指纹，再重新加载扩展并重新打开应用。可运行 `node scripts/sync-builtin-app-index.js`，仅同步索引，无需编译；指纹不一致时，加载器会拒绝更新应用。
 - 修改本地界面 JS 或 CSS 后，重新加载扩展并重新打开应用。
 
-副本导出的应用 JSON 携带界面模块与主题原文；公共代码编辑器、字体及 `/utilities` 服务仍由目标插件提供。默认发布打包跳过内置应用 JS/CSS 和默认主题的压缩。
+副本导出的应用 JSON 携带界面模块与主题原文；公共代码编辑器、字体及 `/utilities` 服务仍由目标扩展提供。默认发布打包跳过内置应用 JS/CSS 和默认主题的压缩。
 
 来源、致谢与许可见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)；随包算法库许可入口为 [utilities/THIRD_PARTY_NOTICES.html](../../utilities/THIRD_PARTY_NOTICES.html)。

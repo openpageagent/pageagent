@@ -52,7 +52,7 @@
               },
               "dependencies": [],
               "customBehavior": [
-                "界面与主题源码通过 sourceFiles 安装到 code.files，复制和导出携带这些文件；通过既有 /utilities SDK 服务执行工具，需 utilities.read、utilities.execute。转换和检查随输入自动更新，生成工具提供直接动作。输入不持久化，不自动读取剪贴板。目标插件仍需提供公共 UI、字体及工具服务。",
+                "界面与主题源码通过 sourceFiles 安装到 code.files，复制和导出携带这些文件；通过既有 /utilities SDK 服务执行工具，需 utilities.read、utilities.execute。转换和检查随输入自动更新，生成工具提供直接动作。输入不持久化，不自动读取剪贴板。目标扩展仍需提供公共 UI、字体及工具服务。",
                 "对话可调用 POST /apps/{appId}/open，body 为 {input:{toolId,input,operation?}}；应用 SDK 对应 PageAgent.apps.open(appId,{toolId,input,operation?})。toolId 和文本 input 必填（input 可为空字符串），operation 可省略，默认使用该入口的首个接收操作；不接受其他字段。打开发布页后直接选择工具和操作并填入，不弹选择框。带参数新建标签页，URL 编码后最多 16 KiB；需 apps.execute。此应用原版 ID 为 app_developer_utils，副本用自己的 ID。",
                 "常用 toolId 与接收操作：base64encode/urlencode/htmlencode/backslash=encode或decode；jsonformatter=format/minify/sort/repair/schema/jsonpath/jmespath；unixtime/cronparser/colortools/regextester=inspect；textdiff=lines/words/characters；numberbase/hashing=all；htmlpreview=preview；quicktype=toCode；hex2ascii=decode；ascii2hex=encode；linesortdedupe=processLines。其余入口和操作可读已发布的 files/tools.js，其中 profile.id 是 toolId，profile.operations 指定接收操作，未指定时沿用 /utilities 中 profile.tool 的操作。randomstringgenerator、loremipsum 不接收文本。",
                 "多个工具串联时，对话直接调用 /utilities 的操作，将前一步响应 primary.data.value 作为下一步的 input；最后用 /open 的 input.input 填入文本，结构化结果先转为 JSON 字符串。打开页面只返回 tabId/url，不返回页面计算结果。启动参数仅填入一次；工具选项在页面调整，接收后沿用既有实时处理行为。"

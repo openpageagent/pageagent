@@ -13,7 +13,7 @@
   'use strict';
   var EXTENSION_STATUS = {
     type: 'object', properties: {
-      currentVersion: { type: 'string', description: '当前运行的插件版本' },
+      currentVersion: { type: 'string', description: '当前运行的扩展版本' },
       latestVersion: { type: ['string', 'null'], description: 'GitHub 最新正式版本；检查失败时为 null' },
       updateAvailable: { type: ['boolean', 'null'], description: '是否有新版本；检查失败时为 null' },
       canUpdate: { type: 'boolean', description: '是否可通过当前调用方执行更新' },
@@ -38,13 +38,13 @@
     }),
     support.route({
       template: '/config/extension', resourceType: 'ExtensionUpdateStatus', relation: 'extension-update',
-      summary: '检查插件当前版本、最新版本、更新提示与插件目录授权状态',
-      aliases: ['插件更新', '版本检查', '最新版本'], tags: ['config', 'extension', 'update'],
-      methods: { GET: support.read(support.EMPTY_QUERY, 'config.read', 'extension-update', '检查插件更新；canUpdate 为 true 时可按 latestVersion 更新', EXTENSION_STATUS) },
+      summary: '检查扩展当前版本、最新版本、更新提示与扩展目录授权状态',
+      aliases: ['扩展更新', '版本检查', '最新版本'], tags: ['config', 'extension', 'update'],
+      methods: { GET: support.read(support.EMPTY_QUERY, 'config.read', 'extension-update', '检查扩展更新；canUpdate 为 true 时可按 latestVersion 更新', EXTENSION_STATUS) },
     }),
     support.route({
       template: '/config/extension/updates', resourceType: 'ExtensionUpdateResult', relation: 'update-extension',
-      summary: '更新已配置且已授权的插件目录；完成后需在配置页重新加载插件',
+      summary: '更新已配置且已授权的扩展目录；完成后需在配置页重新加载扩展',
       methods: { POST: support.create({
         type: 'object', properties: { version: { type: 'string', pattern: '^\\d+(?:\\.\\d+){0,3}$', description: 'GET /config/extension 返回的 latestVersion；版本变化时拒绝更新' } },
         required: ['version'], additionalProperties: false,
@@ -86,7 +86,7 @@
       var data = await options.extensionUpdate.getStatus();
       var allowed = !context.allowedRouteMethods || (context.allowedRouteMethods['/config/extension/updates'] || []).includes('POST');
       if (data.canUpdate && (!allowed || !(context.permissionScope || context.permissions || []).includes('config.write'))) {
-        data.canUpdate = false; data.reason = 'UPDATE_PERMISSION_REQUIRED'; data.message += '当前调用方未获插件更新写入权限。';
+        data.canUpdate = false; data.reason = 'UPDATE_PERMISSION_REQUIRED'; data.message += '当前调用方未获扩展更新写入权限。';
       }
       var result = support.result(request.uri, 'ExtensionUpdateStatus', data, service);
       if (data.canUpdate) result.primary.links.push({ rel: 'update-extension', href: '/config/extension/updates', method: 'POST' });

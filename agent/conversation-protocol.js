@@ -20,7 +20,7 @@
     GET_SUMMARY: 'GET_SUMMARY',
   });
   var COMMAND_NAMES = Object.freeze(Object.keys(COMMANDS).map(function (key) { return COMMANDS[key]; }));
-  var SURFACE_TYPES = Object.freeze(['options', 'page', 'sidepanel', 'scheduled', 'mcp']);
+  var SURFACE_TYPES = Object.freeze(['options', 'page', 'sidepanel', 'scheduled', 'mcp', 'messaging']);
   var ENTRY_TYPES = Object.freeze(['conversation', 'page', 'scheduled']);
   var TERMINAL_STATES = Object.freeze(['completed', 'failed', 'cancelled', 'truncated', 'blocked']);
   var ERROR_CODES = Object.freeze([

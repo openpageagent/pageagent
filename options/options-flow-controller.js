@@ -392,9 +392,9 @@
         var usageSummary = flowUsageSummary(flow);
         return '<div class="item-card' + (draft && draftId() === id ? ' selected' : '') + (builtin ? ' builtin' : '') + '" role="button" tabindex="0" data-action="edit-flow" data-id="' + esc(id) + '">'
           + '<span class="item-title">' + esc(ownDataValue(flow, 'label') || '(未命名)') + '</span>'
-          + '<span class="item-sub">' + nodeCount + ' 个节点' + (ownDataValue(flow, 'dataset') ? ' · 数据驱动' : '') + (usageSummary ? ' · ' + esc(usageSummary) : '') + (ownDataValue(flow, 'description') ? ' · ' + esc(ownDataValue(flow, 'description')) : '') + '</span>'
           + (builtin ? '<span class="badge builtin">内置</span>' : '')
-          + itemIdHtml(id)
+          + '<span class="item-sub">' + nodeCount + ' 个节点' + (ownDataValue(flow, 'dataset') ? ' · 数据驱动' : '') + (usageSummary ? ' · ' + esc(usageSummary) : '') + (ownDataValue(flow, 'description') ? ' · ' + esc(ownDataValue(flow, 'description')) : '') + '</span>'
+          + '<span class="item-card-end">' + itemIdHtml(id)
           + (builtin
             ? '<button class="btn-small" disabled title="内置流程不能直接修改，请先复制">修改</button>'
               + '<button class="btn-small btn-danger-outline" disabled title="内置流程不能删除">删除</button>'
@@ -404,7 +404,7 @@
           + (builtin
             ? '<button class="btn-small" disabled title="内置流程不支持导出，请先复制为用户流程">导出</button>'
             : '<button class="btn-small" data-action="export-flow" data-id="' + esc(id) + '">导出</button>')
-          + '</div>';
+          + '</span></div>';
       });
       renderEditor();
       return { ok: true, draftOpen: !!draft };

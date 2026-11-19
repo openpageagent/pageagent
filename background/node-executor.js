@@ -1815,15 +1815,52 @@
         : (params.defaultValue !== undefined ? parseJsonValue(params.defaultValue, params.defaultValue, 'JSON 默认值') : null);
     }
 
+    async function pluginCallContext(execution) {
+      throwIfStopped();
+      var session = getSession(), auth = session && session.appAuthorization;
+      var context = Object.assign({ actorId: session ? 'flow:' + session.runId : 'ui:node-debug',
+        runId: session && session.runId || null }, deps.localCallerContext || {}, session && session.localCallerContext || {},
+        { abortSignal: execution && execution.signal || getAbortSignal() });
+      if (auth) {
+        var permissions = await globalThis.PageAgentApps.authorizeResources(auth);
+        context.permissionScope = Array.isArray(context.permissionScope)
+          ? permissions.filter(function (permission) { return context.permissionScope.includes(permission); }) : permissions;
+        context.appResourceSession = auth;
+        context.actorId = 'app:' + auth.appId + ':' + auth.slot + ':' + auth.revision;
+      }
+      throwIfStopped();
+      return context;
+    }
+
+    async function callPlugin(pluginId, capabilityId, input, execution) {
+      var plugins = globalThis.PageAgentPlugins;
+      if (!plugins) throw new Error('插件服务尚未初始化');
+      return plugins.host.call(pluginId, capabilityId, input, await pluginCallContext(execution));
+    }
+
+    async function listPlugins(execution) {
+      var plugins = globalThis.PageAgentPlugins;
+      if (!plugins) throw new Error('插件服务尚未初始化');
+      var response = await plugins.host.request('script', 'GET', { uri: '/plugins/contributions' }, await pluginCallContext(execution));
+      if (response.error) throw Object.assign(new Error(response.error.message), response.error);
+      return response.primary.data;
+    }
+
     async function listUtilities() {
       throwIfStopped();
       if (deps.authorizeApplication) await deps.authorizeApplication({ kind: 'utility', command: 'list' });
       throwIfStopped();
-      return { tools: JSON.parse(JSON.stringify(globalThis.OfflineToolCatalog.tools)) };
+      return { tools: JSON.parse(JSON.stringify(globalThis.OfflineToolCatalog.tools)).concat(
+        globalThis.PageAgentPlugins ? globalThis.PageAgentPlugins.host.utilities() : []) };
     }
 
     async function executeUtility(toolId, request, execution) {
       throwIfStopped();
+      var plugin = globalThis.PageAgentPlugins && globalThis.PageAgentPlugins.host.utility(toolId);
+      if (plugin) {
+        if (!request || request.operation !== 'execute') throw new Error('插件工具仅支持 execute 操作');
+        return { tool: toolId, operation: 'execute', value: await callPlugin(plugin.pluginId, plugin.id, request.input, execution) };
+      }
       if (deps.authorizeApplication) await deps.authorizeApplication({ kind: 'utility', command: toolId });
       throwIfStopped();
       var sandbox = getSandboxEngine();
@@ -1860,7 +1897,11 @@
     function executeApiCall(api, args, execution) {
       return Promise.resolve().then(function () {
         return deps.authorizeApplication ? deps.authorizeApplication() : null;
-      }).then(function () { return scriptOps.executeApiCall(api, args, execution); });
+      }).then(function () {
+        if (api === 'plugins.call') return callPlugin(args[0], args[1], args[2], execution);
+        if (api === 'plugins.list') return listPlugins(execution);
+        return scriptOps.executeApiCall(api, args, execution);
+      });
     }
 
     var nodeDispatcher = nodeDispatcherModule.createNodeDispatcher({
@@ -1958,7 +1999,15 @@
         );
 
         if (deps.authorizeApplication) globalThis.AppContract.assertNode(node);
-        return Promise.resolve(deps.authorizeApplication ? deps.authorizeApplication({ kind: /^(setCookie|getCookie|clearCookies)$/.test(node.type) ? 'page' : 'node', command: node.type, url: /^(setCookie|getCookie|clearCookies)$/.test(node.type) ? params.url : undefined, pageId: node.pageId || params.pageId, modelServiceId: params.modelServiceId || params.serviceId }) : null).then(function () { return nodeDispatcher.dispatch(node, params, state, execution); });
+        return Promise.resolve(deps.authorizeApplication ? deps.authorizeApplication({ kind: /^(setCookie|getCookie|clearCookies)$/.test(node.type) ? 'page' : 'node', command: node.type, url: /^(setCookie|getCookie|clearCookies)$/.test(node.type) ? params.url : undefined, pageId: node.pageId || params.pageId, modelServiceId: params.modelServiceId || params.serviceId }) : null).then(function () {
+          if (node.type.startsWith('plugin.')) {
+            var definition = globalThis.PageAgentPlugins && globalThis.PageAgentPlugins.host.node(node.type);
+            if (!definition) throw new Error('插件节点不存在或插件未启用: ' + node.type);
+            var input = typeof params.input === 'string' ? JSON.parse(params.input) : params.input;
+            return callPlugin(definition.pluginId, definition.capabilityId, input, execution);
+          }
+          return nodeDispatcher.dispatch(node, params, state, execution);
+        });
       }).then(function (result) {
         var completion;
         try {

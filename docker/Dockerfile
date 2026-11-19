@@ -11,6 +11,10 @@ RUN if [ -f mcp-server/index.js ]; then \
 COPY shared/ ./shared/
 COPY resources/ ./resources/
 COPY settings/ ./settings/
+COPY options/options.css ./options/options.css
+COPY assets/ui-fonts/ ./assets/ui-fonts/
+COPY icons/icon32.png icons/icon128.png ./icons/
+COPY LICENSE ./LICENSE
 RUN if [ -f mcp-server/index.js ]; then \
       npm --prefix mcp-server run build:single \
       && cp mcp-server/dist/page-agent-mcp-server.cjs mcp-server/page-agent-mcp-server.cjs; \

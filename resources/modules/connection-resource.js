@@ -16,8 +16,8 @@
     runTabMode: { enum: ['reuseOpenTab', 'fixedCurrentTab', 'fixedNewTab'] } });
   var WORKSPACE = schema({ alias: ALIAS, path: PATH, permissions: PERMISSIONS });
   var REMOTE_PERMISSION_GUIDANCE = [
-    '连接的 arpPermissions 统一控制经此连接进入当前插件的远程操作，适用于 HTTP Agent 和其他客户端转发，不按业务模块单独配置。新连接和未配置的已有连接默认 read、write、execute 开启，delete 关闭；已保存的配置优先。',
-    '远程操作权限只能由用户在目标客户端的扩展配置页「MCP 连接 → 权限 → 远程操作权限」修改。当前插件的连接配置不代表其他客户端的授权；服务端目录与桌面授权独立管理。',
+    '连接的 arpPermissions 统一控制经此连接进入当前扩展的远程操作，适用于 HTTP Agent 和其他客户端转发，不按业务模块单独配置。新连接和未配置的已有连接默认 read、write、execute 开启，delete 关闭；已保存的配置优先。',
+    '远程操作权限只能由用户在目标客户端的扩展配置页「MCP 连接 → 权限 → 远程操作权限」修改。当前扩展的连接配置不代表其他客户端的授权；服务端目录与桌面授权独立管理。',
   ];
   function method(verb, input, permission, precondition, async) {
     return { inputSchema: input, outputSchema: OUTPUT, safety: verb === 'GET' ? 'read' : permission === 'execute' ? 'execute' : 'write',

@@ -24,6 +24,7 @@
   var DURATION = { type: 'integer', minimum: 0, maximum: 10000, description: '移动耗时毫秒数，默认 300，使用缓入缓出轨迹' };
   var REGION = schema({ x: COORDINATE, y: COORDINATE, width: SIZE, height: SIZE }, ['x', 'y', 'width', 'height']);
   var PID = { type: 'integer', minimum: 1, maximum: 2147483647 };
+  var DELETION_GUIDANCE = '已有权限内可读取、新增和修改。删除、清空及命令或脚本间接删除执行前须说明目标和风险并征得用户确认；用户已明确授权的删除无需重复确认。权限开关不代替用户对删除的授权。';
   var OPERATIONS = Object.freeze({
     read: {
       summary: '读取本地 UTF-8 文本文件（最多 4MB），按行分页，返回内容最多 64KB',
@@ -31,11 +32,11 @@
         limit: { type: 'integer', minimum: 1, maximum: 2000, description: '最多读取行数，默认 200' } }, ['path']),
     },
     write: {
-      summary: '创建或覆盖本地 UTF-8 文本文件（最多 1MB），自动创建父目录',
+      summary: '创建或覆盖本地 UTF-8 文本文件（最多 1MB），自动创建父目录。' + DELETION_GUIDANCE,
       inputSchema: schema({ path: PATH, content: { type: 'string', maxLength: 1048576 } }, ['path', 'content']),
     },
     delete: {
-      summary: '删除一个本地文件或符号链接，不递归删除目录',
+      summary: '删除一个本地文件或符号链接，不递归删除目录。' + DELETION_GUIDANCE,
       inputSchema: schema({ path: PATH }, ['path']),
     },
     grep: {
@@ -44,7 +45,7 @@
         limit: { type: 'integer', minimum: 1, maximum: 500, description: '最多匹配行数，默认 100' } }, ['path', 'pattern']),
     },
     bash: {
-      summary: '在配置的工作目录内启动 Bash 命令；每次独立运行，输出最多 64KB，不可通过参数更改工作目录',
+      summary: '在配置的工作目录内启动 Bash 命令；每次独立运行，输出最多 64KB，不可通过参数更改工作目录。' + DELETION_GUIDANCE,
       inputSchema: schema({ command: { type: 'string', minLength: 1, maxLength: 65536 },
         timeoutMs: { type: 'integer', minimum: 1000, maximum: 60000, description: '超时毫秒数，默认 30000' } }, ['command']),
     },

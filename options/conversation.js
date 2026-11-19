@@ -34,6 +34,8 @@
 
   var state = null;
   var appBindings = {};
+  var pluginReferences = [];
+  var pluginStorageKey = 'page_agent_plugins_' + (chrome.extension.inIncognitoContext ? 'incognito' : 'regular');
   var appBindingKey = 'app_conversation_bindings_' + (chrome.extension.inIncognitoContext ? 'incognito' : 'regular');
   var initialized = false;
   var renderQueued = false;
@@ -3574,6 +3576,9 @@
     if (!options.promptForStale || !topicSnapshotDiffersFromAssistant(topic, liveAssistant)) {
       return Promise.resolve({ topic: topic, assistant: snapshotAssistant });
     }
+    if (assistantSignature(Object.assign({}, snapshotAssistant, { resourcePolicy: liveAssistant.resourcePolicy })) === assistantSignature(liveAssistant)) {
+      return refreshTopicAssistantSnapshot(topic, liveAssistant);
+    }
     return openConversationConfirm({
       title: '使用最新助手配置？',
       message: '助手配置已更新。使用最新配置会替换此话题的提示词、设置和权限，是否继续？',
@@ -4077,7 +4082,13 @@
       ? '<div class="conversation-archive-readonly"><span aria-hidden="true">&#xf187;</span><b>已归档</b><small>只读</small></div>'
       : (pendingUserInput ? renderPendingUserInput(topic) : (
       '<div class="conversation-composer">'
-      + (topic && appBindings[topic.topicId] && appBindings[topic.topicId].active !== false ? '<div class="conversation-entry-status conversation-app-binding"><span class="conversation-entry-status-label">正在编辑应用</span><span class="conversation-entry-status-chip">' + esc(appBindings[topic.topicId].name) + '</span> <a href="' + esc(chrome.runtime.getURL('options/options.html?section=apps&appId=' + appBindings[topic.topicId].appId + '&action=permissions')) + '" target="_blank">权限</a><button type="button" class="conversation-chat-log-btn" data-conversation-action="unbind-app" data-topic-id="' + esc(topic.topicId) + '" title="解除当前话题与应用的绑定">取消</button></div>' : '')
+      + (topic && appBindings[topic.topicId] && appBindings[topic.topicId].active !== false ? '<div class="conversation-entry-status conversation-app-binding"><span class="conversation-entry-status-label">正在编辑应用</span><span class="conversation-entry-status-chip">' + esc(appBindings[topic.topicId].name) + '</span><a class="conversation-chat-log-btn" href="' + esc(chrome.runtime.getURL('options/options.html?section=apps&appId=' + appBindings[topic.topicId].appId + '&action=permissions')) + '" target="_blank" rel="noopener" title="打开应用权限设置">跳转</a><button type="button" class="conversation-chat-log-btn" data-conversation-action="unbind-app" data-topic-id="' + esc(topic.topicId) + '" title="解除当前话题与应用的绑定">取消</button></div>' : '')
+      + pluginReferences.filter(function (item) { return topic && item.conversationId === topic.topicId; }).map(function (item) {
+        return '<div class="conversation-entry-status conversation-app-binding"><span class="conversation-entry-status-label">正在编辑插件</span><span class="conversation-entry-status-chip">' + esc(item.name) + '</span><a class="conversation-chat-log-btn" href="'
+          + esc(chrome.runtime.getURL('options/options.html?section=plugins&pluginId=' + encodeURIComponent(item.id))) + '" target="_blank" rel="noopener" title="打开插件配置">跳转'
+          + '</a><button type="button" class="conversation-chat-log-btn" data-conversation-action="unbind-plugin" data-plugin-id="' + esc(item.id)
+          + '" data-topic-id="' + esc(topic.topicId) + '" title="取消当前话题的插件引用">取消</button></div>';
+      }).join('')
       + '<div id="conversation-composer-images" class="conversation-entry-status conversation-image-references" aria-label="引用图片">' + composerImagesHtml(draftKey) + '</div>'
       + '<textarea id="conversation-input" rows="4" placeholder="描述任务，可粘贴图片。' + esc(sendShortcutLabel()) + ' 发送。">' + esc(draftValue) + '</textarea>'
       + '<div class="conversation-composer-actions">'
@@ -4735,9 +4746,12 @@
         listModelServiceResources(),
         getAgentSettingsResource(),
         chrome.storage.local.get(appBindingKey),
+        globalThis.PageAgentResourceClient.create(chrome.runtime).get('/plugins'),
       ]).then(function (resources) {
         agentSettingsResource = resources[3];
         appBindings = resources[4][appBindingKey] || {};
+        if (resources[5].error) throw new Error(resources[5].error.message);
+        pluginReferences = resources[5].primary.data.items;
         modelServiceResources = resources[2];
         next = projectConversationResources(next, resources[0]);
         return projectAssistantResources(next, resources[1], agentSettingsResource);
@@ -4927,12 +4941,12 @@
     return render();
   }
 
-  async function ensureAppDevelopmentAssistant() {
-    var key = 'app_development_assistant_id';
+  async function ensureDevelopmentAssistant(kind) {
+    var key = kind + '_development_assistant_id' + (kind === 'plugin' ? '_' + (chrome.extension.inIncognitoContext ? 'incognito' : 'regular') : '');
     var stored = await chrome.storage.local.get(key);
     var assistant = state.assistants[stored[key]];
     if (assistant) return assistant;
-    var template = getAssistantTemplates().items.tpl_app_developer;
+    var template = getAssistantTemplates().items['tpl_' + kind + '_developer'];
     assistant = await createAssistantResource({
       name: template.name,
       description: template.description,
@@ -4956,7 +4970,7 @@
         if (response.error) throw new Error(response.error.message);
         app = response.primary.data;
       }
-      var assistant = await ensureAppDevelopmentAssistant();
+      var assistant = await ensureDevelopmentAssistant('app');
       var topicId = app && state.topicOrder.filter(function (id) {
         var topic = state.topics[id], binding = appBindings[id];
         return topic && topic.assistantId === assistant.id
@@ -5017,6 +5031,47 @@
     } catch (error) {
       toast('取消应用编辑失败: ' + resourceErrorText(error), true);
     }
+  }
+
+  async function bindPluginConversation(pluginId, conversationId, previousConversationId) {
+    var response = await chrome.runtime.sendMessage({ type: 'PLUGIN_MANAGE', operation: 'bind-conversation', pluginId: pluginId,
+      input: { conversationId: conversationId, previousConversationId: previousConversationId } });
+    if (!response || response.error) throw new Error(response && response.error && response.error.message || '关联插件失败');
+    pluginReferences = pluginReferences.filter(function (item) { return item.id !== pluginId; }).concat(response.result);
+    return response.result;
+  }
+
+  function openPlugin(pluginId) {
+    return navigator.locks.request('page-agent-plugin-conversation', async function () {
+      if (trajectoryViewOpen) closeTopicTrajectory();
+      await render();
+      var plugin = null;
+      if (pluginId) {
+        var response = await globalThis.PageAgentResourceClient.create(chrome.runtime).get('/plugins/' + encodeURIComponent(pluginId));
+        if (response.error) throw new Error(response.error.message);
+        plugin = response.primary.data;
+      }
+      var assistant = await ensureDevelopmentAssistant('plugin');
+      var topic = plugin && state.topics[plugin.conversationId];
+      if (!topic || topic.archived || topic.assistantId !== assistant.id) {
+        newTopicModelServiceId = '';
+        topic = await createConversationResource({ assistantId: assistant.id, objective: '', name: '新话题',
+          modelServiceId: defaultModelServiceId(assistant), maxIterations: assistant.settings && assistant.settings.maxIterations,
+          maxToolCalls: assistant.settings && assistant.settings.maxToolCalls, makeActive: true, assistantSnapshot: assistantSnapshotFrom(assistant) });
+        projectConversationResource(topic);
+      }
+      await openTarget({ assistantId: assistant.id, topicId: topic.topicId });
+      var opened = displayedTopic();
+      if (!opened || opened.archived || opened.topicId !== topic.topicId || opened.assistantId !== assistant.id) throw new Error('未能打开插件开发话题，请重试');
+      if (plugin) await bindPluginConversation(plugin.id, topic.topicId, plugin.conversationId);
+      var prompt = plugin ? '继续修改插件“' + plugin.name + '”（/plugins/' + plugin.id + '）。请先读取 /plugins/authoring 及 /plugins/' + plugin.id + '/files 的文件清单、状态和 revision，按需查找并编辑源码，核对保存后的 diff，保留当前启停状态。我的修改需求：'
+        : '请帮我创建一个插件。请先读取 /plugins/authoring。我的需求：';
+      var draftKey = currentDraftKey(topic, assistant), existing = composerDrafts[draftKey] || '';
+      if (!existing.includes(prompt)) composerDrafts[draftKey] = existing.trim() ? existing + '\n\n' + prompt : prompt;
+      lastRenderKey = ''; renderLoaded();
+      var input = $('#conversation-input');
+      if (input) { input.value = composerDrafts[draftKey]; input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+    });
   }
 
   function createTopicFromPrompt() {
@@ -6766,6 +6821,13 @@
       return;
     }
     var action = target.dataset.conversationAction;
+    if (action === 'unbind-plugin') {
+      event.preventDefault(); event.stopPropagation();
+      bindPluginConversation(target.dataset.pluginId, '', target.dataset.topicId).then(function () {
+        lastRenderKey = ''; renderLoaded();
+      }).catch(function (error) { toast('取消插件引用失败: ' + resourceErrorText(error), true); });
+      return;
+    }
     if (action === 'unbind-app') {
       event.preventDefault();
       event.stopPropagation();
@@ -7561,6 +7623,7 @@
       chrome.storage.onChanged.addListener(function (changes, area) {
         if (area === 'local' && changes[globalThis.ModelSettings.SETTINGS_KEY]) refresh();
         if (area === 'local' && changes[appBindingKey]) { appBindings = changes[appBindingKey].newValue || {}; if (conversationSectionVisible()) { lastRenderKey = ''; renderLoaded(); } }
+        if (area === 'local' && changes[pluginStorageKey] && conversationSectionVisible()) refresh();
         if (area === 'local' && globalThis.PageAgentSystemSettings
             && changes[globalThis.PageAgentSystemSettings.SETTINGS_KEY]) {
           applyConversationSettings(globalThis.PageAgentSystemSettings.normalize(
@@ -7587,6 +7650,7 @@
     refresh: refresh,
     openTarget: openTarget,
     openApp: openApp,
+    openPlugin: openPlugin,
     getEditState: getEditState,
     confirmEditorLeave: confirmEditorLeave,
     discardEditor: discardEditor,

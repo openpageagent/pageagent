@@ -23,7 +23,7 @@
     'mail-settings.read', 'mail-settings.write', 'mail-settings.execute',
     'connections.read',
     'local.execute',
-    'utilities.read', 'utilities.execute',
+    'utilities.read', 'utilities.execute', 'plugins.read',
   ]);
   var rootMethods = Object.freeze({
     '/page': Object.freeze(['GET', 'POST', 'OPTIONS']),
@@ -31,6 +31,7 @@
     '/flows': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
     '/node-types': Object.freeze(['GET', 'OPTIONS']),
     '/utilities': Object.freeze(['GET', 'POST', 'OPTIONS']),
+    '/plugins': Object.freeze(['GET', 'OPTIONS']),
     '/flow-groups': Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS']),
     '/recordings': Object.freeze(['GET', 'OPTIONS']),
     '/runs': Object.freeze(['GET', 'POST', 'OPTIONS']),
@@ -48,5 +49,21 @@
     '/mail-settings': Object.freeze(['GET', 'PATCH', 'POST', 'OPTIONS']),
   });
 
-  return Object.freeze({ permissions: permissions, rootMethods: rootMethods });
+  // All plugin capabilities share the plugin resource grant. Applications still
+  // request plugin execution explicitly through their own grants.
+  var conversation = Object.freeze({
+    permissions: Object.freeze(permissions.concat(['plugins.write', 'plugins.execute'])),
+    rootMethods: Object.freeze(Object.assign({}, rootMethods, {
+      '/plugins': Object.freeze(['GET', 'POST', 'PUT', 'OPTIONS']),
+    })),
+  });
+
+  function normalizePluginPermissions(values) {
+    return Array.from(new Set((Array.isArray(values) ? values : []).map(function (permission) {
+      return /^plugin-[a-z0-9-]+\./.test(permission) ? 'plugins.execute' : permission;
+    })));
+  }
+
+  return Object.freeze({ permissions: permissions, rootMethods: rootMethods, conversation: conversation,
+    normalizePluginPermissions: normalizePluginPermissions });
 });

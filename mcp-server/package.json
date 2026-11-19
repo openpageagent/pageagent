@@ -1,6 +1,6 @@
 {
   "name": "@page-agent/mcp-server",
-  "version": "1.2.5",
+  "version": "1.3.0",
   "description": "ARP/1 MCP transport for the Page Agent Extension",
   "main": "index.js",
   "bin": {
@@ -23,9 +23,26 @@
   "author": "Page Agent contributors",
   "license": "Apache-2.0",
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1171.0",
+    "@koishijs/core": "4.18.11",
+    "@koishijs/plugin-adapter-dingtalk": "2.5.2",
+    "@koishijs/plugin-adapter-lark": "3.12.6",
+    "@koishijs/plugin-adapter-mail": "2.3.2",
+    "@koishijs/plugin-adapter-qq": "4.14.0",
+    "@koishijs/plugin-adapter-wecom": "2.5.0",
+    "@koishijs/plugin-http": "0.6.3",
+    "@koishijs/plugin-server": "3.2.9",
     "@modelcontextprotocol/sdk": "^0.5.0",
+    "@redis/client": "6.3.1",
+    "@wecom/aibot-node-sdk": "1.0.7",
+    "koishi": "4.18.11",
+    "mailparser": "3.14.5",
+    "mysql2": "3.24.6",
     "nodemailer": "8.0.11",
-    "ws": "^8.18.0"
+    "pg": "8.23.1",
+    "ssh2": "1.17.0",
+    "ws": "^8.18.0",
+    "xml2js": "0.6.2"
   },
   "optionalDependencies": {
     "robotjs": "0.9.1"

@@ -59,6 +59,7 @@
     'local.result': ['ok', 'operation', 'workspaceId', 'workingDirectory', 'grantRevision', 'result', 'error', 'receipt', 'execution', 'audit'],
     'local.cancel': ['reason'], 'local.cancel.ack': ['status'], heartbeat: ['sentAt'],
     'server.status': ['audit', 'environmentRevision'],
+    'bot.event': ['event'],
     'environment.get': ['scope', 'refresh', 'caller', 'workspaceId', 'workingDirectory', 'grantRevision'],
     'environment.result': ['ok', 'scope', 'data', 'error', 'audit'],
     'arp.request': ['method', 'request', 'context', 'principal'], 'arp.result': ['envelope'],
@@ -248,7 +249,7 @@
       if (!DESKTOP_OPERATIONS.concat(['locate']).includes(name) || !Array.isArray(value.desktop.actions[name]) || value.desktop.actions[name].length > 30
         || value.desktop.actions[name].some(function (action) { return typeof action !== 'string' || action.length > 100; })) fail('INVALID_CAPABILITIES');
     });
-    fields(value.mail, ['supported', 'protocol'], ['supported', 'protocol']); if (typeof value.mail.supported !== 'boolean' || value.mail.protocol !== 'smtp/1') fail('INVALID_CAPABILITIES');
+    fields(value.mail, ['supported', 'protocol'], ['supported', 'protocol']); if (typeof value.mail.supported !== 'boolean' || !['smtp/1', 'bot-mail/1'].includes(value.mail.protocol)) fail('INVALID_CAPABILITIES');
     fields(value.audit, ['enabled', 'available', 'commandContent'], ['enabled', 'available', 'commandContent']);
     if (value.audit.enabled !== true || typeof value.audit.available !== 'boolean' || !['hash', 'plain'].includes(value.audit.commandContent)) fail('INVALID_CAPABILITIES');
     fields(value.environment, ['schemaVersion', 'disk', 'dynamicTtlMs'], ['schemaVersion', 'disk', 'dynamicTtlMs']);
@@ -304,6 +305,32 @@
     if (value.type === 'heartbeat' && (!Number.isFinite(value.sentAt) || value.sentAt < 0)) fail('INVALID_HEARTBEAT');
     if (value.type === 'server.status') {
       fields(value.audit, ['available'], ['available']); if (typeof value.audit.available !== 'boolean' || !Number.isSafeInteger(value.environmentRevision) || value.environmentRevision < 0) fail('INVALID_STATUS');
+    }
+    if (value.type === 'bot.event') {
+      var eventFields = ['id', 'accountId', 'platform', 'selfId', 'userId', 'channelId', 'guildId', 'messageId', 'text', 'direct', 'timestamp'];
+      fields(value.event, eventFields.concat(['userName', 'channelName', 'autoReply', 'command']), eventFields);
+      id(value.event.id); id(value.event.accountId);
+      ['platform', 'selfId', 'userId', 'channelId', 'guildId', 'messageId'].forEach(function (key) {
+        if (typeof value.event[key] !== 'string' || value.event[key].length > 500) fail('INVALID_BOT_EVENT');
+      });
+      ['userName', 'channelName'].forEach(function (key) {
+        if (own(value.event, key) && (typeof value.event[key] !== 'string' || value.event[key].length > 200)) fail('INVALID_BOT_EVENT');
+      });
+      if (own(value.event, 'autoReply')) {
+        fields(value.event.autoReply, ['state'], ['state']);
+        if (value.event.autoReply.state !== 'pending') fail('INVALID_BOT_EVENT');
+      }
+      if (own(value.event, 'command')) {
+        var command = value.event.command;
+        fields(command, ['name', 'text', 'args', 'error'], ['name', 'text', 'args']);
+        if (typeof command.name !== 'string' || !/^[^\s/]{1,60}$/.test(command.name)
+          || typeof command.text !== 'string' || command.text.length > 16000
+          || !Array.isArray(command.args) || command.args.length > 100
+          || command.args.some(function (arg) { return typeof arg !== 'string' || arg.length > 16000; })
+          || own(command, 'error') && (typeof command.error !== 'string' || command.error.length > 200)) fail('INVALID_BOT_EVENT');
+      }
+      if (typeof value.event.text !== 'string' || value.event.text.length > 16000 || typeof value.event.direct !== 'boolean'
+        || !Number.isFinite(value.event.timestamp) || value.event.timestamp < 0) fail('INVALID_BOT_EVENT');
     }
     if (['local.result', 'local.configured', 'environment.result', 'mail.result'].includes(value.type)) {
       if (typeof value.ok !== 'boolean') fail('INVALID_RESULT');

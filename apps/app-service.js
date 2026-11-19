@@ -200,28 +200,6 @@
         resourceCatalog: resourceCatalog(), generation: p.generation,
       }, guidance: C.guidance, links: links(appId, meta.slug) });
     }
-    function readCodeLines(source, query) {
-      var lines = source.split(/\r?\n/), start = (query.startLine || 1) - 1;
-      var limit = query.limit || 50, budget = 12000;
-      var output = { mode: 'lines', totalLines: lines.length, totalChars: source.length, hasMore: false, nextLine: null, nextColumn: null };
-      function fragment(index, column, length) {
-        var text = lines[index].slice(column, column + length);
-        return { line: index + 1, column: column + 1, text: text, lineLength: lines[index].length, truncated: column > 0 || column + text.length < lines[index].length };
-      }
-      var column = (query.startColumn || 1) - 1, index = start, rows = [], used = 0;
-      if (index < lines.length && column > lines[index].length) throw C.error('SCHEMA_VALIDATION_FAILED', 'startColumn 超出起始行长度');
-      while (index < lines.length && rows.length < limit && used < budget) {
-        var item = fragment(index, column, budget - used);
-        rows.push(item); used += item.text.length + 1;
-        column += item.text.length;
-        if (column < lines[index].length) break;
-        index++; column = 0;
-      }
-      output.lines = rows;
-      if (index < lines.length) { output.nextLine = index + 1; output.nextColumn = column + 1; }
-      output.hasMore = output.nextLine !== null;
-      return output;
-    }
     function links(appId, slug) {
       return { open: chrome.runtime.getURL(C.path(appId, 'published', slug).slice(1)), preview: chrome.runtime.getURL(C.path(appId, 'draft', slug).slice(1)), edit: chrome.runtime.getURL('options/options.html?section=apps&appId=' + appId + '&action=edit'), permissions: chrome.runtime.getURL('options/options.html?section=apps&appId=' + appId + '&action=permissions') };
     }
@@ -262,7 +240,7 @@
             if (root.ProviderCompat) endpoint = root.ProviderCompat.resolve(model, model.protocol).endpoint(endpoint);
             if (new URL(endpoint).href !== url.href || (operation.useVision && model.visionModel || model.model) !== operation.model) throw C.error('DEPENDENCY_CHANGED', '模型请求与授权绑定的配置不一致');
           } else if (!targets.origins.includes(url.origin)) throw C.error('PERMISSION_DENIED', '目标不在动作授权范围: ' + url.origin);
-          if (!await chrome.permissions.contains({ origins: [url.origin + '/*'] })) throw C.error('PERMISSION_DENIED', '插件缺少目标站点权限: ' + url.origin);
+          if (!await chrome.permissions.contains({ origins: [url.origin + '/*'] })) throw C.error('PERMISSION_DENIED', '扩展缺少目标站点权限: ' + url.origin);
         }
         if (operation.kind === 'http' && !targets.methods.includes(operation.method)) throw C.error('PERMISSION_DENIED', 'HTTP 方法不在授权范围: ' + operation.method);
         if (operation.pageId && !targets.pageIds.includes(operation.pageId)) throw C.error('PERMISSION_DENIED', '页面不在授权范围: ' + operation.pageId);
@@ -271,12 +249,12 @@
         if (operation.tabId) {
           var tab = await chrome.tabs.get(operation.tabId);
           if (!!tab.incognito !== !!options.incognito) throw C.error('PERMISSION_DENIED', '目标标签页与应用的普通／隐身范围不一致');
-          if (String(tab.url || '').startsWith(chrome.runtime.getURL('/'))) throw C.error('PERMISSION_DENIED', '应用标签页和插件页面不能作为应用动作目标');
+          if (String(tab.url || '').startsWith(chrome.runtime.getURL('/'))) throw C.error('PERMISSION_DENIED', '应用标签页和扩展页面不能作为应用动作目标');
           var tabUrl = (!tab.url || tab.url === 'about:blank') && tab.pendingUrl ? tab.pendingUrl : tab.url;
           if (!tabUrl || !/^https?:/.test(tabUrl) || !targets.origins.includes(new URL(tabUrl).origin)
               || tab.pendingUrl && (!/^https?:/.test(tab.pendingUrl) || !targets.origins.includes(new URL(tab.pendingUrl).origin))) throw C.error('PERMISSION_DENIED', '目标标签页已导航到未授权站点');
           var tabOrigins = Array.from(new Set([tabUrl, tab.pendingUrl].filter(Boolean).map(function (value) { return new URL(value).origin + '/*'; })));
-          if (!await chrome.permissions.contains({ origins: tabOrigins })) throw C.error('PERMISSION_DENIED', '插件缺少目标标签页的实际站点权限');
+          if (!await chrome.permissions.contains({ origins: tabOrigins })) throw C.error('PERMISSION_DENIED', '扩展缺少目标标签页的实际站点权限');
         }
         if (operation.kind === 'model' && !operation.modelServiceId) throw C.error('PERMISSION_DENIED', '应用动作必须明确指定已授权的 serviceId，不能隐式使用默认模型');
         if (operation.modelServiceId && !targets.modelServiceIds.includes(operation.modelServiceId)) throw C.error('PERMISSION_DENIED', '模型配置不在授权范围');
@@ -582,8 +560,7 @@
       async getCode(appId, slot, field, query, fileName) {
         query = query || {};
         if (field !== undefined && !Object.prototype.hasOwnProperty.call(C.codeSchema.properties, field)) throw C.error('RESOURCE_NOT_FOUND', '应用源码字段不存在：' + field);
-        if (query.q !== undefined && (query.startLine !== undefined || query.startColumn !== undefined)) throw C.error('SCHEMA_VALIDATION_FAILED', '搜索使用 q；按行读取请省略 q');
-        if (query.q === undefined && (query.fixedStrings !== undefined || query.caseSensitive !== undefined || query.before !== undefined || query.after !== undefined)) throw C.error('SCHEMA_VALIDATION_FAILED', '搜索选项必须与 q 一起使用');
+        root.PageAgentSourceCode.validateQuery(query);
         var record = await store.get('app_code', [appId, slot]), inherited = !record && slot === 'draft';
         if (inherited) record = await store.get('app_code', [appId, 'published']);
         store.required(record);
@@ -592,29 +569,20 @@
         if (query.revision && query.revision !== state.revision) throw C.error('REVISION_CONFLICT', '源码读取版本已变化，请重新搜索或读取');
         var code = Object.assign({}, record.code, { parameters: record.code.parameters ?? C.noParameters() });
         if (field !== undefined) {
-          var source = code[field], data;
+          var source = code[field];
           if (field === 'files') {
             var files = record.code.files || {};
             if (fileName === undefined) {
               if (Object.keys(query).some(function (key) { return key !== 'revision'; })) throw C.error('SCHEMA_VALIDATION_FAILED', '请先选择源码文件再搜索或按行读取');
-              return { appId: appId, revision: state.revision, slot: slot, inheritedFromPublished: inherited, items: Object.keys(files).map(function (name) {
-                return { name: name, chars: files[name].length, lines: files[name].split(/\r?\n/).length, uri: '/apps/' + appId + '/' + slot + '/files/' + name };
-              }) };
+              return { appId: appId, revision: state.revision, slot: slot, inheritedFromPublished: inherited,
+                items: root.PageAgentSourceCode.list(files, '/apps/' + appId + '/' + slot + '/files/') };
             }
             C.sourceFileName(fileName);
             if (!Object.prototype.hasOwnProperty.call(files, fileName)) throw C.error('RESOURCE_NOT_FOUND', '应用源码文件不存在: ' + fileName);
             source = files[fileName];
           }
-          if (typeof source !== 'string') {
-            if (Object.keys(query).some(function (key) { return key !== 'revision'; })) throw C.error('SCHEMA_VALIDATION_FAILED', '此字段不是文本，不支持搜索或按行读取参数');
-            data = { value: source };
-          } else if (query.q !== undefined) {
-            var matcher;
-            try { matcher = root.KnowledgeSearch.createGrep(Object.assign({}, query, { query: query.q, perItemLimit: query.limit })); }
-            catch (error) { throw C.error('SCHEMA_VALIDATION_FAILED', error.message); }
-            data = matcher.search(source);
-          } else data = readCodeLines(source, query);
-          return Object.assign({ appId: appId, revision: state.revision, slot: slot, field: field, inheritedFromPublished: inherited }, fileName === undefined ? {} : { fileName: fileName }, data);
+          return Object.assign({ appId: appId, revision: state.revision, slot: slot, field: field, inheritedFromPublished: inherited },
+            fileName === undefined ? {} : { fileName: fileName }, root.PageAgentSourceCode.read(source, query));
         }
         return Object.assign({}, state, { code: code, slot: slot, inheritedFromPublished: inherited });
       }

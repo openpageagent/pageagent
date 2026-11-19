@@ -109,6 +109,12 @@
         list: bridge('utilities.list'),
         execute: bridge('utilities.execute'),
       },
+      plugins: {
+        list: bridge('plugins.list'),
+        call: bridge('plugins.call'),
+      },
+      resources: { request: bridge('resources.request') },
+      messaging: { reply: bridge('messaging.reply') },
       ctx: {
         get: bridge('ctx.get'),
         set: bridge('ctx.set'),
@@ -152,8 +158,11 @@
     return err.message || String(err);
   }
 
-  function runScript(execId, code) {
-    runningExecs[execId] = { aborted: false, timers: [] };
+  function runScript(execId, code, persistentTag) {
+    if (persistentTag) Object.keys(runningExecs).forEach(function (previousId) {
+      if (runningExecs[previousId].persistentTag === persistentTag) abortScript(previousId);
+    });
+    runningExecs[execId] = { aborted: false, timers: [], persistentTag: persistentTag || '' };
     var api = buildApi(execId);
 
     Promise.resolve().then(function () {
@@ -201,7 +210,7 @@
 
     switch (msg.type) {
       case 'SCRIPT_RUN':
-        runScript(msg.execId, msg.code || '');
+        runScript(msg.execId, msg.code || '', msg.persistentTag);
         break;
 
       case 'SCRIPT_API_RESULT': {

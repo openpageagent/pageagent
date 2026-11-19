@@ -41,7 +41,7 @@
         var resourceAuth = { appId: session.appId, slot: session.slot, revision: session.revision, generation: message.generation };
         var scope = await service.authorizeResources(resourceAuth);
         if (session.closed) throw C.error('SESSION_CLOSED', '应用会话已关闭');
-        var utilitySignal = /^\/utilities(?:\/|$)/.test(input.request.uri) ? session.utilityAbort.signal : undefined;
+        var utilitySignal = /^\/(?:utilities(?:\/|$)|plugin-[a-z0-9-]+\/)/.test(input.request.uri) ? session.utilityAbort.signal : undefined;
         return options.dispatchResource(input.method, input.request, resourceAuth, scope, utilitySignal, session.id);
       }
       if (operation === 'runs.status' || operation === 'runs.cancel') return service.ownedRun(session.appId, input.runId, operation === 'runs.cancel');

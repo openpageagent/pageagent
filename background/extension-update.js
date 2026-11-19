@@ -1,4 +1,4 @@
-// 配置页和 ARP 共用的扩展更新；只写入浏览器已授权的插件目录。
+// 配置页和 ARP 共用的扩展更新；只写入浏览器已授权的扩展目录。
 (function () {
   'use strict';
   var MAX_BYTES = 512 * 1024 * 1024;
@@ -15,7 +15,7 @@
           var store = transaction.objectStore('settings');
           var operation = value === undefined ? store.get('directory') : store.put(value, 'directory');
           transaction.oncomplete = function () { db.close(); resolve(operation.result); };
-          transaction.onabort = function () { db.close(); reject(transaction.error || new Error('无法保存插件目录')); };
+          transaction.onabort = function () { db.close(); reject(transaction.error || new Error('无法保存扩展目录')); };
         } catch (error) { db.close(); reject(error); }
       };
     });
@@ -43,12 +43,12 @@
       var file = await directory.getFileHandle('manifest.json');
       manifest = JSON.parse(await (await file.getFile()).text());
     } catch (_) {
-      throw failure('DIRECTORY_UNAVAILABLE', '无法读取插件目录，请在「最新版本」页重新选择当前加载的目录。');
+      throw failure('DIRECTORY_UNAVAILABLE', '无法读取扩展目录，请在「最新版本」页重新选择当前加载的目录。');
     }
     if (!manifest || typeof manifest.version !== 'string' || !/^\d+(?:\.\d+){0,3}$/.test(manifest.version)
         || manifest.name !== current.name
         || manifest.manifest_version !== current.manifest_version || manifest.key !== current.key) {
-      throw failure('DIRECTORY_MISMATCH', '所选目录与当前插件不一致，请在「最新版本」页重新选择目录。');
+      throw failure('DIRECTORY_MISMATCH', '所选目录与当前扩展不一致，请在「最新版本」页重新选择目录。');
     }
     return manifest;
   }
@@ -56,27 +56,46 @@
   async function validateDirectory(directory, current) {
     var manifest = await readDirectoryManifest(directory, current);
     if (manifest.version !== current.version) {
-      throw failure('DIRECTORY_VERSION_MISMATCH', '所选目录与当前插件版本不一致，请确认加载目录；若已经更新，请点击「重新加载插件」。');
+      throw failure('DIRECTORY_VERSION_MISMATCH', '所选目录与当前扩展版本不一致，请确认加载目录；若已经更新，请点击「重新加载扩展」。');
     }
   }
 
-  async function downloadFiles(release, current, status, signal) {
-    if (!release.size || release.size > MAX_BYTES) throw new Error('发布包大小无效或超过 512 MB。');
+  async function downloadFiles(release, current, status, signal, progress) {
+    if (!Number.isSafeInteger(release.size) || release.size <= 0 || release.size > MAX_BYTES) throw new Error('发布包大小无效或超过 512 MB。');
     status('正在下载 v' + release.version + '（' + (release.size / 1024 / 1024).toFixed(1) + ' MB）…');
     var controller = new AbortController();
     var abort = function () { controller.abort(); };
     var timeout = setTimeout(abort, 180000);
     if (signal) { signal.addEventListener('abort', abort, { once: true }); if (signal.aborted) abort(); }
-    var buffer;
+    var buffer, reader;
+    var received = 0, startedAt = performance.now(), reportedAt = startedAt;
     try {
+      progress({ received: 0, total: release.size, elapsedSeconds: 0 });
       var response = await fetch(release.downloadUrl, { cache: 'no-store', signal: controller.signal });
       if (!response.ok) throw new Error('下载失败：HTTP ' + response.status);
-      buffer = await response.arrayBuffer();
+      if (!response.body) throw new Error('下载响应为空，请重试。');
+      reader = response.body.getReader();
+      var bytes = new Uint8Array(release.size);
+      while (true) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        if (received + chunk.value.byteLength > release.size) throw new Error('下载包大小不符，请重试。');
+        bytes.set(chunk.value, received);
+        received += chunk.value.byteLength;
+        var now = performance.now();
+        if (now - reportedAt >= 250 || received === release.size) {
+          progress({ received: received, total: release.size, elapsedSeconds: (now - startedAt) / 1000 });
+          reportedAt = now;
+        }
+      }
+      if (received !== release.size) throw new Error('下载包大小不符，请重试。');
+      buffer = bytes.buffer;
     } finally {
       clearTimeout(timeout);
       if (signal) signal.removeEventListener('abort', abort);
+      controller.abort();
+      if (reader) reader.releaseLock();
     }
-    if (buffer.byteLength !== release.size) throw new Error('下载包大小不符，请重试。');
     status('正在校验并解压发布包…');
     if (release.digest) {
       var digest = await crypto.subtle.digest('SHA-256', buffer);
@@ -102,7 +121,7 @@
         || manifest.manifest_version !== current.manifest_version || manifest.key !== current.key
         || !files.some(function (file) { return file.name === (manifest.background || {}).service_worker; })
         || !files.some(function (file) { return file.name === manifest.options_page; })) {
-      throw new Error('发布包的插件信息、版本或必要文件不正确。');
+      throw new Error('发布包的扩展信息、版本或必要文件不正确。');
     }
     // 所有文件解压、校验完成后才开始写入，manifest 最后提交。
     return files.filter(function (file) { return file !== manifestFile; }).concat(manifestFile);
@@ -185,7 +204,7 @@
       }
       throw Object.assign(new Error((error.message || String(error)) + (restored
         ? '；已恢复原文件，请重试更新。'
-        : '；部分文件未能恢复，请重试更新成功后再重新加载插件。')), {
+        : '；部分文件未能恢复，请重试更新成功后再重新加载扩展。')), {
         reason: restored ? 'UPDATE_ROLLED_BACK' : 'UPDATE_ROLLBACK_FAILED',
         code: 'UPSTREAM_FAILED', performed: restored ? 'no' : 'unknown',
       });
@@ -195,19 +214,19 @@
   async function directoryState(current) {
     var directory;
     try { directory = await directorySetting(); }
-    catch (error) { throw failure('DIRECTORY_UNAVAILABLE', '读取插件目录失败：' + error.message); }
+    catch (error) { throw failure('DIRECTORY_UNAVAILABLE', '读取扩展目录失败：' + error.message); }
     var state = { directory: directory, directoryConfigured: !!directory, directoryName: directory ? directory.name : '',
       writePermission: null, directoryVersion: null, reloadRequired: false, reason: null, message: '' };
     if (!directory) {
       state.reason = 'DIRECTORY_NOT_CONFIGURED';
-      state.message = '请先在「最新版本」页选择插件目录并授权写入。';
+      state.message = '请先在「最新版本」页选择扩展目录并授权写入。';
       return state;
     }
     try { state.writePermission = await directory.queryPermission({ mode: 'readwrite' }); }
-    catch (error) { throw failure('DIRECTORY_UNAVAILABLE', '读取插件目录授权失败：' + error.message); }
+    catch (error) { throw failure('DIRECTORY_UNAVAILABLE', '读取扩展目录授权失败：' + error.message); }
     if (state.writePermission !== 'granted') {
       state.reason = 'DIRECTORY_PERMISSION_REQUIRED';
-      state.message = '插件目录需要重新授权，请在「最新版本」页选择目录并授权写入。';
+      state.message = '扩展目录需要重新授权，请在「最新版本」页选择目录并授权写入。';
       return state;
     }
     try {
@@ -216,7 +235,7 @@
       state.reloadRequired = newerVersion(state.directoryVersion, current.version_name || current.version);
       if (manifest.version !== current.version) {
         state.reason = state.reloadRequired ? 'RELOAD_REQUIRED' : 'DIRECTORY_VERSION_MISMATCH';
-        state.message = state.reloadRequired ? '更新已写入，请在「最新版本」页重新加载插件。' : '插件目录版本不一致，请重新选择当前加载的目录。';
+        state.message = state.reloadRequired ? '更新已写入，请在「最新版本」页重新加载扩展。' : '扩展目录版本不一致，请重新选择当前加载的目录。';
       }
     } catch (error) { state.reason = error.reason || 'DIRECTORY_UNAVAILABLE'; state.message = error.message; }
     return state;
@@ -239,18 +258,18 @@
     }
     await navigator.locks.request('page-agent-extension-update', { mode: 'shared', ifAvailable: true }, async function (lock) {
       if (!lock) {
-        state.updating = true; state.reason = 'UPDATE_IN_PROGRESS'; state.message = '插件正在更新，请稍后查询。';
+        state.updating = true; state.reason = 'UPDATE_IN_PROGRESS'; state.message = '扩展正在更新，请稍后查询。';
         return;
       }
       try {
         var directory = await directoryState(current);
         ['directoryConfigured', 'directoryName', 'writePermission', 'directoryVersion', 'reloadRequired'].forEach(function (key) { state[key] = directory[key]; });
         if (directory.reason) { state.reason = directory.reason; state.message = directory.message; }
-      } catch (error) { state.reason = 'DIRECTORY_UNAVAILABLE'; state.message = '读取插件目录失败：' + error.message; }
+      } catch (error) { state.reason = 'DIRECTORY_UNAVAILABLE'; state.message = '读取扩展目录失败：' + error.message; }
     });
     if (!state.reason && release && !state.updateAvailable) state.reason = 'UP_TO_DATE';
     if (!state.reason && release && !release.downloadUrl) {
-      state.reason = 'RELEASE_ASSET_MISSING'; state.message = '此版本尚未提供插件 ZIP 包。';
+      state.reason = 'RELEASE_ASSET_MISSING'; state.message = '此版本尚未提供扩展 ZIP 包。';
     }
     state.canUpdate = state.updateAvailable === true && !state.reason;
     if (state.updateAvailable && state.reason) state.message = '发现新版本 v' + state.latestVersion + '。' + state.message;
@@ -263,7 +282,7 @@
     var currentVersion = current.version_name || current.version;
     var status = options.status || function () {};
     return navigator.locks.request('page-agent-extension-update', { ifAvailable: true }, async function (lock) {
-      if (!lock) throw failure('UPDATE_IN_PROGRESS', '插件正在更新，请等待完成。', 'RESOURCE_BUSY');
+      if (!lock) throw failure('UPDATE_IN_PROGRESS', '扩展正在更新，请等待完成。', 'RESOURCE_BUSY');
       checkAbort(options.signal);
       var directory = options.directory;
       if (!directory) {
@@ -272,7 +291,7 @@
         directory = state.directory;
       }
       if (await directory.queryPermission({ mode: 'readwrite' }) !== 'granted') {
-        throw failure('DIRECTORY_PERMISSION_REQUIRED', '插件目录需要重新授权，请在「最新版本」页选择目录并授权写入。', 'FORBIDDEN');
+        throw failure('DIRECTORY_PERMISSION_REQUIRED', '扩展目录需要重新授权，请在「最新版本」页选择目录并授权写入。', 'FORBIDDEN');
       }
       await validateDirectory(directory, current);
       var release = options.release;
@@ -282,10 +301,10 @@
       }
       if (options.version && options.version !== release.version) throw failure('RELEASE_CHANGED', '最新版本已变化，请重新查询后更新。');
       if (!newerVersion(release.version, currentVersion)) throw failure('UP_TO_DATE', '当前已是最新版本。');
-      if (!release.downloadUrl) throw failure('RELEASE_ASSET_MISSING', '此版本尚未提供插件 ZIP 包。');
+      if (!release.downloadUrl) throw failure('RELEASE_ASSET_MISSING', '此版本尚未提供扩展 ZIP 包。');
       checkAbort(options.signal);
       var files;
-      try { files = await downloadFiles(release, current, status, options.signal); }
+      try { files = await downloadFiles(release, current, status, options.signal, options.progress || function () {}); }
       catch (error) {
         checkAbort(options.signal);
         throw failure('DOWNLOAD_FAILED', error.message, 'UPSTREAM_FAILED');
@@ -293,7 +312,7 @@
       checkAbort(options.signal);
       var result = await applyFiles(directory, files, status, options.signal);
       return Object.assign(result, { currentVersion: currentVersion, appliedVersion: release.version, reloadRequired: true,
-        message: '更新已写入，请在「最新版本」页重新加载插件。',
+        message: '更新已写入，请在「最新版本」页重新加载扩展。',
         settingsUrl: chrome.runtime.getURL('options/options.html?section=release') });
     });
   }

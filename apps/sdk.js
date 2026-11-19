@@ -173,6 +173,19 @@
     if (typeof value !== 'string' || !value || value === '.' || value === '..') throw C.error('INVALID_REQUEST', '无效的动作名称或运行 ID');
     return encodeURIComponent(value);
   }
+  function pluginId(value) {
+    if (typeof value !== 'string' || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(value)) throw C.error('INVALID_REQUEST', '无效的插件或能力 ID');
+    return value;
+  }
+  async function pluginRequest(method, request) {
+    var response = await root.PageAgent.resources.request(method, request);
+    if (response.error) {
+      var error = C.error(response.error.code, response.error.message);
+      error.receipt = response.receipt;
+      throw error;
+    }
+    return response.primary.data;
+  }
   var initialReady = connect();
   root.PageAgent = Object.freeze({
     get ready() {
@@ -187,6 +200,17 @@
       request: function (method, request) {
         return root.PageAgent.ready.then(function () { return call('APP_REQUEST', 'resources.request', { method: method, request: request }); });
       }
+    }),
+    plugins: Object.freeze({
+      list: function () { return pluginRequest('GET', { uri: '/plugins/contributions' }); },
+      call: async function (owner, capability, input, options) {
+        var result = await pluginRequest('POST', {
+          uri: '/plugin-' + pluginId(owner) + '/capabilities/' + pluginId(capability),
+          body: input === undefined ? {} : input,
+          idempotencyKey: options && options.idempotencyKey !== undefined ? options.idempotencyKey : C.revision(),
+        });
+        return result.value;
+      },
     }),
     apps: Object.freeze({
       get input() { return launchInput; },

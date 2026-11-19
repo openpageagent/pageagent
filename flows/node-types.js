@@ -1554,7 +1554,7 @@
       type: 'sendEmail',
       label: '邮件通知',
       needsPage: false,
-      description: '通过 WebSocket 连接的 MCP Server 使用「连接配置 → 邮件通知」中唯一的 SMTP 发件账户发送邮件。必须先连接支持邮件发送的 MCP Server。收件人、抄送、密送至少填一项；支持模板、文本/HTML 正文和附件。此节点有投递副作用，不允许自动重试。',
+      description: '通过已连接的 MCP Server，使用「连接配置 → 邮件服务器连接」中绑定的服务端邮件账号发送邮件。SMTP 凭据在服务端配置。收件人、抄送、密送至少填一项；支持模板、文本/HTML 正文和附件。此节点有投递副作用，不允许自动重试。',
       params: [
         { key: 'to', label: '收件人（支持模板）', kind: 'text', placeholder: 'a@example.com; b@example.com', description: '仅填写邮箱地址，多个地址用逗号、分号、空格或换行分隔。' },
         { key: 'cc', label: '抄送（可选，支持模板）', kind: 'text', placeholder: 'cc@example.com' },
@@ -1565,7 +1565,7 @@
           { value: 'html', label: 'HTML' },
         ] },
         { key: 'body', label: '正文（支持模板，最多 1MB）', kind: 'textarea', editorLanguage: 'auto', placeholder: '运行结果：\n{{json last}}' },
-        { key: 'attachments', label: '附件（JSON 数组，可选）', kind: 'textarea', editorLanguage: 'json', placeholder: '[{"fileName":"report.json","content":"{{json last}}"}]', description: '最多 20 个，总计 20MB。文本：{fileName,content}；Base64：{fileName,content,contentMode:"base64"}；可选 mimeType。也可填写 {{json attachments}} 引用整个数组。插件无法仅凭本地文件路径读取附件，请提供文件内容。' },
+        { key: 'attachments', label: '附件（JSON 数组，可选）', kind: 'textarea', editorLanguage: 'json', placeholder: '[{"fileName":"report.json","content":"{{json last}}"}]', description: '最多 20 个，总计 20MB。文本：{fileName,content}；Base64：{fileName,content,contentMode:"base64"}；可选 mimeType。也可填写 {{json attachments}} 引用整个数组。扩展无法仅凭本地文件路径读取附件，请提供文件内容。' },
       ],
       outputHint: '{ messageId, acceptedCount, rejectedCount:0 }（表示 SMTP 已接受，不代表已进入收件箱；部分拒收时节点失败，请核对投递记录后仅补发未接受的地址）',
     },
@@ -2437,7 +2437,7 @@
       type: 'saveFile',
       label: '保存文件到下载目录',
       needsPage: false,
-      description: '把上一节点输出、指定变量或自定义内容保存为下载目录下的文件。浏览器插件只能写入下载目录内的相对路径，不能静默写任意系统绝对路径',
+      description: '把上一节点输出、指定变量或自定义内容保存为下载目录下的文件。浏览器扩展只能写入下载目录内的相对路径，不能静默写任意系统绝对路径',
       params: [
         { key: 'directory', label: '下载目录下的子目录（支持模板）', kind: 'text', default: 'PageAgent', placeholder: 'PageAgent/reports' },
         { key: 'fileName', label: '文件名（支持模板）', kind: 'text', required: true, default: 'data.json', placeholder: 'orders.json' },
@@ -2680,6 +2680,7 @@
 
   function isNodeReplaySafe(node) {
     var type = String(replayOwnValue(node, 'type', '') || '');
+    if (type.startsWith('plugin.')) return !!(getType(type) && getType(type).replaySafe);
     var params = replayOwnValue(node, 'params', null);
     if (!params || typeof params !== 'object' || Array.isArray(params)) params = {};
     if (type === 'cdp.analyze_performance') {
@@ -3091,6 +3092,27 @@
 
   function getType(type) {
     return typeMap[type] || null;
+  }
+
+  var pluginTypeIds = new Set();
+  function replacePluginTypes(definitions) {
+    var next = cloneJson(definitions), ids = new Set();
+    next.forEach(function (definition) {
+      if (!/^plugin\.[a-z0-9-]+\.[a-z0-9-]+$/.test(definition.type) || ids.has(definition.type)
+          || typeMap[definition.type] && !pluginTypeIds.has(definition.type) || !Array.isArray(definition.params)) {
+        throw new Error('无效或重复的插件节点: ' + definition.type);
+      }
+      ids.add(definition.type);
+    });
+    for (var index = TYPES.length - 1; index >= 0; index--) {
+      if (pluginTypeIds.has(TYPES[index].type)) TYPES.splice(index, 1);
+    }
+    pluginTypeIds.forEach(function (type) { delete typeMap[type]; });
+    next.forEach(function (definition) { TYPES.push(definition); typeMap[definition.type] = definition; });
+    pluginTypeIds = ids;
+    var category = CATEGORIES.find(function (value) { return value.id === 'plugins'; });
+    if (!category) { category = { id: 'plugins', label: '插件能力', types: [] }; CATEGORIES.push(category); }
+    category.types = Array.from(ids);
   }
 
   function getTypeLabel(type) {
@@ -3621,6 +3643,7 @@
   return {
     TYPES: TYPES,
     CATEGORIES: CATEGORIES,
+    replacePluginTypes: replacePluginTypes,
     getType: getType,
     getTypeLabel: getTypeLabel,
     resolveNumberValue: resolveNumberValue,

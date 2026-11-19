@@ -97,7 +97,7 @@
     var id = node('button', 'item-id', 'ID: ' + item.id); id.type = 'button';
     id.dataset.action = 'copy-id'; id.dataset.id = item.id;
     id.setAttribute('aria-label', '复制 ID: ' + item.id); id.title = '点击复制 ID: ' + item.id;
-    summary.append(title, description, id);
+    summary.append(title, description);
     var state = ({ disabled: '已配对 · 已关闭', disconnected: '网络断开', connecting: '连接中', authenticating: '认证中',
       'pairing-required': '需要配对', pairing: '配对中', configuring: '同步目录中', ready: '已就绪', 'auth-failed': '认证失败',
       revoked: '凭据已撤销', 'identity-conflict': '服务端身份冲突', incompatible: '协议不兼容，请同步升级' })[item.state] || '尚未连接';
@@ -105,7 +105,8 @@
       : item.needsPairing ? item.paired ? (item.enabled ? '已开启' : '已关闭') + ' · 待重新配对' : '未配对'
         : item.reason === 'RETRY_LIMIT_REACHED' ? '已开启 · 重试已停止' : state;
     var badge = node('span', 'badge' + (item.ready ? ' on' : ''), stateLabel); badge.title = item.reason || '';
-    card.append(summary, badge);
+    var end = node('span', 'item-card-end'); end.append(id, badge);
+    card.append(summary, end);
     return card;
   }
   function replaceCards(list, cards) {

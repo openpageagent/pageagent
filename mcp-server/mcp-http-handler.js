@@ -22,12 +22,65 @@ class McpHttpHandler {
     const now = Date.now();
     for (const session of this.sessions.values()) {
       if (session.state === 'initializing' && now - session.createdAt >= 10000
-        || session.state === 'ready' && !session.active.size && now - session.touched >= LIMITS.httpIdleMs) this.remove(session);
+        || session.state === 'ready' && !session.stream && !session.active.size && now - session.touched >= LIMITS.httpIdleMs) {
+        this.remove(session, session.state === 'initializing' ? 'initialize_timeout' : 'idle_timeout');
+      }
     }
   }
-  remove(session) {
+  remove(session, reason = 'closed') {
+    if (session.state === 'closing') return;
+    this.server.logConnection(reason === 'initialize_timeout' ? 'warn' : 'info', 'HTTP MCP 会话关闭', {
+      transport: 'http', sessionId: session.id, address: session.address, reason: this.server.closing ? 'shutdown' : reason });
     session.state = 'closing'; for (const item of session.active.values()) item.controller.abort('HTTP session closed');
+    session.stream?.end(); session.subscriptions.clear(); session.pending.clear();
     if (!session.active.size) this.sessions.delete(session.id);
+  }
+  resourceUpdated(canonical) {
+    const uri = canonicalToMcpUri(canonical);
+    for (const session of this.sessions.values()) {
+      if (session.state !== 'ready' || !session.subscriptions.has(uri)) continue;
+      session.pending.add(uri); this.flushNotifications(session);
+    }
+  }
+  flushNotifications(session) {
+    const stream = session.stream;
+    if (!stream || stream.destroyed || stream.writableEnded || stream.writableNeedDrain) return;
+    for (const uri of session.pending) {
+      session.pending.delete(uri);
+      if (!stream.write('event: message\ndata: ' + JSON.stringify({ jsonrpc: '2.0', method: 'notifications/resources/updated', params: { uri } }) + '\n\n')) break;
+    }
+  }
+  async openStream(req, res, session) {
+    if (!session || session.state !== 'ready') throw rpcError(-32600, 'An initialized MCP session is required', 400);
+    if (!String(req.headers.accept || '').split(',').some(value => /^\s*text\/event-stream\s*(?:;|$)/i.test(value) && !/;\s*q=0(?:\.0*)?(?:;|$)/i.test(value))) {
+      throw rpcError(-32600, 'Accept must include text/event-stream', 406);
+    }
+    session.stream?.end();
+    session.stream = res;
+    // Notifications invalidate snapshots. On every reconnect announce all active
+    // subscriptions so clients can read durable history even if a notice was lost.
+    for (const uri of session.subscriptions) session.pending.add(uri);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store',
+      Connection: 'keep-alive', 'X-Accel-Buffering': 'no', 'Mcp-Session-Id': session.id });
+    res.write(': connected\n\n');
+    const drain = () => this.flushNotifications(session);
+    res.on('drain', drain); this.flushNotifications(session);
+    const heartbeat = setInterval(() => {
+      if (res.destroyed || res.writableEnded) return;
+      session.touched = Date.now();
+      if (!res.writableNeedDrain) res.write(': heartbeat\n\n');
+    }, 15000);
+    heartbeat.unref();
+    await new Promise(resolve => {
+      const finish = () => {
+        clearInterval(heartbeat); res.removeListener('drain', drain);
+        res.removeListener('close', finish); res.removeListener('finish', finish);
+        if (session.stream === res) session.stream = null;
+        resolve();
+      };
+      res.once('close', finish); res.once('finish', finish);
+      if (res.destroyed || res.writableEnded) finish();
+    });
   }
   target(req, query, session, argument) {
     if (query.getAll('mcpClientId').length > 1) throw rpcError(-32602, 'Duplicate target query', 400);
@@ -40,10 +93,24 @@ class McpHttpHandler {
   async dispatch(message, options) {
     const params = message.params || {};
     const allowed = { ping: ['_meta'], 'tools/list': ['cursor', '_meta'], 'tools/call': ['name', 'arguments', '_meta'],
-      'resources/list': ['cursor', '_meta'], 'resources/read': ['uri', '_meta'] }[message.method];
+      'resources/list': ['cursor', '_meta'], 'resources/read': ['uri', '_meta'],
+      'resources/subscribe': ['uri', '_meta'], 'resources/unsubscribe': ['uri', '_meta'] }[message.method];
     if (allowed && (Object.keys(params).some(key => !allowed.includes(key)) || params._meta !== undefined && !record(params._meta)
       || params.cursor !== undefined && (typeof params.cursor !== 'string' || !/^offset:\d+$/.test(params.cursor)))) throw rpcError(-32602, 'Invalid method parameters');
     if (message.method === 'ping') return {};
+    if (message.method === 'resources/subscribe' || message.method === 'resources/unsubscribe') {
+      const canonical = mcpToCanonicalUri(params.uri), uri = canonicalToMcpUri(canonical), session = options.session;
+      if (message.method === 'resources/unsubscribe') {
+        session.subscriptions.delete(uri); session.pending.delete(uri); return {};
+      }
+      if (canonical !== '/bots' && !/^\/bots\/accounts\/[^/]+\/events$/.test(canonical)) throw rpcError(-32602, 'Subscriptions support arp:///bots and bot account events resources');
+      const envelope = await this.server.callArp('GET', { uri: canonical }, 30000, options);
+      if (envelope.error) throw rpcError(-32002, envelope.error.message);
+      if (session.state !== 'ready') throw rpcError(-32600, 'Session has closed', 404);
+      if (session.subscriptions.size >= 256 && !session.subscriptions.has(uri)) throw rpcError(-32000, 'Subscription capacity reached', 429);
+      session.subscriptions.add(uri); session.pending.add(uri); this.flushNotifications(session);
+      return {};
+    }
     if (message.method === 'tools/list') return { tools: params.cursor ? [] : this.server.toolDefinitions };
     if (message.method === 'tools/call') {
       if (!arp.METHODS.includes(params.name) || !record(params.arguments)) throw rpcError(-32602, 'Invalid method tool or arguments');
@@ -61,15 +128,20 @@ class McpHttpHandler {
       const envelope = await this.server.callArp('OPTIONS', { uri: '/', ...(params.cursor ? { cursor: params.cursor } : {}) }, 30000, options);
       if (envelope.status.code >= 400) throw rpcError(-32000, 'Resource discovery failed');
       const discovered = envelope.capabilities && envelope.capabilities.resources || [];
+      const botResources = params.cursor ? [] : this.server.bots.list({}).items.map(account => ({
+        uri: canonicalToMcpUri('/bots/accounts/' + encodeURIComponent(account.id) + '/events'),
+        name: account.name + ' 消息', description: '持久消息历史，可用 resources/subscribe 订阅变更', mimeType: 'application/json',
+      }));
       return { ...(envelope.capabilities && envelope.capabilities.nextCursor ? { nextCursor: envelope.capabilities.nextCursor } : {}),
         resources: (params.cursor ? [] : [{ uri: 'arp:///', name: 'ARP/1 resources', mimeType: 'application/json' }]).concat(discovered.map(item => ({
         uri: canonicalToMcpUri(item.href), name: item.type || item.relation || item.href,
-        description: item.relation || 'ARP resource', mimeType: 'application/json' }))) };
+        description: item.relation || 'ARP resource', mimeType: 'application/json' }))).concat(botResources) };
     }
     if (message.method === 'resources/read') {
       const canonical = mcpToCanonicalUri(params.uri);
       const method = canonical === '/' || canonical === '/page' || canonical === '/browser' ? 'OPTIONS' : 'GET';
       const envelope = await this.server.callArp(method, { uri: canonical }, 30000, options);
+      if (envelope.status.code >= 400) throw rpcError(-32002, envelope.error?.message || 'Resource unavailable');
       const images = this.server.inlineImageContents(envelope);
       return { contents: [{ uri: params.uri, mimeType: 'application/json', text: JSON.stringify(images.length ? this.server.stripInlineImageData(envelope) : envelope) }]
         .concat(images.map(image => ({ uri: params.uri, mimeType: image.mimeType, blob: image.data }))) };
@@ -94,7 +166,6 @@ class McpHttpHandler {
         error: { code: Number.isSafeInteger(error.code) ? error.code : -32603, message: error.message || 'MCP request failed' } });
     };
     try {
-      if (req.method === 'GET') { res.setHeader('Allow', 'POST, DELETE, OPTIONS'); sendEmpty(req, res, 405); return; }
       const sessionId = req.headers['mcp-session-id'];
       if (sessionId) {
         session = this.sessions.get(sessionId);
@@ -104,6 +175,7 @@ class McpHttpHandler {
         this.target(req, query, session);
         session.touched = Date.now();
       }
+      if (req.method === 'GET') { await this.openStream(req, res, session); return; }
       if (req.method === 'DELETE') {
         if (!session) throw rpcError(-32600, 'Mcp-Session-Id required', 400);
         this.server.audit.bestEffort('cancel.requested', { ...auditContext, operation: 'http.session.delete' });
@@ -113,14 +185,14 @@ class McpHttpHandler {
       if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers['content-type'] || ''))) throw rpcError(-32600, 'Content-Type must be application/json', 415);
       const accepted = String(req.headers.accept || '').toLowerCase().split(',').filter(value => !/;\s*q\s*=\s*0(?:\.0*)?\s*(?:;|$)/.test(value)).map(value => value.split(';')[0].trim());
       if (!accepted.includes('application/json') || !accepted.includes('text/event-stream')) throw rpcError(-32600, 'Accept must include application/json and text/event-stream', 406);
-      try { message = await readBody(req, signal); } catch (error) { if (error.statusCode === 400) error.code = -32700; throw error; }
+      try { message = await readBody(req, signal, 32 * 1024 * 1024); } catch (error) { if (error.statusCode === 400) error.code = -32700; throw error; }
       if (!record(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string' || !message.method || message.method.length > 200
         || Object.keys(message).some(key => !['jsonrpc', 'id', 'method', 'params'].includes(key))) throw rpcError(-32600, 'Invalid JSON-RPC request', 400);
       const hasId = Object.prototype.hasOwnProperty.call(message, 'id');
       if (hasId && !validId(message.id)) throw rpcError(-32600, 'Invalid JSON-RPC ID', 400);
       if (message.params !== undefined && !record(message.params)) throw rpcError(-32602, 'Method parameters must be an object', 400);
       auditContext.operation = ['initialize', 'ping', 'tools/list', 'tools/call', 'resources/list', 'resources/read',
-        'notifications/initialized', 'notifications/cancelled'].includes(message.method) ? 'mcp.' + message.method : 'mcp.unknown';
+        'resources/subscribe', 'resources/unsubscribe', 'notifications/initialized', 'notifications/cancelled'].includes(message.method) ? 'mcp.' + message.method : 'mcp.unknown';
       auditContext.parameters = { rpcRequestId: hasId ? message.id : null };
       if (message.method === 'initialize') {
         if (sessionId || !hasId) throw rpcError(-32600, 'initialize requires ID and no previous session', 400);
@@ -133,13 +205,17 @@ class McpHttpHandler {
         if (this.sessions.size >= LIMITS.httpSessions) throw rpcError(-32000, 'HTTP session capacity reached', 429);
         const version = VERSIONS.includes(params.protocolVersion) ? params.protocolVersion : VERSIONS[0];
         session = { id: auditContext.transportSessionId, principal: 'http:operator', version, state: 'initializing', target: this.target(req, query),
-          createdAt: Date.now(), touched: Date.now(), seen: new Set([typedId(message.id)]), active: new Map() };
+          clientInfo: { name: params.clientInfo.name, version: params.clientInfo.version }, address: req.socket.remoteAddress,
+          createdAt: Date.now(), touched: Date.now(), seen: new Set([typedId(message.id)]), active: new Map(),
+          subscriptions: new Set(), pending: new Set(), stream: null };
         this.server.audit.bestEffort('auth.succeeded', { ...auditContext, parameters: {
           address: req.socket.remoteAddress, clientName: params.clientInfo.name, version: params.clientInfo.version } });
         this.sessions.set(session.id, session);
+        this.server.logConnection('info', 'HTTP MCP 会话建立，等待初始化完成', {
+          transport: 'http', sessionId: session.id, address: session.address });
         res.setHeader('Mcp-Session-Id', session.id); res.setHeader('MCP-Protocol-Version', version);
         sendJson(req, res, 200, { jsonrpc: '2.0', id: message.id, result: { protocolVersion: version,
-          capabilities: { tools: { listChanged: false }, resources: { listChanged: false, subscribe: false } },
+          capabilities: { tools: { listChanged: false }, resources: { listChanged: false, subscribe: true } },
           instructions: this.server.instructions,
           serverInfo: { name: 'page-agent-arp', title: this.server.serverName, version: this.server.version } } }); return;
       }
@@ -150,6 +226,8 @@ class McpHttpHandler {
           if (Object.keys(params).some(key => key !== '_meta') || params._meta !== undefined && !record(params._meta)) throw rpcError(-32602, 'Invalid initialized parameters', 400);
           if (session.state !== 'initializing') throw rpcError(-32600, 'Already initialized', 400);
           session.state = 'ready';
+          this.server.logConnection('success', 'HTTP MCP 会话就绪', {
+            transport: 'http', sessionId: session.id, address: session.address });
         } else if (message.method === 'notifications/cancelled') {
           if (!record(message.params) || !validId(message.params.requestId)
             || Object.keys(message.params).some(key => !['requestId', 'reason', '_meta'].includes(key))
@@ -157,7 +235,7 @@ class McpHttpHandler {
             || message.params._meta !== undefined && !record(message.params._meta)) throw rpcError(-32602, 'Invalid cancellation parameters', 400);
           this.server.audit.bestEffort('cancel.requested', { ...auditContext, parameters: { rpcRequestId: message.params.requestId } });
           const item = session.active.get(typedId(message.params.requestId)); if (item) item.controller.abort('HTTP cancellation');
-        } else if (['ping', 'tools/list', 'tools/call', 'resources/list', 'resources/read'].includes(message.method)) throw rpcError(-32600, 'Request method requires an ID', 400);
+        } else if (['ping', 'tools/list', 'tools/call', 'resources/list', 'resources/read', 'resources/subscribe', 'resources/unsubscribe'].includes(message.method)) throw rpcError(-32600, 'Request method requires an ID', 400);
         sendEmpty(req, res, 202); return;
       }
       if (session.state !== 'ready') throw rpcError(-32600, 'Session not initialized', 400);
@@ -165,7 +243,7 @@ class McpHttpHandler {
       if (session.seen.has(key)) throw rpcError(-32600, 'Duplicate ID; original execution must not be replayed');
       if (session.seen.size >= LIMITS.seenRequests) throw rpcError(-32000, 'Session ID capacity reached; initialize a new session', 429);
       session.seen.add(key);
-      const business = ['tools/call', 'resources/list', 'resources/read'].includes(message.method);
+      const business = ['tools/call', 'resources/list', 'resources/read', 'resources/subscribe', 'resources/unsubscribe'].includes(message.method);
       const target = this.target(req, query, session, message.method === 'tools/call' && message.params && message.params.arguments ? message.params.arguments.mcpClientId : undefined);
       if (!business) { sendJson(req, res, 200, { jsonrpc: '2.0', id: message.id, result: await this.dispatch(message, {}) }); return; }
       if (session.active.size >= LIMITS.httpSessionActive || this.active >= LIMITS.httpActive) throw rpcError(-32000, 'HTTP execution capacity reached', 429);
@@ -175,7 +253,7 @@ class McpHttpHandler {
       if (signal.aborted) abort();
       const timeout = setTimeout(() => controller.abort('HTTP response timeout'), message.method === 'tools/call' ? 180000 : 30000);
       const requestId = auditContext.requestId;
-      const options = { target, signal: controller.signal, lifecycle,
+      const options = { target, signal: controller.signal, lifecycle, session,
         context: { sessionId: session.id, conversationId: session.id, parentRequest: { transportSessionId: session.id, requestId } },
         rpcRequestId: message.id };
       try {

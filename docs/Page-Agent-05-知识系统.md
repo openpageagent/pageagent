@@ -57,13 +57,13 @@ POST /mcp-servers/{serverId}/tools/{toolName}/calls
 
 调用请求的 body 包含 `arguments` 和当前 `schemaHash`。调用异步执行，通过回执中的 `operationUri` 查询状态与结果。
 
-插件内对话需在当前助手中选择对应 MCP。上下文预载服务器说明、工具名称与说明，以及定义和调用地址；参数结构按需读取。名称和说明完全相同的工具共用说明，各连接保留独立入口。
+扩展内对话需在当前助手中选择对应 MCP。上下文预载服务器说明、工具名称与说明，以及定义和调用地址；参数结构按需读取。名称和说明完全相同的工具共用说明，各连接保留独立入口。
 
 搜索和显式读取结果中的重复 MCP 说明或参数结构，可在模型上下文中引用已保留的相同内容。原始结果及各连接的标识保留，引用规则见[提示词缓存](./Page-Agent-07-提示词缓存.md#请求结构)。
 
-外部 Agent 可通过 Page Agent MCP Server 复用插件保存的 HTTP MCP 配置与认证。先 `GET /clients` 选择目标，再通过 `POST /clients/{clientId}/arp` 转发 `GET /mcp-servers`、工具查询、调用及结果查询。
+外部 Agent 可通过 Page Agent MCP Server 复用扩展保存的 HTTP MCP 配置与认证。先 `GET /clients` 选择目标，再通过 `POST /clients/{clientId}/arp` 转发 `GET /mcp-servers`、工具查询、调用及结果查询。
 
-插件须在线，连接开放读取和执行权限，目标 HTTP MCP 已启用并同步工具。MCP 工具说明包含发现和调用路径，无需重复配置上游 MCP。
+扩展须在线，连接开放读取和执行权限，目标 HTTP MCP 已启用并同步工具。MCP 工具说明包含发现和调用路径，无需重复配置上游 MCP。
 
 P3 内容由工具同步维护，在配置页只读。需要补充使用经验时，可另存为 P2 知识。
 

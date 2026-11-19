@@ -8,13 +8,16 @@
   if (root) root.ConversationProfileSchema = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (runtimePermissions) {
   'use strict';
+  var normalizePluginPermissions = runtimePermissions.normalizePluginPermissions;
+  runtimePermissions = runtimePermissions.conversation;
 
-  var PROFILE_VERSION = 9;
+  var PROFILE_VERSION = 10;
   var KHAZIX_WRITER_URI = '/knowledge/builtin_skill_khazix_writer';
   // Keep this order aligned with the Options sidebar. A resource root belongs
   // to the product surface where users configure or inspect that capability.
   var RESOURCE_SECTIONS = Object.freeze([
     Object.freeze({ id: 'apps', label: '应用', description: '对话生成的应用、草稿、发布与动作。' }),
+    Object.freeze({ id: 'plugins', label: '插件', description: '统一管理内置、自建及后续新增插件的读取、修改、配置和调用。' }),
     Object.freeze({ id: 'conversation', label: '对话', description: '助手、话题与对话上下文。' }),
     Object.freeze({ id: 'flows', label: '流程', description: '流程、节点类型与校验。' }),
     Object.freeze({ id: 'pages', label: '页面', description: '页面源、当前页面与浏览器资源。' }),
@@ -30,6 +33,7 @@
   ]);
   var RESOURCE_ROOT_METADATA = Object.freeze([
     Object.freeze({ uri: '/apps', section: 'apps', label: '应用', description: '发现、创建和修改应用，读取当前 SDK 授权并执行已授权动作。' }),
+    Object.freeze({ uri: '/plugins', section: 'plugins', label: '插件', description: '所有插件共用此权限；读取、修改、配置和调用无需逐个授权，删除单独控制。' }),
     Object.freeze({ uri: '/conversations', section: 'conversation', label: '对话', description: '管理对话及其持久化状态。' }),
     Object.freeze({ uri: '/assistants', section: 'conversation', label: '助手', description: '管理助手配置。' }),
 
@@ -71,7 +75,7 @@
     }),
 
     Object.freeze({ uri: '/mail-settings', section: 'mcp', label: '邮件配置',
-      description: '管理邮件通知开关、SMTP 账号和发件信息，查询邮件服务状态或发送测试邮件；密码只写不读。',
+      description: '管理邮件通知开关与服务端连接、邮件账号引用，查询邮件服务状态或发送测试邮件；SMTP 凭据在服务端配置。',
     }),
     Object.freeze({ uri: '/local', section: 'mcp', label: '本地文件、命令与桌面',
       description: '在连接配置开启后，通过服务端操作文件、执行 Bash，以及调用平台支持的鼠标、键盘、剪贴板、截图、图片定位、应用和窗口能力。',
@@ -263,17 +267,24 @@
     requireResourcePermissionCatalog();
     var roots = {};
     RESOURCE_ROOTS.forEach(function (root) {
-      roots[root.uri] = { methods: (runtimePermissions.rootMethods[root.uri] || ['OPTIONS']).filter(function (method) {
-        return root.supportedMethods.indexOf(method) !== -1;
+      roots[root.uri] = { methods: (runtimePermissions.rootMethods[root.uri] || coreMethodsForRoot(root.uri).concat(['OPTIONS'])).filter(function (method, index, methods) {
+        return root.supportedMethods.indexOf(method) !== -1 && methods.indexOf(method) === index;
       }) };
     });
     return { roots: roots, permissions: runtimePermissions.permissions.slice() };
   }
 
+  function developerResourcePolicy() {
+    return createResourcePolicy({
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS'],
+      permissions: RESOURCE_PERMISSION_NAMES.filter(function (permission) { return !permission.endsWith('.delete'); }),
+    });
+  }
+
   function normalizedPermissions(value, fallback) {
     var source = Array.isArray(value) ? value : fallback;
     var selected = Object.create(null);
-    (Array.isArray(source) ? source : []).forEach(function (permission) {
+    normalizePluginPermissions(source).forEach(function (permission) {
       permission = String(permission || '').trim();
       if (RESOURCE_PERMISSION_NAMES.indexOf(permission) !== -1) selected[permission] = true;
     });
@@ -311,7 +322,7 @@
       return output;
     }, Object.create(null));
     function legacyBuckets(value) {
-      var keys = safeKeys(value).filter(function (key) { return !knownRoots[key]; });
+      var keys = safeKeys(value).filter(function (key) { return !knownRoots[key] && !key.startsWith('/plugin-'); });
       return keys.length === 2 && (value['/page'] || value['/browser'])
         ? { flow: value[keys[0]], integration: value[keys[1]] }
         : null;
@@ -332,7 +343,7 @@
       }
       var fallbackMethods = Array.isArray(fallbackValue)
         ? fallbackValue
-        : (isRecord(fallbackValue) ? fallbackValue.methods : runtimePermissions.rootMethods[root.uri] || ['OPTIONS']);
+        : (isRecord(fallbackValue) ? fallbackValue.methods : runtimePermissions.rootMethods[root.uri] || coreMethodsForRoot(root.uri).concat(['OPTIONS']));
       var methods = normalizedMethods(sourceValue, fallbackMethods);
       // Recording retrieval is a core capability of every assistant. Keep the
       // legacy root present even when an older explicit allowlist omitted it.
@@ -495,6 +506,32 @@
         '需要持久数据或调用流程、流程组、脚本时，使用 PageAgent SDK，核对能力范围、依赖和实际授权。只声明本次功能需要的能力与依赖。',
         '普通接口取数、参数加载和任务状态查询优先使用已有 SDK/ARP 直接能力；不为一次 HTTP 请求默认新建单步 Flow，也不为每次轮询创建 Run。仅有复用现有业务流程、后台任务或用户明确要求时使用 Flow。SDK 缺少能力时说明具体缺口；用户已明确要求的原生调用按 customBehavior 契约处理，不伪造接口或绕过授权。',
         '按用户要求保存草稿或发布应用，以资源写入回执确认结果；逐项对照用户要求说明实现、静态检查和待用户验证的内容。保存成功或 diff 正确不等于功能已验证，不宣称未实际验证的交互或业务链路已经可用。',
+      ].join('\n');
+    }
+    if (kind === 'plugin-developer') {
+      return [
+        '你是 Page Agent 的插件开发工程师，以 YAGNI 工程师和外科手术式工程师的身份执行，遵循第一性原理和奥卡姆剃刀原则。',
+        '',
+        '【开发原则】',
+        '- 只实现用户当前确认的需求，从实际输入输出、当前插件定义和资源契约推导方案；选择步骤、概念和依赖更少的实现，优先复用现有应用、工具、流程和会话入口。',
+        '- 先定位目标和影响范围，只修改直接相关的声明、处理函数或配置；保留无关行为，不顺手重构、改名或添加未来功能。仅按需读取当前插件和直接依赖，不遍历无关源码或追溯历史。',
+        '- 默认只做静态检查：核对源码、输入输出合同、权限、订阅来源和保存回执。不编写或运行测试，不主动执行能力、发送平台消息或启动业务动作验证；功能测试由用户完成。',
+        '- 通过插件资源接口提交明确的修改，禁止用脚本批量替换源码。不新增 MCP、安装 npm 或引入其他执行环境，不为开发便利扩展权限。',
+        '',
+        '【插件开发流程】',
+        '- 首次开发先读取 GET /plugins/authoring 和目标插件的 /plugins/{id}/files 文件清单、状态与 revision，后续复用仍有效的指引。通过 OPTIONS 查询实际资源合同，不能猜测字段、权限或接口。内置源码只读，启停和配置可直接保存；调整源码时通过 POST /plugins/{id}/copies 复制全部文件及配置，再修改副本。base=messaging 用于平台对话通道，保存时会补充内置指令所需权限；副本运行自己的源码，普通消息接收无需此标记。',
+        '- 新插件使用 files 文件集合与 entry 入口；JS 以 module.exports 导出 apply(ctx, config)，通过 ctx.pageAgent 注册能力或事件，API 见 authoring.modules。可用 require("./helpers.js") 或 require("./data.json") 引用本插件文件，不支持目录、外部模块或 npm。plugin.json 是入口、配置和权限等元数据的文件视图，不含 files。已有 capabilities/subscriptions 的 code 是异步函数体，保留其输入和消息接口。源码在现有沙箱运行，Cordis 管理注册与释放；启动失败或未处理的回调异常自动停用，修复后按用户要求启用。不编写无退出条件的同步循环。',
+        '- 配置表单统一使用 configSchema：title 写简短字段名，description 写简洁说明。插件 description 写简短用途摘要，在列表类型标签后展示；详细配置说明放在 configSchema 或字段的 description，由管理页统一收进编辑区顶部默认关闭的折叠项，内置与自建插件一致。无需自行实现说明界面，不把说明拼进字段名称或配置值，不在多个字段重复通用说明。具体格式见 authoring.configuration。',
+        '- 源码按需 GET /plugins/{id}/files/{fileName}：q 搜索定位，可用 fixedStrings、caseSensitive、before、after；省略 q 后以 startLine/startColumn/limit 按行读取。hasMore=true 时用 nextLine/nextColumn 续读并携带 revision；复用上下文中仍有效的原文，不例行读完整文件。',
+        '- 局部修改使用 POST /plugins/{id}/edits，body={revision,edits:[{fileName,oldText,newText}]}；oldText 必须非空且唯一匹配，可跨行，重复时补上下文。所有编辑依次匹配并校验后一次保存。新增或完整替换单文件用 PUT /plugins/{id}/files/{fileName} 的 {revision,source}，只有全文替换才需要读齐目标并保留无关内容；删除用同路径 DELETE {revision}。不得用片段覆盖全文，冲突时补读相关片段后合并。',
+        '- 模块通过 ctx.pageAgent.arp 复用资源，能力内部使用 call.arp 保留调用者权限；独立处理函数使用 api.resources.request。检查响应 error 后读取 primary.data。启动应用先读取发布参数合同并传 body.input；需要计算结果时选择已有工具或应用动作。流程、会话及自建工具按各自合同调用，不用启动回执代替最终业务结果。',
+        '- permissions 是插件可调用的资源权限，只声明本次实际需要且当前助手已有的权限；能力的嵌套调用还受调用方授权约束。资源权限不代替消息来源与指令授权，配置表单也不自动执行授权检查。',
+        '- 涉及接收平台消息时，除非用户明确提出额外要求，默认采用内置“平台消息”插件的通用配置格式：config.authorizations 为账号授权列表，每项包含 connectionId、accountId、commands。configSchema 的 authorizations 声明 type:array、format:message-accounts，items 声明这三个字段，commands.items.enum 列出本插件实际支持的指令（不含 /），由用户选择多个账号并逐个开启指令；自然语言接收按需以 chat 单独授权。具体声明见 authoring.messageAuthorization。',
+        '- 新建消息插件默认 authorizations:[]，新增账号默认 commands:[]；用户已明确指定的账号和指令可填入配置，修改已有插件时保留既有授权。缺少实际账号不妨碍交付可配置插件，不从消息历史推定授权。账号及启用的指令从 config 读取，不在源码、订阅或 Schema 的 const/单值 enum 中锁定具体平台、连接、账号、频道、发送者或启用项。默认授权适用于所选账号的所有发送者和会话；仅在用户明确要求时增加来源限制或固定绑定。',
+        '- 通用消息插件使用模块监听 messaging:dispatch，从 event.data 读取消息，执行前按 config.authorizations 匹配 connectionId、accountId 和允许的指令；未选择账号或未开启指令时不执行，不能只配置指令却在处理代码里另绑账号，也不能绕过配置执行固定指令。声明式 subscriptions 要求精确填写 connectionId/accountId/channelId/userId，仅在用户明确要求固定来源时采用。分发按 priority 从高到低，同级按插件注册顺序，首个返回 true 接管后停止；messaging:message 仅供观察。',
+        '- 新建使用 POST /plugins，默认 enabled=false；仅需整组替换时才读取完整定义，通过 POST /plugins/{id} 提交完整定义与 revision。保留无关文件及原启停状态。启停和配置使用 /plugins/{id}/configuration。新建或复制插件先保持停用，按用户要求启用，避免订阅立即处理消息。插件无草稿和发布步骤，revision 仅用于防止并发覆盖。',
+        '- 编辑通常省略 includeDiff，小改动自动返回保存前后 diff；仅本次确需大改动差异时传 true，不要固定开启。保存后核对 diff 的文件、行号、增删内容与范围。skipped/unavailable 或 truncated=true 不代表保存失败，也不能声称核对了完整差异；仅按需补读缺失位置，不为补取 diff 重放成功编辑。',
+        '- 以保存回执确认 revision、启停和状态；enabled=true 由 Cordis 加载，保存成功不等于加载或业务运行成功，必要时按需读取状态或 /plugins/contributions。交付说明修改内容、入口、参数、静态检查及待用户验证项，不宣称未验证的链路已可用。',
       ].join('\n');
     }
     if (kind === 'network-writer') {
@@ -663,6 +700,19 @@
         sourceResourcePolicy.roots = safeMerge(sourceResourcePolicy.roots || {});
         sourceResourcePolicy.roots['/recordings'] = { methods: ['GET', 'OPTIONS'] };
       }
+      // DELETE used to be mandatory for /plugins; it is now an opt-in method.
+      if (requestedVersion > 0 && requestedVersion < 10 && sourceResourcePolicy && sourceResourcePolicy.roots && sourceResourcePolicy.roots['/plugins']) {
+        sourceResourcePolicy = safeMerge(sourceResourcePolicy);
+        sourceResourcePolicy.roots['/plugins'] = { methods: normalizedMethods(sourceResourcePolicy.roots['/plugins'], []).filter(function (method) {
+          return method !== 'DELETE';
+        }) };
+      }
+      // Upgrade persisted developer profiles and topic snapshots together.
+      if (requestedVersion > 0 && requestedVersion < 10
+          && (out.prompt === buildTemplatePrompt('plugin-developer')
+            || upgradeAppDeveloperPrompt(out.prompt) === buildTemplatePrompt('app-developer'))) {
+        sourceResourcePolicy = developerResourcePolicy();
+      }
       out.resourcePolicy = normalizeResourcePolicy(sourceResourcePolicy, fallback.resourcePolicy);
       out.createdAt = nonNegativeInteger(source.createdAt !== undefined ? source.createdAt : fallback.createdAt, 0);
       out.updatedAt = nonNegativeInteger(source.updatedAt !== undefined ? source.updatedAt : fallback.updatedAt, 0);
@@ -785,7 +835,15 @@
           description: '创建、修改和修复应用，保存源码并维护 SDK 能力与依赖',
           prompt: buildTemplatePrompt('app-developer'),
           settings: baseSettings,
-          resourcePolicy: createResourcePolicy(),
+          resourcePolicy: developerResourcePolicy(),
+        }),
+        tpl_plugin_developer: templateProfile({
+          id: 'tpl_plugin_developer',
+          name: '插件开发助手',
+          description: '创建、修改和修复 Cordis 插件，维护能力、参数、权限和消息订阅',
+          prompt: buildTemplatePrompt('plugin-developer'),
+          settings: baseSettings,
+          resourcePolicy: developerResourcePolicy(),
         }),
         tpl_network_search_writer: templateProfile({
           id: 'tpl_network_search_writer',
@@ -840,6 +898,7 @@
         order: [
           'tpl_default_assistant',
           'tpl_app_developer',
+          'tpl_plugin_developer',
           'tpl_network_search_writer',
           'tpl_page_reader_writer',
           'tpl_flow_builder',

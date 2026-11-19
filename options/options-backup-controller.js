@@ -318,6 +318,7 @@
     ];
     var BACKUP_MODULE_DEFS = [
       { id: 'apps', label: '应用', note: '当前草稿、发布内容、主题资源和可选业务数据；不包含 SDK 授权' },
+      { id: 'plugins', label: '插件', note: '全部源码、入口、配置和权限声明；导入后停用，内置源码导入为自建副本，不含运行数据和话题关联' },
       { id: 'conversations', label: '对话', note: 'JSON 备份保存图片引用；含媒体的完整迁移请在对话页使用 ZIP 导出' },
       { id: 'assistants', label: '助手' },
       { id: 'knowledge', label: '知识' },
@@ -325,7 +326,7 @@
       { id: 'mcpServers', label: 'HTTP MCP 服务器', note: '包含 Bearer Token 与自定义 Header 原值' },
       { id: 'modelSettings', label: '模型配置', note: 'API Key、Header 值等密钥不会导出' },
       { id: 'mcpSettings', label: 'MCP 服务器' },
-      { id: 'mailSettings', label: '邮件通知', note: '包含 SMTP 密码／授权码原值；导入会覆盖当前唯一发件账户' },
+      { id: 'mailSettings', label: '邮件通知', note: '仅包含服务端连接及邮件账号引用；旧版 SMTP 凭据不导入，须手动迁到服务端' },
     ].concat(CONFIG_BACKUP_SECTIONS);
     var BACKUP_MODULE_IDS = dictionary();
     BACKUP_MODULE_DEFS.forEach(function (def) { setOwn(BACKUP_MODULE_IDS, def.id, true); });
@@ -654,13 +655,9 @@
 
     function mailSettingsForBackup(raw) {
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)
-          || typeof raw.port !== 'number'
-          || ['host', 'security', 'username', 'password', 'from', 'fromName'].some(function (key) {
-            return typeof raw[key] !== 'string';
-          })) {
-        throw backupError('invalid-mail-settings', '邮件通知配置格式无效，须包含完整的 SMTP 账户字段');
-      }
-      return safeClone(globalThis.PageAgentMailSettings.validate(raw, true));
+          || raw.enabled !== undefined && typeof raw.enabled !== 'boolean') throw backupError('invalid-mail-settings', '邮件账号引用格式无效');
+      var settings = globalThis.PageAgentMailSettings;
+      return safeClone(settings.validateBinding(settings.normalizeBinding(raw), true));
     }
 
     function skillForBackup(skill) {
@@ -753,6 +750,16 @@
           });
         }, Promise.resolve([]));
       });
+    }
+
+    async function readPluginBackupModule(ids) {
+      var items = dictionary(), order = [];
+      for (var id of ids) {
+        var plugin = resourceEnvelopeData(await resourceClient.get('/plugins/' + resourceSegment(id)), '插件 ' + id);
+        if (!plugin.definition || plugin.definition.id !== id) throw new Error('插件源码读取不完整：' + id);
+        setOwn(items, id, plugin.definition); order.push(id);
+      }
+      return { label: '插件', source: '/plugins', items: items, order: order };
     }
 
     function readMcpServersForBackup() {
@@ -887,6 +894,7 @@
         modules.apps = source.appModules.apps;
         Object.keys(source.appModules).forEach(function (key) { if (!modules[key]) modules[key] = source.appModules[key]; });
       }
+      if (source.pluginModule) modules.plugins = source.pluginModule;
       return modules;
     }
 
@@ -907,6 +915,13 @@
           apps.forEach(function (app) { if (!app.__builtin) { items[app.appId] = app; order.push(app.appId); } });
           return { apps: { label: '应用', source: '/apps', items: items, order: order } };
         }),
+        resourceClient.get('/plugins').then(function (envelope) {
+          var items = dictionary(), order = [];
+          resourceEnvelopeData(envelope, '插件').items.forEach(function (plugin) {
+            if (plugin.hasSource) { setOwn(items, plugin.id, plugin); order.push(plugin.id); }
+          });
+          return { label: '插件', source: '/plugins', items: items, order: order };
+        }),
       ]).then(function (results) {
         var runtimeConfig = results[0];
         if (!runtimeConfig || typeof runtimeConfig !== 'object' || Array.isArray(runtimeConfig)) {
@@ -924,6 +939,7 @@
           mcpConnections: results[8],
           mailSettings: results[9],
           appModules: results[10],
+          pluginModule: results[11],
         };
       });
     }
@@ -941,7 +957,7 @@
         exportedAt: new Date().toISOString(),
         modules: selected,
         notes: {
-          scope: 'canonical ARP resources plus owned local HTTP MCP server and SMTP mail settings',
+          scope: 'canonical ARP resources plus owned local HTTP MCP server and server mail account references',
           importMode: 'merge by default; replace mode clears selected Flow/FlowGroup collections through canonical resources',
           configDependencies: 'flow and flow group dependencies are included in pages, scripts and flows when present in the source config',
           conversations: 'Conversation JSON contains Artifact references but not image bytes; use the per-topic ZIP export for a restorable media-complete archive',
@@ -1002,7 +1018,7 @@
 
     function backupItemTitle(moduleId, id, item, pkg) {
       item = item || {};
-      if (moduleId === 'apps') return item.name || id;
+      if (moduleId === 'apps' || moduleId === 'plugins') return item.name || id;
       if (moduleId === 'pages') return item.label || item.url || id;
       if (moduleId === 'flows') return item.label || id;
       if (moduleId === 'flowGroups') return item.label || item.name || id;
@@ -1015,7 +1031,7 @@
       if (moduleId === 'skills') return item.name || id;
       if (moduleId === 'mcpServers') return item.name || item.url || id;
       if (moduleId === 'mcpSettings') return item.alias || item.url || id;
-      if (moduleId === 'mailSettings') return item.fromName ? item.fromName + ' <' + item.from + '>' : item.from || 'SMTP 发件账户';
+      if (moduleId === 'mailSettings') return item.accountId || '未绑定服务端邮件账号';
       return id;
     }
 
@@ -1023,6 +1039,7 @@
       if (moduleId === 'apps') return Object.values(item.slots || {}).map(function (code) { return 'SDK: ' + code.capabilities.join(', ') + '；自定义行为: ' + (code.customBehavior.join('；') || '无'); }).join(' | ');
       if (moduleId === 'mcpSettings') return [item && item.enabled === true ? '已启用' : '已停用', item && item.url || ''].filter(Boolean).join(' · ');
       item = item || {};
+      if (moduleId === 'plugins') return (Object.keys(item.files || {}).length + ' 个源码文件 · 导入后停用') + (item.description ? ' · ' + item.description : '');
       if (moduleId === 'pages') return item.url || '';
       if (moduleId === 'flows') return item.description || ((item.nodes || []).length ? ((item.nodes || []).length + ' 个节点') : '');
       if (moduleId === 'flowGroups') return item.description || ((item.steps || []).length ? ((item.steps || []).length + ' 个步骤') : '');
@@ -1042,7 +1059,7 @@
       if (moduleId === 'knowledge') return [item.sourceLabel || item.sourceKind || item.source && item.source.kind || '', item.type || '', item.updatedAt ? fmtTime(item.updatedAt) : ''].filter(Boolean).join(' · ');
       if (moduleId === 'skills') return [item.description || '', item.version || ''].filter(Boolean).join(' · ');
       if (moduleId === 'mcpServers') return [item.enabled === false ? '已停用' : '已启用', item.url || ''].filter(Boolean).join(' · ');
-      if (moduleId === 'mailSettings') return item.host + ':' + item.port + ' · ' + item.security.toUpperCase() + ' · 含密码／授权码，覆盖当前发件账户';
+      if (moduleId === 'mailSettings') return (item.connectionId || '未选择连接') + ' · 仅账号引用，覆盖当前绑定';
       return '';
     }
 
@@ -1119,7 +1136,7 @@
     function openExportBackupDrawer() {
       if (destroyed) return { ok: false, destroyed: true };
       $('#drawer-title').textContent = '一键导出所有数据';
-      $('#drawer-content').innerHTML = '<p class="drawer-hint">正在读取插件本地数据...</p>';
+      $('#drawer-content').innerHTML = '<p class="drawer-hint">正在读取扩展本地数据...</p>';
       $('#drawer-actions').innerHTML = '<button class="btn-secondary" data-action="cancel-drawer">取消</button>';
       openDrawer();
       backupIncludeReasoning = true;
@@ -1157,6 +1174,7 @@
       }
       var modules = dictionary();
       selected.forEach(function (key) { modules[key] = pendingBackupExport.modules[key]; });
+      if (selected.indexOf('plugins') !== -1) modules.plugins = await readPluginBackupModule(pendingBackupExport.modules.plugins.order);
       if (selected.indexOf('apps') !== -1) {
         var appModules = await root.AppBackup.exportApps(pendingBackupExport.modules.apps.order, !$('#backup-app-data') || $('#backup-app-data').checked);
         Object.keys(appModules).forEach(function (key) {
@@ -1244,7 +1262,7 @@
           if (moduleId === 'mailSettings') {
             var mailItems = backupModuleItemsObject(module);
             if (Object.keys(mailItems).length !== 1 || !hasOwn(mailItems, 'smtp')) {
-              throw backupError('invalid-mail-settings', '邮件通知备份必须且只能包含一个 SMTP 发件账户');
+              throw backupError('invalid-mail-settings', '邮件通知备份必须且只能包含一个服务端邮件账号引用');
             }
             module.items = { smtp: mailSettingsForBackup(mailItems.smtp) };
             module.order = ['smtp'];
@@ -1324,7 +1342,7 @@
               var enabled = (item.generationScope || []).indexOf(capability) !== -1;
               return '<label title="' + esc(capability) + '"><input type="checkbox" data-app-import-scope="' + esc(id) + '" value="' + esc(capability) + '"' + (enabled ? ' checked' : ' disabled') + '>' + esc(capabilityLabels[capability]) + '</label>';
             }).join('') + '</div>'
-            + '<details class="backup-app-resource-permissions"><summary>插件模块权限（' + resources.length + ' 项）</summary><div class="backup-app-permission-group">'
+            + '<details class="backup-app-resource-permissions"><summary>扩展模块权限（' + resources.length + ' 项）</summary><div class="backup-app-permission-group">'
             + (resources.length ? resources.map(function (name) {
               return '<label><input type="checkbox" data-app-import-resource="' + esc(id) + '" value="' + esc(name) + '" checked>' + esc(name) + '</label>';
             }).join('') : '<p class="form-help">备份中没有已开启的模块权限。</p>') + '</div></details></fieldset>';
@@ -2291,6 +2309,59 @@
       });
     }
 
+    async function preparePluginImport(preflight) {
+      var module = preflight.package.modules.plugins;
+      if (!hasOwn(preflight.plan, 'plugins') || !module) return;
+      var responses = await Promise.all([resourceClient.get('/plugins'), resourceClient.get('/plugins/authoring')]);
+      var current = resourceEnvelopeData(responses[0], '插件').items;
+      var schema = resourceEnvelopeData(responses[1], '插件开发契约').schema;
+      var expected = dictionary(), ids = selectedBackupIds(module, preflight.plan.plugins), selected = [];
+      for (var id of ids) {
+        var definition = safeClone(module.items[id]);
+        if (definition.id !== id) throw new Error('插件条目 ID 与定义不一致：' + id);
+        var targetId = id, existing = current.find(function (item) { return item.id === id; });
+        if (existing && existing.source !== 'user') {
+          targetId = await prompt('内置插件「' + existing.name + '」源码只读，请填写导入副本的 ID', id.slice(0, 40).replace(/-$/, '') + '-copy-' + crypto.randomUUID().slice(0, 8));
+          if (targetId === null) throw new Error('已取消插件导入');
+          targetId = targetId.trim();
+          if (current.some(function (item) { return item.id === targetId; }) || hasOwn(module.items, targetId)) throw new Error('插件 ID 已存在：' + targetId);
+          definition.id = targetId; existing = null;
+        }
+        if (hasOwn(expected, targetId)) throw new Error('导入的插件 ID 重复：' + targetId);
+        definition.enabled = false;
+        var validation = root.AgentResourceProtocol.validateJsonSchema(schema, definition);
+        if (!validation.valid) throw new Error('插件 ' + id + ' 格式无效：' + validation.errors.join('; '));
+        if (targetId !== id) {
+          delete module.items[id]; module.order = module.order.map(function (name) { return name === id ? targetId : name; });
+        }
+        setOwn(module.items, targetId, definition);
+        setOwn(expected, targetId, existing ? existing.revision : null); selected.push(targetId);
+      }
+      preflight.plan.plugins = selected; preflight.pluginExpected = expected;
+    }
+
+    async function applyPluginsBackupImport(pkg, plan, preflight) {
+      var module = pkg.modules.plugins, completed = [], failures = [];
+      for (var id of selectedBackupIds(module, plan.plugins)) {
+        try {
+          var definition = safeClone(module.items[id]); definition.enabled = false;
+          if (definition.base === 'messaging') (definition.config.rules || []).forEach(function (rule) {
+            if (rule.assistantId && hasOwn(preflight.assistantIdMap, rule.assistantId)) rule.assistantId = preflight.assistantIdMap[rule.assistantId];
+          });
+          var revision = preflight.pluginExpected[id], updating = revision !== null;
+          if (updating) definition.revision = revision;
+          await resourceClient.authorizedPost(updating ? '/plugins/' + resourceSegment(id) : '/plugins', definition,
+            backupResourceMutationOptions({ criteria: { relation: updating ? 'plugin-save' : 'plugin-create' } }));
+          completed.push('plugins:' + id);
+        } catch (error) { failures.push({ id: id, error: errorText(error) }); }
+      }
+      if (failures.length) {
+        var failure = backupError('plugins-import-partial', '插件导入失败：' + failures.map(function (item) { return item.id + ': ' + item.error; }).join('；'));
+        failure.completed = completed; failure.failures = failures; throw failure;
+      }
+      return completed.length ? '插件 ' + completed.length + ' 项（已停用）' : '';
+    }
+
     function applySkillsBackupImport(pkg, plan) {
       if (!hasOwn(plan, 'skills') || !pkg.modules.skills) return Promise.resolve('');
       var module = pkg.modules.skills;
@@ -2526,6 +2597,9 @@
       if (hasOwn(plan, 'apps')) {
         add('apps', function () { return root.AppBackup.importApps(pkg, plan, preflight.appScopes, preflight.appExpected, preflight.assistantIdMap).then(function (result) { return '应用 ' + result.count + ' 项（权限已按导入选择保存）'; }); });
       }
+      if (hasOwn(plan, 'plugins')) {
+        add('plugins', function () { return applyPluginsBackupImport(pkg, plan, preflight); });
+      }
       return steps;
     }
 
@@ -2595,6 +2669,7 @@
       var operation = Promise.resolve().then(function () {
         return preflightImport(raw, rawPlan, rawMode);
       }).then(async function (preflight) {
+        await preparePluginImport(preflight);
         preflight.importSource = plainClone(preflight.package); preflight.importSourcePlan = plainClone(preflight.plan);
         await prepareMcpImport(preflight);
         if (preflight.plan.apps !== undefined) {
@@ -2861,6 +2936,13 @@
         var blob = await root.AppBackup.work('serialize', { value: pkg, limit: maxBackupBytes });
         await root.AppBackup.verifyExport(pkg.modules);
         return downloadFile('page-agent-' + appId + '.json', blob, 'application/json');
+      },
+      exportPlugin: async function (pluginId) {
+        var module = await readPluginBackupModule([pluginId]);
+        var pkg = createBackupPackage({ plugins: module }, ['plugins']);
+        assertBackupSize(pkg, '插件备份');
+        if (destroyed) return;
+        return downloadFile('page-agent-plugin-' + pluginId + '.json', JSON.stringify(pkg, null, 2), 'application/json');
       },
       openImportBackupFromRaw: openImportBackupFromRaw,
       exportSelectedBackup: exportSelectedBackup,

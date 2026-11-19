@@ -202,7 +202,8 @@ export async function mountDeveloperTools() {
   }
   function permitted() {
     const permissions = PageAgent.state?.permissions;
-    return permissions?.enabled && ['utilities.read', 'utilities.execute'].every(name => permissions.resources.includes(name));
+    const required = selected?.pluginId ? ['utilities.read', ...selected.permissions] : ['utilities.read', 'utilities.execute'];
+    return permissions?.enabled && required.every(name => permissions.resources.includes(name));
   }
   function controls() {
     $('permissions').href = PageAgent.state?.links?.permissions || '/options/options.html?section=apps';
@@ -210,7 +211,7 @@ export async function mountDeveloperTools() {
     $('run').disabled = busy || !selected || !permitted() || closed;
     for (const button of actionChoices.querySelectorAll('button')) button.disabled = busy || !permitted() || closed;
     for (const id of ['input-file', 'qr-image-file', 'qr-image-upload']) if ($(id)) $(id).disabled = closed;
-    $('copy-node').disabled = !selected || closed || allDigests() || selected.id === 'variableConversion';
+    $('copy-node').disabled = !selected || !selected.nodeType || closed || allDigests() || selected.id === 'variableConversion';
     $('copy-node').title = allDigests() ? '选择单个算法后可复制对应节点配置' : selected?.id === 'variableConversion' ? '此页同时展示多种转换；流程节点每次选择一种转换' : '';
     $('common-settings').disabled = !tools.length || closed;
     cron.refresh();
@@ -579,6 +580,7 @@ export async function mountDeveloperTools() {
     keyDrafts = { public: '', private: '' }; uuidRaw = ''; qrDrafts.clear();
     invalidateResult(); $('input').value = ''; $('input-line').value = ''; $('file-panel')?.remove(); $('file-source-field')?.remove();
     $('title').textContent = tool.label; $('description').textContent = tool.description || '在当前浏览器内处理输入。';
+    if (tool.pluginId) $('description').textContent += ' 输入为 JSON 对象，参数说明：' + JSON.stringify(tool.inputSchema);
     createFields(); updateForm(); renderNavigation(); controls(); message('输入内容只保留在当前页面，切换工具或关闭页面后清空。');
     if (tool.id === 'regex') { fields.get('expression').control.value = '[\\dheo]'; primary().value = new Date().getFullYear() + ' hello WORLD 你好世界'; }
     scheduleAuto();
@@ -785,6 +787,7 @@ export async function mountDeveloperTools() {
       fields.get('key').caption.textContent = title; fields.get('key').control.setAttribute('aria-label', title); fields.get('key').control.setAttribute('data-label', title);
     }
     let inputLanguage = 'plaintext', outputLanguage = 'plaintext';
+    if (selected.pluginId) inputLanguage = outputLanguage = 'json';
     if (selected.id === 'json') { inputLanguage = operation === 'escape' ? 'plaintext' : 'json'; outputLanguage = operation === 'toCode' ? fieldValue('language') : 'json'; }
     if (selected.id === 'serialize') { inputLanguage = fieldValue('from'); outputLanguage = fieldValue('to'); }
     if (selected.id === 'code') inputLanguage = outputLanguage = fieldValue('language');
@@ -1008,7 +1011,9 @@ export async function mountDeveloperTools() {
     try {
       const body = override || inputValue(); busy = true; controls(); message('正在本地计算…');
       let value;
-      if (['hash', 'hmac'].includes(tool.id) && body.options.algorithm === 'all') {
+      if (tool.pluginId) {
+        value = (await request('POST', tool.uri, JSON.parse(body.input || '{}'))).value;
+      } else if (['hash', 'hmac'].includes(tool.id) && body.options.algorithm === 'all') {
         value = {};
         // Reuse the existing single-algorithm contract, keeping at most one worker active.
         for (const algorithm of defaultDigests(tool.id)) {
@@ -1076,6 +1081,7 @@ export async function mountDeveloperTools() {
       const body = inputValue();
       const tool = body.toolId ? tools.find(item => item.id === body.toolId) : selected.id === 'uuid' && $('uuid-ulid').checked ? tools.find(item => item.id === 'ulid') : selected;
       const node = { nodeId: 'utility_' + crypto.randomUUID().replace(/-/g, ''), type: tool.nodeType, title: tool.label, params: { operation: tool.id === 'ulid' && selected.id === 'uuid' ? 'generate' : body.operation, input: body.input, ...body.options } };
+      if (tool.pluginId) node.params = { input: JSON.parse(body.input || '{}') };
       await copyText(JSON.stringify(node, null, 2), '已复制，可在流程「添加节点 → 粘贴节点 JSON」中添加。');
     } catch (error) { await notify(error.message, true); }
   });
@@ -1226,6 +1232,8 @@ export async function mountDeveloperTools() {
       const catalog = await request('GET', '/utilities');
       if (closed) return;
       tools = catalog.tools;
+      const pluginTools = tools.filter(tool => tool.pluginId).map(tool => tool.id);
+      if (pluginTools.length) categories.push({ id: 'plugins', label: '插件工具', tools: pluginTools });
       if (!tools.length) { message('当前没有可用工具。'); return; }
       try {
         const stored = await PageAgent.data.get('developer-tools.common'); commonVersion = stored.version; commonLoaded = true;

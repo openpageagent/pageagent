@@ -38,7 +38,7 @@
         bind: function (response) { return store.bind(connection.id, response, connection.url, clientInfo.clientId,
           response.token ? connection.configRevision : undefined); },
         confirm: function (response, style, serverId, url, serverName) { return store.confirm(connection.id, response, style, serverId, url, serverName); },
-        onChange: notify, onExecutionState: deps.onExecutionState,
+        onChange: notify, onExecutionState: deps.onExecutionState, onBotEvent: deps.onBotEvent,
         onResetTargets: function () { if (deps.onResetTargets) deps.onResetTargets(connection.id); } });
       clients.set(connection.id, client); return client;
     }

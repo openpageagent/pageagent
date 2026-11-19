@@ -141,7 +141,11 @@ function createMailQueue() {
     for (const job of active) job.controller.abort();
   }
 
-  return Object.freeze({ enqueue, close });
+  function status() {
+    return { active: active.size, waiting: waiting.length, queuedBytes, closed,
+      maxConcurrent: limits.maxConcurrent, maxQueued: limits.maxQueued, maxQueuedBytes: limits.maxQueuedBytes };
+  }
+  return Object.freeze({ enqueue, close, status });
 }
 
 module.exports = { createMailQueue };

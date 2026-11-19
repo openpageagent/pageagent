@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Page Agent 服务端配置中心</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/config/favicon.png">
+  <link rel="stylesheet" href="/config/options/options.css">
+  <link rel="stylesheet" href="/config/config.css">
+  <script src="/config/platforms.js" defer></script>
+  <script src="/config/devtools-catalog.js" defer></script>
+  <script src="/config/devtools.js" defer></script>
+  <script src="/config/config.js" defer></script>
+</head>
+<body>
+  <main id="login-screen">
+    <section class="section active" aria-labelledby="login-heading">
+      <header class="login-header"><img src="/config/icon.png" width="48" height="48" alt=""><div><h2 id="login-heading">Page Agent</h2><p>服务端配置中心</p></div></header>
+      <form id="login">
+        <div class="form-row"><label for="token">HTTP 令牌</label><input id="token" type="password" required autocomplete="off" autofocus placeholder="输入服务端令牌"></div>
+        <button id="connect" type="submit" class="btn-primary">登录</button>
+      </form>
+      <details class="reference-panel drawer-guide login-help"><summary>令牌在哪里？</summary><div class="drawer-guide-content"><p>使用服务首次启动时输出的 HTTP Bearer 令牌，或 PAGE_AGENT_HTTP_BEARER_TOKEN 指定的值。配对密码用于扩展连接，与此令牌不同。</p></div></details>
+      <noscript>请启用 JavaScript。</noscript>
+    </section>
+  </main>
+  <div id="app" hidden>
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-title"><h1>Page Agent</h1><p class="sidebar-subtitle">服务配置中心</p></div>
+        <button id="btn-toggle-sidebar" type="button" class="sidebar-toggle" title="隐藏侧边栏" aria-label="隐藏侧边栏" aria-controls="sidebar" aria-expanded="true"></button>
+      </div>
+      <nav id="nav" aria-label="服务端菜单">
+        <button type="button" class="nav-item active" data-section="plugins" aria-controls="accounts-panel" aria-current="page">账号管理</button>
+        <button type="button" class="nav-item" data-section="devtools" aria-controls="devtools-panel">研发工具</button>
+        <button type="button" class="nav-item" data-section="mcp" aria-controls="connection-panel">连接配置</button>
+        <button type="button" class="nav-item" data-section="runtime" aria-controls="runtime-panel">运行状态</button>
+        <button type="button" class="nav-item" data-section="logs" aria-controls="audit-panel">审计日志</button>
+        <button type="button" class="nav-item" data-section="changelog" aria-controls="changelog-panel">更新日志</button>
+      </nav>
+      <div id="sidebar-footer">
+        <button id="logout" type="button" class="btn-secondary" title="退出令牌登录">退出令牌登录</button>
+        <p id="server-name" class="section-desc">MCP Server</p>
+      </div>
+    </aside>
+    <main id="main">
+      <section id="accounts-panel" class="section active" aria-labelledby="accounts-heading">
+        <header class="section-header"><h2 id="accounts-heading">账号管理</h2><div class="actions"><button id="import-accounts" class="btn-secondary">导入</button><button id="export-accounts" class="btn-secondary">导出</button><button id="add" class="btn-primary" aria-controls="editor">添加账号</button><input id="file-import-accounts" type="file" accept="application/json,.json" hidden></div></header>
+        <p id="account-count" class="section-desc" role="status"></p>
+        <details class="reference-panel drawer-guide"><summary>配置与使用说明</summary><div class="drawer-guide-content"><p>在线表示平台连接可用。点击账号卡片设置凭据、固定回复和客户端授权；点击「消息」查看是否收到消息并手动回复。默认仅接收，不自动回复。</p><p>需要执行任务时，在浏览器扩展「插件管理 → 平台消息 → 配置」添加流程或对话规则。客户端需获授权并保持在线；回复平台需由流程或插件调用发送消息能力。</p>
+          <p>导出包含已保存的账号参数和凭据，不含消息历史。导入按 ID 合并，同 ID 更新，其他账号保留；启用状态与固定回复随配置恢复，仅保留当前服务器有效的客户端授权。导出文件含明文凭据，请妥善保管。</p>
+          <details id="platform-guide" class="reference-panel drawer-guide"><summary>平台配置说明与步骤</summary><div class="drawer-guide-content"><p>选择平台后填写账号参数。「收到消息后」「使用授权」与账号配置统一保存生效。</p><div id="platform-links" class="actions"></div><ol id="platform-steps"></ol><p>回调监听：每个账号使用独立端口，通过反向代理暴露 HTTPS 地址。</p></div></details>
+        </div></details>
+        <p id="accounts-transfer-result" class="form-help" role="status" aria-live="polite" hidden></p>
+        <div id="accounts" class="item-list item-list-compact"></div>
+        <form id="editor" class="editor" hidden aria-labelledby="editor-title">
+          <h3 id="editor-title" tabindex="-1">添加账号</h3>
+          <fieldset id="editor-fields" class="drawer-fields">
+            <div class="form-grid"><div class="form-row"><label for="adapter">平台</label><select id="adapter" required></select></div><div class="form-row"><label for="name">名称</label><input id="name" type="text" required maxlength="100" autocomplete="off"></div></div>
+            <div class="form-row actions">
+              <label class="switch-label"><input id="enabled" type="checkbox" role="switch"><span class="switch-slider" aria-hidden="true"></span><span class="switch-text">启用账号</span></label>
+              <label id="mail-receive-row" class="switch-label" hidden><input id="receive-enabled" type="checkbox" role="switch" checked><span class="switch-slider" aria-hidden="true"></span><span class="switch-text">接收邮件（IMAP）</span></label>
+            </div>
+            <section id="platform-settings" hidden><h4 class="form-row">平台接入</h4><div id="platform-fields" class="form-grid"></div></section>
+            <fieldset id="callback-fields" class="drawer-fields" hidden><legend>回调监听</legend>
+              <div class="form-grid"><div class="form-row"><label for="callback-host">监听地址</label><input id="callback-host" type="text" placeholder="127.0.0.1"></div><div class="form-row"><label for="callback-port">端口</label><input id="callback-port" type="number" min="1" max="65535" placeholder="5140"></div></div>
+              <div class="form-row"><label for="callback-url">公网地址</label><input id="callback-url" type="url" placeholder="https://bot.example.com"></div>
+              <p class="form-help">回调 URL：<code id="callback-preview"></code></p>
+            </fieldset>
+            <h4>消息与授权</h4>
+            <div class="account-setting"><div><span>收到消息后</span><p id="reply-summary" class="form-help"></p></div><button id="edit-reply" type="button" class="btn-small" aria-label="配置收到消息后的处理" aria-haspopup="dialog" aria-controls="account-drawer">配置</button></div>
+            <div class="account-setting"><div><span>使用授权</span><p id="authorization-summary" class="form-help"></p></div><button id="edit-authorization" type="button" class="btn-small" aria-label="配置使用授权" aria-haspopup="dialog" aria-controls="account-drawer">配置</button></div>
+          </fieldset>
+          <div id="editor-actions" class="editor-actions actions"></div>
+        </form>
+      </section>
+      <section id="devtools-panel" class="section" hidden aria-labelledby="devtools-heading">
+        <header class="section-header"><h2 id="devtools-heading">研发工具</h2><div class="actions"><button id="import-devtools" class="btn-secondary">导入</button><button id="export-devtools" class="btn-secondary">导出</button><button id="add-devtools" class="btn-primary">添加连接</button><input id="file-import-devtools" type="file" accept="application/json,.json" hidden></div></header>
+        <details class="reference-panel drawer-guide"><summary>配置与使用说明</summary><div class="drawer-guide-content help-doc">
+          <p>「连接类型」包括数据库、项目协作、构建、代码仓库、远程服务器和对象存储，均为可选，支持多个连接。S3 为对象存储，支持 Amazon S3、MinIO 等兼容服务。</p>
+          <p>「连接名称」用于区分连接；「操作超时」单位为毫秒，默认 30000，可设为 1000–120000。连接供 MCP、助手、脚本和流程共用。</p>
+          <p>保存只检查配置格式，不连接远端，下次调用生效。服务地址以 MCP Server 所在机器为准，包含实际部署路径；容器内的 127.0.0.1 指向容器本身。</p>
+          <p>填写连接参数后可点击「测试连接」，无需先保存或启用；编辑时密码留空沿用已保存的凭据。测试使用当前表单配置，不保存修改，也不修改远端业务数据。</p>
+          <p>数据库测试执行 SELECT 1，Redis 使用 PING，Jira、Confluence、Jenkins 和 GitLab 验证登录身份，S3 检查桶访问权限，SSH 验证登录与主机指纹。测试通过不代表已拥有全部查询、写入或命令权限。</p>
+          <p>「启用连接」控制是否允许调用此连接；操作授权按工具区分：数据库等允许写入，S3 允许上传或删除对象，Jenkins 允许触发构建，GitLab 允许写入或触发流水线，SSH 允许执行命令。</p>
+          <p>密码、令牌和私钥保存在服务端，编辑时留空保留已有值。持有 HTTP 令牌的 MCP 客户端可直接使用；浏览器助手、脚本和流程需开启对应客户端的授权，并在「插件管理」启用对应工具。</p>
+          <p>导出包含已保存的连接参数及密码、令牌和私钥。导入按 ID 合并，同 ID 更新，其他连接保留；启用状态与操作权限随配置恢复，仅保留当前服务器有效的客户端授权。导出文件含明文凭据，请妥善保管。</p>
+          <p>connectionId 是浏览器配对的 MCP 连接 ID；profileId 是此处显示的研发工具连接 ID，使用 connections 能力取得。写操作需要开启允许写入，结果未知时先核对远端状态。SSH 使用密码或私钥及服务器主机密钥指纹，不提供交互式终端。</p>
+          <h4>连接与调用示例</h4><pre>GET /devtools
+OPTIONS /devtools/jira/search
+POST /devtools/jira/search
+{"profileId":"此处的连接 ID","jql":"project = DEMO ORDER BY updated DESC","maxResults":20}
+
+POST /devtools/postgres/query
+{"profileId":"此处的连接 ID","sql":"SELECT id, title FROM public.tickets WHERE status = $1 LIMIT 20","params":["open"]}</pre>
+          <p>PostgreSQL 和 MySQL 每次执行一条 SQL，参数占位符分别为 $1、$2 和 ?。query 使用只读事务，execute 需要允许写入；可访问的表和操作还受数据库账号权限约束。</p>
+          <div id="devtools-operations"></div>
+          <p>以上为 MCP 工具参数中的资源路径，示例表名和字段需换成自己的业务表。</p>
+        </div></details>
+        <p id="devtools-transfer-result" class="form-help" role="status" aria-live="polite" hidden></p>
+        <div id="devtools-list" class="item-list item-list-compact"></div>
+        <section id="devtools-editor" class="editor" hidden aria-labelledby="devtools-editor-title">
+          <h3 id="devtools-editor-title">添加连接</h3>
+          <form id="devtools-form">
+            <fieldset id="devtools-form-fields" class="drawer-fields">
+              <div class="form-grid">
+                <div class="form-row form-row-wide"><label for="devtools-kind">连接类型</label><select id="devtools-kind"></select></div>
+                <div class="form-row"><label for="devtools-name">连接名称</label><input id="devtools-name" type="text" required maxlength="100" placeholder="例如：研发 Jira"></div>
+                <div class="form-row"><label for="devtools-timeout">操作超时（毫秒）</label><input id="devtools-timeout" type="number" min="1000" max="120000" required value="30000"></div>
+              </div>
+              <div class="form-grid">
+                <div><label class="switch-label"><input id="devtools-enabled" type="checkbox" role="switch"><span class="switch-slider" aria-hidden="true"></span><span class="switch-text">启用连接</span></label></div>
+                <div id="devtools-write-control">
+                  <label class="switch-label"><input id="devtools-write" type="checkbox" role="switch" aria-describedby="devtools-write-hint"><span class="switch-slider" aria-hidden="true"></span><span id="devtools-write-label" class="switch-text">允许写入</span></label>
+                  <p id="devtools-write-hint" class="form-help account-error"></p>
+                </div>
+              </div>
+              <div id="devtools-fields" class="form-grid"></div>
+              <h4>浏览器客户端授权</h4><div id="devtools-clients"></div>
+            </fieldset>
+            <div class="editor-actions actions"><button type="submit" class="btn-primary">保存</button><button id="cancel-devtools" type="button" class="btn-secondary">取消</button><button id="test-devtools" type="button" class="btn-secondary">测试连接</button></div>
+            <p id="devtools-test-result" class="form-help" role="status" aria-live="polite" hidden></p>
+          </form>
+        </section>
+      </section>
+      <section id="changelog-panel" class="section" hidden aria-labelledby="changelog-heading">
+        <header class="section-header"><h2 id="changelog-heading">更新日志</h2></header>
+        <p class="section-desc">按版本查看新增功能、功能改进与问题修复。</p>
+        <details class="reference-panel drawer-guide">
+          <summary>更新日志说明</summary>
+          <div class="drawer-guide-content">
+            <p><b>版本查找：</b>按新到旧排列，可用浏览器查找搜索版本号或功能名；配置方法见对应页面说明。</p>
+          </div>
+        </details>
+        <div class="help-doc">
+          <h3>v1.3.0</h3>
+          <ul>
+            <li><b>配置中心</b>：新增账号、客户端、运行状态和审计日志管理。</li>
+            <li><b>平台消息</b>：支持飞书、钉钉、QQ、企业微信、企业微信智能机器人和邮件。</li>
+            <li><b>研发工具</b>：新增 PostgreSQL、MySQL、Jira、Confluence、Jenkins、Redis、GitLab、SSH 和 S3。</li>
+            <li><b>插件与安全</b>：支持内置插件管理、客户端授权、写入控制和操作审计。</li>
+          </ul>
+        </div>
+        <footer class="form-help"><a href="/config/font-notices" target="_blank" rel="noopener">字体许可</a> · <a href="/config/license" target="_blank" rel="noopener">项目许可</a></footer>
+      </section>
+      <section id="connection-panel" class="section" hidden aria-labelledby="connection-heading">
+        <header class="section-header"><h2 id="connection-heading">连接配置</h2></header>
+        <p class="section-desc">配置 HTTP MCP 客户端接入、浏览器扩展配对与访问授权。</p>
+        <details class="reference-panel drawer-guide">
+          <summary>配置与使用说明</summary>
+          <div class="drawer-guide-content">
+            <details class="reference-panel drawer-guide"><summary>连接与权限说明</summary><div class="drawer-guide-content help-doc">
+              <p><b>HTTP MCP 接入：</b>展开「客户端配置」，复制示例并将占位符替换为当前 HTTP 令牌，添加到支持 Streamable HTTP 的 MCP 客户端；远程访问时将地址改为客户端可访问的服务地址。</p>
+              <p><b>服务端能力：</b>HTTP 令牌代表服务端操作者，可管理账号，访问服务端文件、命令和系统支持的桌面能力。无需扩展在线。</p>
+              <p><b>浏览器操作：</b>扩展通过 WebSocket 配对并开启连接。外部客户端先 GET /clients，选择目标后通过 POST /clients/{clientId}/arp 调用。URL 可追加 ?mcpClientId=目标ID 固定目标；/local 始终指向服务端。</p>
+              <p><b>扩展授权：</b>扩展使用服务端文件和命令前，在扩展「权限」中授权目录；桌面操作单独开启。多个扩展可共享一个账号，普通与隐身环境分别授权。</p>
+              <p><b>配对与重连：</b>填写扩展可访问的 WebSocket 地址，点击「一键配对」生成配对码，再到扩展「MCP 服务器连接 → 一键配对」粘贴并配对。配对码有效期 5 分钟，只能使用一次。扩展连接开关控制重连；网络故障最多重试 20 次，凭据失效时需重新配对。连接或请求中断后不自动重放操作。</p>
+              <p><b>状态与凭据：</b>继续使用同一 --state-dir 保留身份和账号；--password 重置配对密码并撤销旧配对。HTTP 令牌可在本页重置；环境变量指定的令牌需修改部署配置。页面登录状态在当前标签页内保留，刷新后自动恢复；退出或凭据失效时清除。</p>
+              <p><b>启动设置：</b>Node ≥22.16.0，WebSocket 默认 9999、HTTP 默认 9998；--ws-port / --http-port 修改端口，--server-name 设置名称。文件与命令工作目录为启动目录，默认状态目录为 ./data。Bash 按服务端进程权限执行。</p>
+            </div></details>
+            <details class="reference-panel drawer-guide"><summary>工具列表 <span id="tool-count" class="count"></span></summary><div class="drawer-guide-content"><p class="form-help">来自当前服务端的 tools/list。展开工具查看参数。</p><div id="tools"></div></div></details>
+            <details class="reference-panel drawer-guide"><summary>能力与调用示例</summary><div class="drawer-guide-content"><div id="capabilities"></div><pre>OPTIONS / → 发现资源
+GET /local → 文件、命令与桌面能力
+GET /bots → 账号及消息能力
+GET /devtools → 数据库及其他研发工具连接与操作
+GET /clients → 在线扩展
+POST /clients/{clientId}/arp
+{"method":"GET","request":{"uri":"/page/current"}}</pre><p class="form-help">以上为 MCP 工具参数中的资源路径。先 OPTIONS 具体路径查看参数，再调用相应方法。</p></div></details>
+            <details class="reference-panel drawer-guide"><summary>发给外部 Agent 的使用提示词</summary><div class="drawer-guide-content"><pre id="usage-prompt"></pre><button id="copy-prompt" class="btn-secondary">复制</button></div></details>
+          </div>
+        </details>
+        <div class="drawer-section"><h4>HTTP MCP</h4><div class="copy-row"><code id="endpoint"></code><button id="copy-endpoint" class="btn-secondary">复制</button></div>
+          <details class="reference-panel drawer-guide"><summary>客户端配置</summary><div class="drawer-guide-content"><p>使用 Streamable HTTP；将示例中的占位符换成 HTTP 令牌。</p><pre id="client-config"></pre><button id="copy-config" class="btn-secondary">复制</button></div></details>
+          <div class="actions"><button id="reset-token" class="btn-secondary">重置令牌</button><span id="token-source" class="form-help"></span></div>
+        </div>
+        <div class="drawer-section"><h4>扩展配对</h4>
+          <div class="form-row"><label for="ws-url">WebSocket 地址</label><input id="ws-url" type="url" placeholder="ws://127.0.0.1:9999"></div>
+          <p class="form-help">填写扩展可访问的地址；反向代理使用实际的 wss:// 地址。</p>
+          <button id="pair" class="btn-primary">一键配对</button>
+        </div>
+      </section>
+      <section id="runtime-panel" class="section" hidden aria-labelledby="runtime-heading">
+        <header class="section-header"><h2 id="runtime-heading">运行状态</h2><div class="actions"><label class="switch-label"><input id="auto-refresh" type="checkbox" role="switch" checked><span class="switch-slider" aria-hidden="true"></span><span class="switch-text">自动刷新</span></label></div></header>
+        <p class="section-desc">查看服务运行概况、客户端连接、HTTP MCP 会话及队列状态。</p>
+        <details class="reference-panel drawer-guide"><summary>运行状态说明</summary><div class="drawer-guide-content">
+          <p><b>数据刷新：</b>进入页面时加载最新状态；开启自动刷新后，当前页面可见且未打开详情时，每 5 秒更新一次。数据时间以下方「更新于」为准。</p>
+          <p><b>扩展客户端：</b>概览显示已就绪与已配对数量，离线客户端仍保留配对。点击「详情」查看地址、版本和最近心跳；撤销配对会断开该客户端，再次连接需重新配对。</p>
+          <p><b>HTTP MCP 会话：</b>列出当前服务的 MCP 会话，包含本配置页。点击「详情」查看最近活动、绑定的目标客户端、活动请求和通知订阅。</p>
+          <p><b>队列与请求：</b>显示当前邮件发送与排队、本地执行、扩展转发、HTTP 请求及审计写入情况。数量反映当前处理进度，不是历史调用总数。</p>
+          <p><b>连接日志：</b>保留本次服务运行的最近 100 条连接状态记录，重启后清空。超长内容可点击「查看」；持久化的操作与授权记录请到「审计日志」查看。</p>
+        </div></details>
+        <p id="sample-time" class="form-help"></p><div id="runtime-summary" class="metrics"></div>
+        <h3>队列与请求</h3><div id="queues" class="metrics"></div>
+        <h3>扩展客户端</h3><div id="clients" class="item-list item-list-compact"></div>
+        <h3>HTTP MCP 会话</h3><div id="sessions" class="item-list item-list-compact"></div>
+        <div class="mcp-log-panel" role="region" aria-labelledby="connection-log-title">
+          <div class="mcp-log-header"><div class="mcp-log-heading"><h4 id="connection-log-title">连接日志</h4></div></div>
+          <div id="connection-logs" class="mcp-log-list"></div>
+        </div>
+      </section>
+      <section id="audit-panel" class="section" hidden aria-labelledby="audit-heading">
+        <header class="section-header"><h2 id="audit-heading">审计日志</h2></header>
+        <details class="reference-panel drawer-guide"><summary>审计说明</summary><div class="drawer-guide-content"><p>操作、认证与授权行为持久保存在状态目录 audit 中。这里展示最近 100 条记录的元数据（扫描最近 4 MB），筛选仅作用于当前加载的记录。超长日志可点击「查看」阅读完整文本；连接状态请看运行状态中的「连接日志」。</p></div></details>
+        <div class="mcp-log-panel" role="region" aria-labelledby="audit-log-title">
+          <div class="mcp-log-header">
+            <div class="mcp-log-heading"><h4 id="audit-log-title">审计记录</h4></div>
+            <form id="audit-filters" class="filter-row" aria-label="审计日志筛选">
+              <div class="form-row"><label for="audit-filter">关键词</label><input id="audit-filter" type="search" placeholder="事件、操作、请求 ID 等"></div>
+              <div class="form-row"><label for="audit-level">级别</label><select id="audit-level"><option value="">全部级别</option value="error">error</option><option value="warn">warn</option><option value="success">success</option><option value="info">info</option></select></div>
+              <div class="form-row"><label for="audit-time">时间范围</label><select id="audit-time"><option value="">全部时间</option><option value="900000">最近 15 分钟</option><option value="3600000">最近 1 小时</option><option value="86400000">最近 24 小时</option><option value="604800000">最近 7 天</option></select></div>
+              <div class="form-row"><label for="audit-client">客户端 ID</label><input id="audit-client" type="search" list="audit-client-options" placeholder="选择或输入部分 ID"><datalist id="audit-client-options"></datalist></div>
+              <div class="form-row"><label for="audit-event">事件</label><select id="audit-event"><option value="">全部事件</option></select></div>
+              <button id="audit-reset" type="button" class="btn-secondary">重置</button>
+            </form>
+            <span id="audit-result-count" class="form-help" role="status" aria-live="polite"></span>
+          </div>
+          <div id="audit-list" class="mcp-log-list"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <dialog id="drawer" class="config-drawer" aria-labelledby="drawer-title">
+    <header class="drawer-header"><h3 id="drawer-title"></h3><button id="close-drawer" class="drawer-close" type="button" aria-label="关闭">×</button></header>
+    <div id="drawer-body" class="drawer-body">
+      <div id="detail-content"></div>
+    </div>
+    <footer id="drawer-actions" class="drawer-footer"></footer>
+  </dialog>
+  <dialog id="account-drawer" class="config-drawer config-subdrawer" aria-labelledby="account-drawer-title">
+    <header class="drawer-header"><h3 id="account-drawer-title"></h3><button id="close-account-drawer" class="drawer-close" type="button" aria-label="关闭">×</button></header>
+    <div class="drawer-body">
+      <form id="account-settings-form">
+        <fieldset id="account-drawer-fields" class="drawer-fields">
+          <fieldset id="reply-settings" class="drawer-fields" hidden disabled>
+            <details class="reference-panel drawer-guide"><summary>消息处理说明</summary><div class="drawer-guide-content"><p>仅接收：保存收到的消息，不自动回复；可在「消息」中手动回复，或交给外部程序处理。</p><p>固定回复：由服务端回复新收到的消息，无需浏览器在线；历史消息不补发，发送结果在「消息」中查看。邮件不支持固定回复。</p><p>流程／对话：在已授权客户端「插件管理 → 平台消息 → 配置」添加触发规则，并保持客户端在线。规则与固定回复可同时生效；平台回复需由流程或插件调用发送消息能力。</p></div></details>
+            <div class="form-row"><label for="reply-mode">服务端处理</label><select id="reply-mode"><option value="manual">仅接收，手动或外部处理</option><option value="fixed">固定回复</option></select></div>
+            <div id="reply-text-row" class="form-row" hidden><label for="reply-text">回复内容</label><textarea id="reply-text" rows="3" maxlength="16000" placeholder="例如：已收到你的消息。"></textarea></div>
+          </fieldset>
+          <fieldset id="authorization-settings" class="drawer-fields" hidden disabled>
+            <details class="reference-panel drawer-guide"><summary>使用授权说明</summary><div class="drawer-guide-content"><p>服务端始终可用。可同时授权多个扩展客户端，授权后可配置账号、收发消息；离线客户端上线后生效。</p></div></details>
+            <label class="check-label"><input type="checkbox" checked disabled>服务端</label><div id="client-choices"></div>
+          </fieldset>
+        </fieldset>
+      </form>
+    </div>
+    <footer class="drawer-footer"><button type="submit" form="account-settings-form" class="btn-primary">确定</button><button id="cancel-account-drawer" type="button" class="btn-secondary">取消</button></footer>
+  </dialog>
+  <div id="toast" popover="manual" role="status"><span id="toast-message"></span></div>
+</body>
+</html>

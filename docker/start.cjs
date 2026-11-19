@@ -159,7 +159,7 @@ async function main() {
     autoSyncEnabled, syncVersion, ...(syncTarget ? { syncTarget } : {}), modelApiKeys, httpMcpServers, clientName, connections: [local, ...builtin.connections] }), { mode: 0o600 });
   await fs.chmod(target, 0o600);
   if (syncTarget) console.log('启动同步目标：' + JSON.stringify({ ...syncTarget, versionId: syncVersion, enabled: autoSyncEnabled }));
-  console.log('启动名称：' + JSON.stringify({ clientName: clientName === undefined ? '(沿用插件名称)' : clientName,
+  console.log('启动名称：' + JSON.stringify({ clientName: clientName === undefined ? '(沿用扩展名称)' : clientName,
     connectionAlias: local.alias, serverName }));
   start('node', ['/opt/page-agent/page-agent-mcp-server.cjs', '--host', '0.0.0.0', '--state-dir', state, '--server-name', serverName],
     existingAuth ? {} : { PAGE_AGENT_PAIRING_PASSWORD: password });

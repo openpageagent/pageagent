@@ -649,11 +649,17 @@
       }
       var applicationContext = root.PageAgentApps && input.conversationId
         ? await root.PageAgentApps.conversationContext(input.conversationId, pageUrl) : null;
+      var pluginContext = root.PageAgentPlugins && input.conversationId ? root.PageAgentPlugins.list().filter(function (plugin) {
+        return plugin.conversationId === input.conversationId;
+      }).map(function (plugin) {
+        return { uri: '/plugins/' + plugin.id, name: plugin.name, source: plugin.source, state: plugin.state, revision: plugin.revision };
+      }) : [];
       var currentResource = applicationContext && applicationContext.page && applicationContext.appId
         ? '/apps/' + applicationContext.appId
         : dynamic.currentResource || input.entry && input.entry.currentResource || '/';
       var promptInput = {
         applicationContext: applicationContext,
+        pluginContext: pluginContext,
         hasMcpContentReferences: mcpContent.hasReferences,
         hasUserImages: tailMessages.some(function (message) {
           return message.role === 'user' && Array.isArray(message.content)
@@ -687,7 +693,8 @@
             ? dynamic.additionalResourceUris : []).concat(recordingContext.recordings.map(function (recording) {
             return recording && recording.recordingUri;
           }).filter(Boolean), promptInput.applicationContext && !promptInput.applicationContext.unavailable
-            && promptInput.applicationContext.appId ? ['/apps/' + promptInput.applicationContext.appId] : []),
+            && promptInput.applicationContext.appId ? ['/apps/' + promptInput.applicationContext.appId] : [],
+            pluginContext.map(function (plugin) { return plugin.uri; })),
         })
         : { schemaVersion: 1, contracts: [], text: '' };
       var epoch = contextEpoch(checkpoint);

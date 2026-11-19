@@ -25,7 +25,9 @@ mcp-server/**
 !mcp-server/*.js
 !mcp-server/package.json
 !mcp-server/package-lock.json
+!mcp-server/config
+!mcp-server/config/**
 !mcp-server/scripts
 !mcp-server/scripts/build-single.js
 !mcp-server/page-agent-mcp-server.cjs
-!mcp-server/NODEMAILER_LICENSE
+!mcp-server/*_LICENSE

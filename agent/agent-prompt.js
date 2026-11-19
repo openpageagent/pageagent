@@ -197,6 +197,7 @@
       delete applicationFacts.guidance;
       context.application = dataOnly('current-application-permissions', applicationFacts);
     }
+    if (input.pluginContext && input.pluginContext.length) context.plugins = dataOnly('referenced-plugins', input.pluginContext);
     if (input.remainingBudgets) context.remainingBudgets = clone(input.remainingBudgets);
     if (input.recordingContext && Array.isArray(input.recordingContext.recordings)
         && input.recordingContext.recordings.length) {

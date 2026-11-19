@@ -1,4 +1,4 @@
-// ARP/1 SMTP settings and a test delivery using the existing mail client.
+// ARP/1 server mail account references and test delivery.
 (function attachMailSettingsResource(root, factory) {
   'use strict';
   var commonJs = typeof module === 'object' && module.exports;
@@ -14,21 +14,17 @@
   'use strict';
   var PUBLIC_PROPERTIES = Object.freeze({
     connectionId: { type: 'string', maxLength: 200 },
-    enabled: { type: 'boolean' }, host: { type: 'string', maxLength: 253 },
-    port: { type: 'integer', minimum: 1, maximum: 65535 }, security: { type: 'string', enum: ['tls', 'starttls'] },
-    username: { type: 'string' }, from: { type: 'string', maxLength: 254 }, fromName: { type: 'string', maxLength: 200 },
+    accountId: { type: 'string', maxLength: 200 }, enabled: { type: 'boolean' },
   });
   var SETTINGS_SCHEMA = Object.freeze({
-    type: 'object', properties: Object.assign({ passwordConfigured: { type: 'boolean' } }, PUBLIC_PROPERTIES),
-    required: Object.keys(PUBLIC_PROPERTIES).concat(['passwordConfigured']), additionalProperties: false,
+    type: 'object', properties: PUBLIC_PROPERTIES,
+    required: Object.keys(PUBLIC_PROPERTIES), additionalProperties: false,
   });
   var PATCH_SCHEMA = Object.freeze({
-    type: 'object', properties: Object.assign({
-      password: { type: 'string', description: '省略则保留现有密码；空字符串清除密码，免认证时需同时清空 username。响应不返回密码。' },
-    }, PUBLIC_PROPERTIES), minProperties: 1, additionalProperties: false,
+    type: 'object', properties: PUBLIC_PROPERTIES, minProperties: 1, additionalProperties: false,
   });
   var STATUS_SCHEMA = Object.freeze({
-    type: 'object', properties: { enabled: { type: 'boolean' }, connected: { type: 'boolean' }, supported: { type: 'boolean' }, connectionId: { type: 'string' }, reason: { type: ['string', 'null'] } },
+    type: 'object', properties: { enabled: { type: 'boolean' }, connected: { type: 'boolean' }, supported: { type: 'boolean' }, connectionId: { type: 'string' }, accountId: { type: 'string' }, reason: { type: ['string', 'null'] } },
     required: ['enabled', 'connected', 'supported'], additionalProperties: false,
   });
   var TEST_SCHEMA = Object.freeze({
@@ -44,21 +40,21 @@
   var ROUTES = Object.freeze([
     support.route({
       template: '/mail-settings', resourceType: 'MailSettings', relation: 'mail-settings',
-      summary: '读取或修改邮件通知开关、SMTP 账号与发件信息；密码只写不读',
+      summary: '读取或修改邮件通知开关与服务端邮件账号引用；凭据在服务端配置',
       aliases: ['邮件配置', 'SMTP', '邮件通知'], tags: ['settings', 'mail'], entryWeights: { mcp: 35, global: 20 },
       methods: {
-        GET: support.read(support.EMPTY_QUERY, 'mail-settings.read', 'mail-settings', '读取邮件配置，不返回密码', SETTINGS_SCHEMA),
-        PATCH: support.patch('mail-settings.write', 'mail-settings', '局部修改邮件配置；省略 password 保留原密码', PATCH_SCHEMA, SETTINGS_SCHEMA),
+        GET: support.read(support.EMPTY_QUERY, 'mail-settings.read', 'mail-settings', '读取服务端连接及账号引用', SETTINGS_SCHEMA),
+        PATCH: support.patch('mail-settings.write', 'mail-settings', '局部修改邮件账号引用', PATCH_SCHEMA, SETTINGS_SCHEMA),
       },
     }),
     support.route({
       template: '/mail-settings/status', resourceType: 'MailStatus', relation: 'mail-status',
-      summary: '读取邮件开关及已连接服务端的 SMTP 支持状态', tags: ['mail', 'status'],
+      summary: '读取邮件开关及已连接服务端的邮件支持状态', tags: ['mail', 'status'],
       methods: { GET: support.read(support.EMPTY_QUERY, 'mail-settings.read', 'mail-status', '读取邮件服务状态', STATUS_SCHEMA) },
     }),
     support.route({
       template: '/mail-settings/test-send', resourceType: 'MailTestDelivery', relation: 'mail-test-send',
-      summary: '使用已保存的 SMTP 配置向指定邮箱实际发送一封固定内容的测试邮件；须已启用邮件并连接服务端',
+      summary: '使用已绑定的服务端邮件账号实际发送测试邮件；须已启用邮件并连接服务端',
       aliases: ['测试邮件'], tags: ['mail', 'test'],
       methods: { POST: support.create(TEST_SCHEMA, 'mail-settings.execute', 'mail-test-send', '实际发送测试邮件', {
         safety: 'execute', outputSchema: DELIVERY_SCHEMA,
@@ -74,12 +70,12 @@
     var version;
     function snapshot(config) {
       var serialized = JSON.stringify(config);
-      // Include credential-only changes without exposing a password hash. A runtime restart requires a fresh GET.
+      // A runtime restart requires a fresh GET.
       if (serialized !== previousConfig) {
         previousConfig = serialized;
         version = '"mail-' + crypto.randomUUID() + '"';
       }
-      var data = { passwordConfigured: !!config.password };
+      var data = {};
       Object.keys(PUBLIC_PROPERTIES).forEach(function (key) { data[key] = config[key]; });
       return { data: data, etag: version };
     }
@@ -99,7 +95,7 @@
     handlers.PATCH['/mail-settings'] = function (request) {
       return client.load().then(function (current) {
         var next;
-        try { next = settings.validate(service.applyPatch(current, request.patch), true); }
+        try { next = settings.validateBinding(service.applyPatch(current, request.patch), true); }
         catch (error) { throw arp.arpError('SCHEMA_VALIDATION_FAILED', error.message); }
         return client.save(next);
       }).then(result);
@@ -115,10 +111,13 @@
         });
       } catch (error) { throw arp.arpError('SCHEMA_VALIDATION_FAILED', error.message); }
       return client.send(message, { signal: context.abortSignal, context: context }).then(function (data) {
-        return support.result(request.uri, 'MailTestDelivery', {
+        var delivery = {
           messageId: data.messageId, acceptedCount: data.acceptedCount, rejectedCount: data.rejectedCount,
-          audit: data.audit, target: data.target, transportSessionId: data.transportSessionId, requestId: data.requestId,
-        }, null, 200, [{ rel: 'settings', href: '/mail-settings', method: 'GET' }]);
+        };
+        ['audit', 'target', 'transportSessionId', 'requestId'].forEach(function (key) {
+          if (data[key] !== undefined) delivery[key] = data[key];
+        });
+        return support.result(request.uri, 'MailTestDelivery', delivery, null, 200, [{ rel: 'settings', href: '/mail-settings', method: 'GET' }]);
       });
     };
     return {

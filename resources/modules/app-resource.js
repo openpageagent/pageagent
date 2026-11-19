@@ -1,6 +1,6 @@
 (function (root) {
   'use strict';
-  var C = root.AppContract, S = root.ResourceModuleSupport;
+  var C = root.AppContract, S = root.ResourceModuleSupport, Source = root.PageAgentSourceCode;
   function trusted(context) { return String(context && (context.actorId || context.actor) || '').startsWith('ui:'); }
   function validationError(code, message) {
     return root.AgentResourceProtocol.arpError(code, message, { performed: 'no', stage: 'app-validation' });
@@ -23,34 +23,22 @@
   metadataPatch.minProperties = 1;
   var codePatch = C.object(C.codeSchema.properties);
   codePatch.minProperties = 1;
-  var AUTO_DIFF_MAX_CHARS = 4000;
+  var AUTO_DIFF_MAX_CHARS = Source.AUTO_DIFF_MAX_CHARS;
   var sourceEdit = C.object({
     field: { type: 'string', enum: ['html', 'css', 'javascript', 'themeCss', 'description', 'files'] },
     fileName: { type: 'string', description: '仅 field=files 时必填，指定已存在的 JS/CSS 文件名' },
-    oldText: { type: 'string', minLength: 1, description: '从当前草稿读取的原文片段，须恰好匹配一次；可跨行，保留缩进，重复时补充上下文' },
-    newText: { type: 'string', description: '替换后的片段；空字符串表示删除，插入时保留 oldText 锚点并加入新内容。沿用周围缩进和换行，不压缩源码' }
+    oldText: Source.editProperties.oldText, newText: Source.editProperties.newText,
   }, ['field', 'oldText', 'newText']);
   var sourceEdits = C.object({
     edits: { type: 'array', minItems: 1, maxItems: 50, items: sourceEdit, description: '按顺序在前一项结果上匹配并替换，全部成功后原子保存；可只提交一项' },
-    includeDiff: { type: 'boolean', description: '通常省略，由系统在所有 oldText 与 newText 的字符数合计不超过 ' + AUTO_DIFF_MAX_CHARS + ' 时自动返回 diff；仅本次确需大改动的 diff 时传 true，不要固定为 true；false 关闭。跳过时不为 diff 回读草稿；显式请求仍受输出长度与计算时间限制。须随本次编辑提交，不要重放成功的编辑来补取 diff。' }
+    includeDiff: Source.includeDiffSchema,
   }, ['edits']);
   var sourceEditResult = C.object({
     appId: { type: 'string' }, revision: { type: 'string' }, saved: { type: 'boolean', const: true },
     unpublished: { type: 'boolean' }, appliedEdits: { type: 'integer', minimum: 1 },
     links: C.object({ preview: { type: 'string' } }, ['preview']), diff: { type: 'object' }
   }, ['appId', 'revision', 'saved', 'unpublished', 'appliedEdits', 'links', 'diff']);
-  var grepProperties = root.KnowledgeSearch.GREP_QUERY_PROPERTIES;
-  var fieldQuery = C.object({
-    q: Object.assign({}, grepProperties.q, { minLength: 1, description: '提供 q 即按标准 grep 搜索此文本字段；省略则按行读取。正则最多 256 字符，fixedStrings=true 时按字面匹配、最多 4096 字符。' }),
-    fixedStrings: grepProperties.fixedStrings,
-    caseSensitive: grepProperties.caseSensitive,
-    before: Object.assign({}, grepProperties.before, { description: '同 grep -B：返回每个命中前的行数，默认 0、最多 20；须与 q 同用' }),
-    after: Object.assign({}, grepProperties.after, { description: '同 grep -A：返回每个命中后的行数，默认 0、最多 20；须与 q 同用' }),
-    startLine: { type: 'integer', minimum: 1, description: '读取起始行号，默认 1；不能与 q 同用' },
-    startColumn: { type: 'integer', minimum: 1, description: '起始行的列号，默认 1；用于续读长行，不能与 q 同用' },
-    limit: { type: 'integer', minimum: 1, maximum: 50, description: '读取行数或搜索命中数上限；读取默认 50 行、搜索默认 5 个命中行，不计附带的前后行' },
-    revision: { type: 'string', minLength: 1, maxLength: 100, description: '续读时传入上一页 revision；版本变化则拒绝读取' }
-  });
+  var fieldQuery = Source.querySchema({ type: 'string', minLength: 1, maxLength: 100 });
   var FIELD_REPLACEMENT_GUIDANCE = '局部源码修改优先 POST /apps/{appId}/draft/edits，只提交 edits:[{field,oldText,newText}]；修改源码文件时 field=files 并提供 fileName。复用上下文中仍有效的原文，仅在缺失时搜索定位并读取足以唯一匹配的片段，无需读齐或重传整个字段、文件。PATCH /draft 的 code 字段和单文件 PUT 仍为整体替换，仅此时必须读齐目标并保留未修改内容，不能用片段覆盖全文。';
   var routes = [];
   function route(template, type, methods, options) {
@@ -154,45 +142,22 @@
         throw validationError(error.code || 'INTERNAL_ERROR', error.message);
       }
     }
-    async function sourceDiff(before, app, code, edits, includeDiff) {
-      var diff = { beforeRevision: before.revision, afterRevision: app.revision, status: 'unavailable', truncated: false, changes: [] };
-      var inputChars = edits.reduce(function (total, edit) { return total + edit.oldText.length + edit.newText.length; }, 0);
-      if (includeDiff === false || includeDiff !== true && inputChars > AUTO_DIFF_MAX_CHARS) {
-        diff.status = 'skipped';
-        diff.reason = includeDiff === false ? 'disabled' : 'size_threshold';
-        diff.inputChars = inputChars; diff.autoThreshold = AUTO_DIFF_MAX_CHARS;
-        return diff;
-      }
-      try {
-        var saved = await service.store.get('app_code', [app.appId, 'draft']);
-        if (!saved || saved.revision !== app.revision) { diff.reason = 'revision_changed'; return diff; }
-        if (JSON.stringify(saved.code) !== JSON.stringify(code)) { diff.reason = 'saved_content_mismatch'; return diff; }
-        var targets = new Map(), budget = 12000, deadline = Date.now() + 200;
-        edits.forEach(function (edit) { targets.set(edit.field === 'files' ? 'files/' + edit.fileName : edit.field, edit); });
-        targets.forEach(function (edit, path) {
-          var oldSource = edit.field === 'files' ? before.code.files[edit.fileName] : before.code[edit.field];
-          var newSource = edit.field === 'files' ? saved.code.files[edit.fileName] : saved.code[edit.field];
-          if (oldSource === newSource) return;
-          var change = { field: edit.field, uri: '/apps/' + app.appId + '/draft/' + path };
-          if (edit.field === 'files') change.fileName = edit.fileName;
-          diff.changes.push(change);
-          if (budget <= 0 || Date.now() >= deadline) {
-            change.omitted = true; change.reason = budget <= 0 ? 'size_limit' : 'time_limit'; diff.truncated = true; return;
-          }
-          var contextLines = /[^\n]{501}/.test(oldSource) || /[^\n]{501}/.test(newSource) ? 0 : 2;
-          var patch = root.Diff.structuredPatch('before/' + path, 'after/' + path, oldSource, newSource, undefined, undefined, { context: contextLines, timeout: Math.max(1, deadline - Date.now()) });
-          if (!patch) { change.omitted = true; change.reason = 'time_limit'; diff.truncated = true; return; }
-          var text = root.Diff.formatPatch(patch);
-          change.text = text.slice(0, budget);
-          change.truncated = text.length > budget;
-          budget -= change.text.length;
-          if (change.truncated) diff.truncated = true;
-        });
-        diff.status = 'available';
-      } catch (error) {
-        diff.changes = []; diff.reason = error.code || 'diff_unavailable';
-      }
-      return diff;
+    function sourceDiff(before, app, code, edits, inputChars, includeDiff) {
+      return Source.diff({ beforeRevision: before.revision, afterRevision: app.revision, inputChars: inputChars, includeDiff: includeDiff,
+        readChanges: async function () {
+          var saved = await service.store.get('app_code', [app.appId, 'draft']);
+          if (!saved || saved.revision !== app.revision) return { reason: 'revision_changed' };
+          if (JSON.stringify(saved.code) !== JSON.stringify(code)) return { reason: 'saved_content_mismatch' };
+          var targets = new Map();
+          edits.forEach(function (edit) { targets.set(edit.field === 'files' ? 'files/' + edit.fileName : edit.field, edit); });
+          return { targets: Array.from(targets, function (entry) {
+            var path = entry[0], edit = entry[1], change = { field: edit.field, uri: '/apps/' + app.appId + '/draft/' + path };
+            if (edit.field === 'files') change.fileName = edit.fileName;
+            return { path: path, change: change,
+              before: edit.field === 'files' ? before.code.files[edit.fileName] : before.code[edit.field],
+              after: edit.field === 'files' ? saved.code.files[edit.fileName] : saved.code[edit.field] };
+          }) };
+        } });
     }
     handlers.GET['/apps'] = async function (r) { return result(r, 'AppCollection', Object.assign(await service.store.list(r.query), { guidance: C.guidance, knowledge: '/knowledge/builtin_app_generation_guide' })); };
     handlers.GET['/apps/capabilities'] = async function (r) {
@@ -213,7 +178,7 @@
               dialog: '<dialog id="dialog" aria-labelledby="dialog-title"><h2 id="dialog-title">提示</h2><p>内容</p><form method="dialog"><button>关闭</button></form></dialog>；在 javascript 的用户点击事件中调用 document.getElementById("dialog").showModal()。',
               status: '状态文本使用 status-success、status-error、status-pending；业务结果由应用实际操作返回。'
             },
-            usage: '新建且用户未指定风格时，将 themeCss 全文复制到 code.themeCss，复用下方 HTML 类名；业务布局写入 code.css，并使用主题变量。主题属于应用，可修改、替换或清空；修改已有应用时保留已保存的主题，只有用户要求换肤或恢复默认时才调整。示例仅演示结构，按钮行为需在 javascript 中实现。字体使用插件内置字体及系统回退。',
+            usage: '新建且用户未指定风格时，将 themeCss 全文复制到 code.themeCss，复用下方 HTML 类名；业务布局写入 code.css，并使用主题变量。主题属于应用，可修改、替换或清空；修改已有应用时保留已保存的主题，只有用户要求换肤或恢复默认时才调整。示例仅演示结构，按钮行为需在 javascript 中实现。字体使用扩展内置字体及系统回退。',
             htmlExample: [
               '<main class="app-page">',
               '  <header class="app-header"><h1>应用名称</h1><p class="section-desc">功能说明</p></header>',
@@ -312,7 +277,7 @@
     handlers.POST['/apps/{appId}/draft/edits'] = async function (r, context) {
       var current = await draftForEdit(r);
       var code = Object.assign({}, current.code);
-      r.body.edits.forEach(function (edit, index) {
+      var inputChars = Source.applyEdits(r.body.edits, function (edit) {
         var target = code, key = edit.field;
         if (edit.field === 'files') {
           validateSourceFileName(edit.fileName);
@@ -320,16 +285,11 @@
           code.files = Object.assign({}, code.files);
           target = code.files; key = edit.fileName;
         } else if (edit.fileName !== undefined) throw validationError('SCHEMA_VALIDATION_FAILED', 'fileName 仅用于 field=files');
-        var source = target[key], lineEnding = (source.match(/\r?\n/) || ['\n'])[0];
-        var oldText = edit.oldText.replace(/\r?\n/g, lineEnding), newText = edit.newText.replace(/\r?\n/g, lineEnding);
-        var offset = source.indexOf(oldText), label = 'edits[' + index + '] ' + key;
-        if (offset === -1) throw validationError('RESOURCE_CONFLICT', label + ' 未找到 oldText，请重新读取草稿片段后调整');
-        if (source.indexOf(oldText, offset + 1) !== -1) throw validationError('RESOURCE_CONFLICT', label + ' 的 oldText 匹配多处，请补充唯一上下文');
-        target[key] = source.slice(0, offset) + newText + source.slice(offset + oldText.length);
+        return { object: target, key: key };
       });
       assertGeneratedCode(context, code);
       var app = await service.save(r.params.appId, expected(r), { code: code });
-      var diff = await sourceDiff(current, app, code, r.body.edits, r.body.includeDiff);
+      var diff = await sourceDiff(current, app, code, r.body.edits, inputChars, r.body.includeDiff);
       if (!trusted(context) && context.conversationId) await service.bindConversation(context.conversationId, app.appId);
       return result(r, 'AppSourceEdits', {
         appId: app.appId, revision: app.revision, saved: true, unpublished: app.unpublished,

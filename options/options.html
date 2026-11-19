@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Page Agent 配置中心</title>
+  <title>Page Agent 扩展配置中心</title>
   <link rel="stylesheet" href="options.css">
   <link rel="stylesheet" href="options-app.css">
   <link rel="stylesheet" href="../ui/tabs.css">
@@ -13,8 +13,8 @@
   <div id="app">
     <aside id="sidebar">
       <div class="sidebar-header">
-        <h1>Page Agent</h1>
-        <button id="btn-toggle-sidebar" class="sidebar-toggle" title="隐藏侧边栏" aria-label="隐藏侧边栏"></button>
+        <div class="sidebar-title"><h1>Page Agent</h1><p class="sidebar-subtitle">扩展配置中心</p></div>
+        <button id="btn-toggle-sidebar" type="button" class="sidebar-toggle" title="隐藏侧边栏" aria-label="隐藏侧边栏" aria-controls="sidebar" aria-expanded="true"></button>
       </div>
       <!--
         菜单入口名与业务提示名刻意不同：
@@ -35,19 +35,21 @@
         <button class="nav-item" data-section="logs">流程报告</button>
         <button class="nav-item" data-section="model-settings">模型配置</button>
         <button class="nav-item" data-section="mcp">连接配置</button>
+        <button class="nav-item" data-section="plugins">插件管理</button>
         <button class="nav-item" data-section="system-settings">系统配置</button>
         <button class="nav-item" data-section="changelog">更新日志</button>
         <button id="open-release" class="nav-item" data-section="release">最新版本</button>
       </nav>
       <div id="sidebar-footer">
-        <button id="btn-export-config" class="btn-secondary" title="按模块导出插件内所有可备份数据">一键导出所有数据</button>
-        <button id="btn-import-config" class="btn-secondary" title="从备份包按模块和明细导入插件数据">一键导入备份数据</button>
+        <button id="btn-export-config" class="btn-secondary" title="按模块导出扩展内所有可备份数据">一键导出所有数据</button>
+        <button id="btn-import-config" class="btn-secondary" title="从备份包按模块和明细导入扩展数据">一键导入备份数据</button>
         <input type="file" id="file-import-config" accept="application/json" hidden>
       </div>
     </aside>
 
     <main id="main">
       <section id="section-apps" class="section active"></section>
+      <section id="section-plugins" class="section"></section>
       <!-- 页面配置 -->
       <section id="section-pages" class="section">
         <header class="section-header">
@@ -236,20 +238,22 @@ return result                                          // 返回值写入节点�
           <h2 id="mcp-connections-title">MCP 服务器连接</h2>
           <div>
             <button type="button" id="btn-mcp-client-settings" class="btn-secondary" aria-haspopup="dialog" aria-expanded="false" aria-controls="drawer">客户端设置</button>
+            <button type="button" id="btn-mcp-quick-pair" class="btn-secondary" aria-haspopup="dialog">一键配对</button>
             <button id="btn-mcp-add" class="btn-primary" aria-expanded="false" aria-controls="mcp-connection-editor">新增服务端</button>
           </div>
         </header>
         <p class="section-desc">连接 Page Agent 服务端，让本扩展使用本地能力、发送邮件，并与同一服务端的其他客户端通信。外部 MCP 客户端也可通过 HTTP 访问服务端。</p>
         <details class="reference-panel">
-          <summary>MCP 连接与使用说明</summary>
+          <summary>扩展连接说明</summary>
+          <p class="form-help">工具列表、HTTP 接入、令牌管理、服务状态和审计日志已移至服务端配置页。连接卡片点击「打开配置页」进入。</p>
           <div class="mcp-info help-doc">
             <p>先启动服务端，再按用途选择连接方式：</p>
             <table aria-label="MCP 连接方式与用途">
-              <thead><tr><th scope="col">用途</th><th scope="col">连接方式</th><th scope="col">是否需要插件在线</th></tr></thead>
+              <thead><tr><th scope="col">用途</th><th scope="col">连接方式</th><th scope="col">是否需要扩展在线</th></tr></thead>
               <tbody>
                 <tr><td>服务端本地操作</td><td>外部 Agent 使用 HTTP MCP + HTTP 令牌</td><td>不需要</td></tr>
-                <tr><td>浏览器与插件操作</td><td>外部 Agent 连接 HTTP MCP，再选择目标客户端</td><td>目标插件已配对并连接</td></tr>
-                <tr><td>插件本地能力与互调</td><td>插件使用 WebSocket 配对连接</td><td>本插件已连接；互调时目标也需在线</td></tr>
+                <tr><td>浏览器与扩展操作</td><td>外部 Agent 连接 HTTP MCP，再选择目标客户端</td><td>目标扩展已配对并连接</td></tr>
+                <tr><td>扩展本地能力与互调</td><td>扩展使用 WebSocket 配对连接</td><td>本扩展已连接；互调时目标也需在线</td></tr>
               </tbody>
             </table>
           </div>
@@ -263,75 +267,24 @@ return result                                          // 返回值写入节点�
             <label class="mcp-snippet-label">启动命令</label>
             <page-code-editor readonly language="shell" rows="3" id="mcp-start-command" aria-label="MCP 服务端启动命令"></page-code-editor>
             <p><b>工作目录：</b>上方路径只定位服务端程序；文件操作和 Bash 的起始目录取终端当前目录。认证、审计及状态默认保存在该目录下的 <code>./data</code>，可用 <code>--state-dir &lt;目录&gt;</code> 指定。</p>
-            <p><b>两种凭据：</b>配对密码用于插件首次配对，HTTP 令牌用于外部 MCP 客户端，分别生成。未配置时先复用已保存的凭据，没有才自动生成；自动生成的明文只显示一次，请保存。</p>
+            <p><b>两种凭据：</b>配对密码用于扩展首次配对，HTTP 令牌用于外部 MCP 客户端，分别生成。未配置时先复用已保存的凭据，没有才自动生成；自动生成的明文只显示一次，请保存。</p>
             <p><b>显式设置：</b><code>--password &lt;密码&gt;</code> 设置或重置配对密码，重置会撤销已有配对；<code>PAGE_AGENT_HTTP_BEARER_TOKEN</code> 设置 HTTP 令牌。重启时继续使用同一数据目录才能保留身份和凭据。</p>
             <p><b>名称与端口：</b>服务端名称默认取 hostname，可用 <code>--server-name "开发机"</code> 设置；WebSocket 默认 9999，HTTP 默认 9998，可分别用 <code>--ws-port</code>、<code>--http-port</code> 修改。</p>
           </div>
 
           <div class="mcp-info">
-            <h4>2. 插件连接服务端（按需）</h4>
+            <h4>2. 扩展连接服务端（按需）</h4>
             <ol>
               <li><b>新增服务端：</b>填写别名和 WebSocket 地址并保存；本机默认 <code>ws://127.0.0.1:9999</code>，远程填写实际的 <code>wss://</code> 地址。</li>
               <li><b>首次配对：</b>点击「配对服务端」并输入配对密码，成功后即可操作连接开关。</li>
               <li><b>开启连接：</b>配对后打开连接开关；关闭开关会断开连接并停止自动重连，配对信息会保留。</li>
-              <li><b>按需授权：</b>插件使用服务端文件、命令能力时，在「权限」中配置目录；桌面操作需开启「允许操作服务端桌面」。仅操作浏览器页面无需授权服务端目录或桌面。</li>
+              <li><b>配置服务端：</b>连接就绪后，点击连接卡片的「打开配置页」，使用同一主机名和默认 HTTP 端口 9998 打开服务端配置中心，再输入 HTTP 令牌登录。使用自定义 HTTP 地址时，直接在浏览器打开该地址下的 <code>/config</code>。</li>
+              <li><b>按需授权：</b>扩展使用服务端文件、命令能力时，在「权限」中配置目录；桌面操作需开启「允许操作服务端桌面」。仅操作浏览器页面无需授权服务端目录或桌面。</li>
             </ol>
-            <p><b>名称与身份：</b>连接别名由本插件保存，服务端名称由服务端设置；连接日志同时显示双方名称和 ID，可点击复制。当前浏览环境的连接共用客户端身份，普通与隐私环境的身份和配对信息独立。</p>
+            <p><b>名称与身份：</b>连接别名由本扩展保存，服务端名称由服务端设置；连接日志同时显示双方名称和 ID，可点击复制。当前浏览环境的连接共用客户端身份，普通与隐私环境的身份和配对信息独立。</p>
             <p><b>凭据恢复：</b>密钥丢失或凭据失效时，连接开关保持不变，点击「重新配对」更新密钥。开关开着就自动连接，关着就保持断开；更换服务端会重置目录和桌面授权。</p>
             <p><b>连接重试：</b>网络故障最多自动重试 20 次；凭据缺失或明确失效时停止尝试，等待重新配对。</p>
             <p><b>标签策略：</b>未指定 <code>tabId</code> 时，「复用已打开标签」取当前页，「固定当前标签」首次请求时绑定，「固定打开标签」按当前 HTTP(S) 地址新建并固定。显式 <code>tabId</code> 优先；流程使用自身策略。</p>
-          </div>
-
-          <div class="mcp-info">
-            <h4>3. 外部 Agent 连接 HTTP MCP（按需）</h4>
-            <p><b>接入方式：</b>在 Codex、Claude Code 或其他 MCP 客户端中配置 Streamable HTTP，服务端保持运行即可。只使用服务端本地能力时可跳过插件配对；操作页面时再连接目标插件。不支持 stdio。</p>
-            <p><b>连接配置：</b>将 <code>&lt;HTTP令牌&gt;</code> 替换为启动时显示或自行设置的 HTTP 令牌；保留 <code>Bearer </code> 前缀。远程连接使用实际 HTTPS 地址和端口，HTTP 地址不能由 WebSocket 地址直接推算。</p>
-            <label class="mcp-snippet-label">通用连接信息</label>
-            <page-code-editor readonly language="plaintext" rows="4" id="mcp-client-guide" aria-label="外部 MCP 客户端连接信息"></page-code-editor>
-            <label class="mcp-snippet-label">Cherry Studio JSON 示例</label>
-            <page-code-editor readonly language="json" id="mcp-cherry-config" aria-label="Cherry Studio MCP 配置示例"></page-code-editor>
-            <p class="mcp-note">按客户端要求填写对应字段，此处只生成可复制的示例。默认 URL 不绑定插件，可直接使用本地能力，也可选择不同客户端。</p>
-            <p><b>固定目标（可选）：</b>URL 可追加 <code>?mcpClientId=&lt;目标客户端ID&gt;</code>，之后可直接访问该插件的 <code>/page/current</code> 等资源；同一会话不能更换目标。<code>/local</code> 始终指向当前服务端。</p>
-          </div>
-
-          <div class="mcp-info">
-            <h4>4. 使用本地能力与调用客户端</h4>
-            <p>外部 MCP 提供 <code>GET / POST / PUT / PATCH / DELETE / OPTIONS</code> 六个方法工具。下面的路径是工具的 ARP 参数，都经 <code>/mcp</code> 调用。</p>
-            <ol>
-              <li><b>发现服务端能力：</b><code>OPTIONS /</code> 查看目录；<code>GET /local</code> 获取本地能力和工作目录。用 <code>GET /local/environment</code> 查询环境，或 <code>POST /local/read</code> 读取文件，body 示例为 <code>{"path":"README.md","limit":20}</code>。</li>
-              <li><b>选择目标插件：</b><code>GET /clients</code> 查看名称、ID 和连接状态，选择已就绪的客户端。</li>
-              <li><b>调用目标插件：</b><code>POST /clients/{clientId}/arp</code>，body 为 <code>{"method":"GET","request":{"uri":"/page/current"}}</code>。将内层方法改为 <code>OPTIONS</code>、URI 改为 <code>/</code> 可发现插件能力；响应链接仍需通过同一客户端转发。</li>
-            </ol>
-            <p><b>插件之间通信：</b>扩展内 Agent 先 <code>GET /connections</code> 选择服务端连接，再沿 <code>clients</code> 链接查询全部客户端及总数（含自己），通过 <code>POST /connections/{connectionId}/clients/{clientId}/arp</code> 调用其他客户端。<code>connectionId</code> 是本插件保存的服务端连接 ID，<code>clientId</code> 是目标客户端 ID。查询需 <code>connections.read</code>，调用需 <code>connections.execute</code>；服务端拒绝自己调用自己，原因为 <code>SELF_CALL_FORBIDDEN</code>。</p>
-            <label class="mcp-snippet-label">发给外部 Agent 的使用提示词</label>
-            <page-code-editor readonly language="plaintext" id="mcp-usage-prompt" aria-label="MCP 使用提示词"></page-code-editor>
-          </div>
-
-          <div class="mcp-info">
-            <h4>5. 权限与执行范围</h4>
-            <p><b>HTTP 本地能力：</b>HTTP 令牌代表服务端操作者，文件操作以服务端启动工作目录为根，可用平台支持的桌面能力，不依赖插件的目录或桌面授权。</p>
-            <p><b>插件本地能力：</b>扩展内 <code>GET /local</code> 返回已授权连接和目录，使用返回的完整链接调用。新目录先保存、确认路径，再授权；修改路径会清除权限，父目录授权覆盖子目录。</p>
-            <p><b>命令与桌面：</b>Bash 按服务端进程权限执行，工作目录不是命令沙箱。桌面操作作用于服务端登录桌面，受系统权限限制；Linux 不支持桌面操作。</p>
-            <p><b>客户端转发：</b>可读取资源、操作页面／浏览器及使用目标插件在当前服务端已授权的本地能力。流程、脚本、对话、定时任务和应用动作的创建与运行由扩展内管理；转发请求不能再调用其他客户端。</p>
-            <p><b>断线或取消：</b>不自动重放请求；结果未知时先核对实际效果，再决定是否重新提交。</p>
-            <div class="help-doc">
-              <table aria-label="本地文件、命令与桌面能力">
-                <thead><tr><th scope="col">能力</th><th scope="col">名称</th><th scope="col">用途</th></tr></thead>
-                <tbody>
-                  <tr><td><code>environment / disk</code></td><td>环境与磁盘</td><td>查询服务端系统、运行环境、内存及工作目录所在文件系统的空间。</td></tr>
-                  <tr><td><code>read</code></td><td>读取文件</td><td>读取文本文件，支持按行分页查看内容。</td></tr>
-                  <tr><td><code>write</code></td><td>写入文件</td><td>创建或覆盖文本文件，自动创建所需目录。</td></tr>
-                  <tr><td><code>delete</code></td><td>删除文件</td><td>删除单个文件或符号链接，不递归删除目录。</td></tr>
-                  <tr><td><code>grep</code></td><td>查找内容</td><td>在文件或目录中搜索指定文本，返回文件路径、行号和匹配内容。</td></tr>
-                  <tr><td><code>bash</code></td><td>执行 Bash</td><td>从工作目录启动命令或脚本，返回执行输出。</td></tr>
-                  <tr><td><code>desktop</code></td><td>桌面能力</td><td>查询当前平台支持的操作和系统权限要求。</td></tr>
-                  <tr><td><code>mouse / keyboard</code></td><td>鼠标与键盘</td><td>平滑移动、点击、左键拖拽、滚轮、单键、组合键、粘贴和逐字输入。</td></tr>
-                  <tr><td><code>clipboard</code></td><td>文本剪贴板</td><td>macOS/Windows：读取、写入或清空。</td></tr>
-                  <tr><td><code>screenshot / locate</code></td><td>截图与图片定位</td><td>截取屏幕或局部，匹配 PNG 模板并返回屏幕坐标；截图可由视觉模型查看。</td></tr>
-                  <tr><td><code>application / window</code></td><td>应用与窗口</td><td>启动、请求关闭、打开打印对话框；窗口查询、恢复并激活、读取边界，Windows 包含 UI Automation 暴露的多窗口和对话框；macOS 可移动/缩放窗口。</td></tr>
-                </tbody>
-              </table>
-            </div>
           </div>
 
         </details>
@@ -498,24 +451,24 @@ return result                                          // 返回值写入节点�
           <header class="section-header">
             <h2 id="mail-connections-title">邮件服务器连接</h2>
           </header>
-          <p class="section-desc">配置 SMTP 发件账户，通过支持邮件发送的 MCP Server 发送测试邮件、流程结束通知和邮件节点消息。</p>
+          <p class="section-desc">选择服务端邮件账号，发送测试邮件、流程结束通知和邮件节点消息。账号凭据统一在服务端配置中心管理。</p>
           <details class="reference-panel">
             <summary>邮件连接与使用说明</summary>
             <div class="mcp-info">
               <ol>
-                <li><b>选择服务端：</b>MCP 配对并连接后，在 SMTP 卡片选择支持邮件发送的服务端。</li>
-                <li><b>填写账户：</b>按服务商要求填写 SMTP、认证及发件邮箱；TLS 通常用 465，STARTTLS 用 587。</li>
+                <li><b>配置账号：</b>在上方服务端配置中心创建邮件账号，并授权给当前扩展客户端。</li>
+                <li><b>选择账号：</b>MCP 配对并连接后，在此选择服务端与邮件账号。</li>
                 <li><b>保存与测试：</b>测试使用当前配置发送真实邮件，不会自动保存；修改后仍需点击「保存」。</li>
               </ol>
               <p><b>流程通知：</b>在流程编辑页设置成功／失败通知，或添加邮件节点；共用已保存账户与服务端。</p>
               <p><b>通知总开关：</b>默认开启，切换立即保存；关闭后停止后续发送及测试。</p>
-              <p><b>账户存储：</b>配置保存在扩展中，发送时交给 MCP Server，服务端不保存账户。</p>
+              <p><b>账户存储：</b>扩展仅保存连接与账号引用。旧 SMTP 配置须手动迁入服务端；保存账号引用后会清除浏览器中的旧凭据。</p>
             </div>
           </details>
           <div class="item-list" aria-label="邮件服务器连接">
             <button type="button" id="mail-connection-card" class="item-card connection-card" aria-expanded="false" aria-controls="mail-settings-form" disabled>
               <span class="connection-summary">
-                <span class="item-title" id="mail-summary-title">SMTP 服务器</span>
+                <span class="item-title" id="mail-summary-title">服务端邮件账号</span>
                 <span class="item-sub" id="mail-summary-description">正在读取配置…</span>
                 <span class="item-sub" id="mail-summary-from"></span>
               </span>
@@ -534,34 +487,8 @@ return result                                          // 返回值写入节点�
             </div>
             <fieldset id="mail-settings-fields" disabled>
               <div class="form-row"><label for="mail-connection-id">发送邮件的服务端</label><select id="mail-connection-id"><option value="">请选择明确的连接</option></select></div>
-              <div class="setting-item">
-                <label for="mail-host">SMTP 服务器</label>
-                <input id="mail-host" type="text" required maxlength="253" placeholder="smtp.example.com">
-              </div>
-              <div class="setting-item">
-                <label for="mail-port">端口</label>
-                <input id="mail-port" type="number" min="1" max="65535" step="1" required value="465">
-              </div>
-              <div class="setting-item">
-                <label for="mail-security">加密方式</label>
-                <select id="mail-security"><option value="tls">TLS（通常 465）</option><option value="starttls">STARTTLS（通常 587）</option></select>
-              </div>
-              <div class="setting-item">
-                <label for="mail-username">SMTP 用户名</label>
-                <input id="mail-username" type="text" autocomplete="off" placeholder="服务商提供的用户名或邮箱地址">
-              </div>
-              <div class="setting-item">
-                <label for="mail-password">SMTP 密码 / 授权码</label>
-                <input id="mail-password" type="password" autocomplete="new-password">
-              </div>
-              <div class="setting-item">
-                <label for="mail-from">发件邮箱</label>
-                <input id="mail-from" type="text" required maxlength="254" placeholder="sender@example.com">
-              </div>
-              <div class="setting-item">
-                <label for="mail-from-name">发件人名称（默认 Page Agent）</label>
-                <input id="mail-from-name" type="text" maxlength="200" placeholder="Page Agent">
-              </div>
+              <div class="form-row"><label for="mail-account-id">服务端邮件账号</label><select id="mail-account-id" required><option value="">请选择已授权的邮件账号</option></select></div>
+              <p class="section-desc">账号列表仅显示所选服务端授权给当前扩展的邮件账号。新增、修改凭据及授权请使用上方服务端配置中心。</p>
             </fieldset>
             <p id="mail-settings-status" role="status" aria-live="polite"></p>
             <div class="editor-actions">
@@ -748,13 +675,13 @@ return result                                          // 返回值写入节点�
           <h2>最新版本</h2>
           <button id="btn-release-check" class="btn-secondary">检查更新</button>
         </header>
-        <p class="section-desc">检查最新版本，由插件下载、解压并应用更新。</p>
+        <p class="section-desc">检查最新版本，由扩展下载、解压并应用更新。</p>
         <details class="reference-panel drawer-guide">
           <summary>手动更新说明</summary>
           <div class="drawer-guide-content">
-            <p><b>适用范围：</b>通过「加载已解压的扩展程序」安装的插件。</p>
-            <p><b>插件目录：</b>首次需选择当前加载的目录（直接包含 manifest.json）并授权，之后自动使用已记住的目录。可在浏览器扩展管理页开启开发者模式，通过「加载来源」确认目录。</p>
-            <p><b>更新与生效：</b>更新过程中保持本页打开，完成后点击「重新加载插件」即可生效。重新加载会中断插件当前运行的任务。</p>
+            <p><b>适用范围：</b>通过「加载已解压的扩展程序」安装的扩展。</p>
+            <p><b>扩展目录：</b>首次需选择当前加载的目录（直接包含 manifest.json）并授权，之后自动使用已记住的目录。可在浏览器扩展管理页开启开发者模式，通过「加载来源」确认目录。</p>
+            <p><b>更新与生效：</b>更新过程中保持本页打开，完成后点击「重新加载扩展」即可生效。重新加载会中断扩展当前运行的任务。</p>
           </div>
         </details>
         <div class="editor">
@@ -770,17 +697,18 @@ return result                                          // 返回值写入节点�
             </div>
           </div>
           <div class="form-row">
-            <label for="release-directory">插件目录</label>
+            <label for="release-directory">扩展目录</label>
             <div class="release-directory-row">
-              <input id="release-directory" type="text" placeholder="请选择当前加载的插件目录" aria-describedby="release-directory-status" readonly>
+              <input id="release-directory" type="text" placeholder="请选择当前加载的扩展目录" aria-describedby="release-directory-status" readonly>
               <button id="btn-release-directory" class="btn-secondary" disabled>选择目录</button>
             </div>
             <p id="release-directory-status" class="form-help">正在读取已保存的目录…</p>
           </div>
+          <progress id="release-download-progress" max="100" value="0" aria-label="发布包下载进度" aria-describedby="release-status" hidden></progress>
           <p id="release-status" class="form-help" role="status" aria-live="polite">尚未检查更新。</p>
           <div class="editor-actions">
             <button id="btn-release-update" class="btn-primary" disabled>手动更新</button>
-            <button id="btn-release-reload" class="btn-danger">重新加载插件</button>
+            <button id="btn-release-reload" class="btn-danger">重新加载扩展</button>
             <a id="release-page" href="https://github.com/openpageagent/pageagent/releases/latest" target="_blank" rel="noopener noreferrer" title="在 GitHub 查看发布说明（新标签页）" aria-label="在 GitHub 查看发布说明（新标签页）"><span class="release-github-icon" aria-hidden="true">&#xf09b;</span><span>查看发布说明</span></a>
           </div>
         </div>
@@ -800,6 +728,16 @@ return result                                          // 返回值写入节点�
         </details>
         <div class="help-doc">
 
+          <h3>v1.3.0</h3>
+          <ul>
+            <li><b>插件管理</b>：新增能力插件，支持独立启停、配置与复制。</li>
+            <li><b>插件开发</b>：新增插件开发助手，支持对话调整与多文件代码编辑。</li>
+            <li><b>内置插件</b>：新增平台消息、PostgreSQL、MySQL、Jira、Confluence、Jenkins、GitLab、Redis、SSH、S3 插件。</li>
+            <li><b>能力调用</b>：对话、应用、流程和脚本支持调用插件能力。</li>
+            <li><b>备份恢复</b>：支持插件源码、配置与权限声明导入导出。</li>
+            <li><b>优化扩展更新</b>：显示下载进度、速度和预计剩余时间。</li>
+          </ul>
+
           <h3>v1.2.5</h3>
           <ul>
             <li><b>对话图片</b>：支持粘贴图片、编号引用与预览。</li>
@@ -809,7 +747,7 @@ return result                                          // 返回值写入节点�
 
           <h3>v1.2.4</h3>
           <ul>
-            <li><b>插件更新</b>：支持在配置中心检查更新插件。</li>
+            <li><b>扩展更新</b>：支持在配置中心检查更新扩展。</li>
           </ul>
 
           <h3>v1.2.3</h3>
@@ -967,7 +905,7 @@ return result                                          // 返回值写入节点�
               <p><b>保存与关闭：</b>点击「保存代理设置」生效；地址留空并保存可关闭代理。</p>
               <p><b>认证：</b>仅 HTTP / HTTPS 代理支持用户名密码。</p>
               <p><b>域名规则：</b>支持通配符，每行一个或逗号分隔；匹配域名留空表示全部。</p>
-              <p><b>控制状态：</b>显示代理是否由本插件控制，可点击「刷新状态」更新。</p>
+              <p><b>控制状态：</b>显示代理是否由本扩展控制，可点击「刷新状态」更新。</p>
             </div>
           </details>
           <div class="item-list" aria-label="代理设置">
@@ -1179,9 +1117,9 @@ return result                                          // 返回值写入节点�
         <details class="reference-panel">
           <summary>远程操作权限说明</summary>
           <div class="mcp-info">
-            <p><b>作用范围：</b>控制外部 Agent 和其他客户端通过此连接操作当前插件的权限。</p>
+            <p><b>作用范围：</b>控制外部 Agent 和其他客户端通过此连接操作当前扩展的权限。</p>
             <p><b>浏览器调试：</b>诊断读取使用「读取／查询」，页面输入、导航、上传和脚本使用「执行」；调试会话的创建和释放有其中任一权限即可。</p>
-            <p><b>文件操作：</b>经插件写入、删除服务端文件分别需要「创建／修改」「删除」，并同时满足目录写入授权。删除开关不判断页面点击、脚本或命令的业务含义。</p>
+            <p><b>文件操作：</b>经扩展写入、删除服务端文件分别需要「创建／修改」「删除」，并同时满足目录写入授权。删除开关不判断页面点击、脚本或命令的业务含义。</p>
           </div>
         </details>
         <form id="mcp-arp-permissions-form">
@@ -1224,7 +1162,7 @@ return result                                          // 返回值写入节点�
       <details class="reference-panel drawer-guide">
         <summary>邮件测试说明</summary>
         <div class="drawer-guide-content">
-          <p><b>测试发送：</b>使用当前 SMTP 配置发送真实邮件，不自动保存配置。</p>
+          <p><b>测试发送：</b>使用当前选择的服务端邮件账号发送真实邮件，不自动保存选择。</p>
           <p><b>收件地址：</b>收件人、抄送、密送至少填一项，多个地址用逗号、分号或空格分隔。</p>
           <p><b>附件限制：</b>最多 20 个，总计不超过 20MB。</p>
         </div>
@@ -1360,6 +1298,8 @@ return result                                          // 返回值写入节点�
   <script src="options-url-trigger-controller.js"></script>
   <script src="options-backup-controller.js"></script>
   <script src="options-app-controller.js"></script>
+  <script src="options-server-config-controller.js"></script>
+  <script src="options-plugin-controller.js"></script>
   <script src="options-run-report-controller.js"></script>
   <script src="options-mail-controller.js"></script>
   <script src="options-archive.js"></script>

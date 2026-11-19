@@ -1,10 +1,10 @@
 # Page Agent Developer Utils
 
-Page Agent 内置的离线开发工具应用，提供 47 项编码、格式化、转换、生成与预览工具，使用插件默认主题和本地计算能力。
+Page Agent 内置的离线开发工具应用，提供 47 项编码、格式化、转换、生成与预览工具，使用扩展默认主题和本地计算能力。
 
 ## 打开与操作
 
-在插件「应用」中打开 **Developer Utils**，入口为 `/apps/developer-utils`。
+在扩展「应用」中打开 **Developer Utils**，入口为 `/apps/developer-utils`。
 
 - 支持中英文搜索和分类筛选；`Ctrl / ⌘ + K` 搜索，`Ctrl / ⌘ + Enter` 重新处理。
 - 转换、检查和格式化随输入自动更新；生成工具提供生成或重新生成操作。
@@ -13,13 +13,13 @@ Page Agent 内置的离线开发工具应用，提供 47 项编码、格式化�
 
 改名后遗留的旧应用会保留为普通应用，可在应用管理中手动删除。
 
-## 插件能力与 SDK
+## 扩展能力与 SDK
 
 [应用包](../developer-utils.json) 定义应用 ID `app_developer_utils`；[app.js](./app.js) 为界面入口，[tools.js](./tools.js) 定义菜单与参数预设。
 
 计算通过 `PageAgent.resources.request` 向工具的 `operationUris` 发起 POST，请求体为 `{ input, options }`。接口由 [utilities/catalog.js](../../utilities/catalog.js) 定义，算法在离线 Worker 中执行，需要 `utilities.read`、`utilities.execute` 权限。
 
-应用无需独立构建。界面与主题通过 `sourceFiles` 安装到 `code.files`，支持「复制后修改」；副本可在「源码文件」页签或通过对话编辑，导出时携带原文。发布打包跳过内置应用 JS/CSS 和默认主题的压缩。公共工具目录、算法、UI 组件与字体仍由插件提供。依赖许可见[第三方许可](../../utilities/THIRD_PARTY_NOTICES.html)。
+应用无需独立构建。界面与主题通过 `sourceFiles` 安装到 `code.files`，支持「复制后修改」；副本可在「源码文件」页签或通过对话编辑，导出时携带原文。发布打包跳过内置应用 JS/CSS 和默认主题的压缩。公共工具目录、算法、UI 组件与字体仍由扩展提供。依赖许可见[第三方许可](../../utilities/THIRD_PARTY_NOTICES.html)。
 
 ## 实现边界
 

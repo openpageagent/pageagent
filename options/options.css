@@ -103,6 +103,7 @@
   border-color: var(--border);
   scroll-margin-top: 8px;
 }
+
 .item-card.connection-card {
   width: 100%;
   text-align: left;
@@ -119,8 +120,7 @@
   min-width: 0;
 }
 .connection-summary > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.connection-summary > :is(.item-title, .item-id) { max-width: 30%; }
-.connection-card .badge { flex-shrink: 0; }
+.connection-summary > .item-title { max-width: 30%; }
 .connection-card:disabled { cursor: wait; }
 .setting-item { margin-bottom: 8px; }
 .setting-item label { display: block; margin-bottom: 8px; font-weight: 400; }
@@ -507,7 +507,9 @@ body {
   justify-content: space-between;
   gap: 8px;
 }
-#sidebar h1 { font-size: 16px; font-weight: 500; padding: 0 8px; color: var(--accent); }
+.sidebar-title { min-width: 0; }
+#sidebar h1 { font-size: 16px; font-weight: 500; padding: 0 8px; color: var(--accent); white-space: nowrap; }
+.sidebar-subtitle { margin: 2px 0 0; padding: 0 8px; font-size: 12px; line-height: 1.5; color: var(--text-secondary); white-space: nowrap; }
 .sidebar-toggle {
   display: grid;
   place-items: center;
@@ -566,6 +568,12 @@ body {
 .nav-item[data-section="mcp"]::before { content: '\f233'; }
 .nav-item[data-section="conversation"]::before { content: '\f135'; }
 .nav-item[data-section="apps"]::before { content: '\f1b2'; }
+.nav-item[data-section="plugins"]::before { content: '\f12e'; }
+.server-pair-dialog { margin: auto; width: min(520px, calc(100vw - 32px)); padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); }
+.server-pair-dialog::backdrop { background: rgba(0, 0, 0, .38); }
+.server-pair-dialog h3, .server-pair-dialog label { display: block; margin-bottom: 8px; }
+.server-pair-dialog textarea { width: 100%; margin-bottom: 8px; }
+.server-pair-dialog [role="status"] { color: var(--danger); }
 .nav-item[data-section="knowledge"]::before { content: '\f02d'; }
 .nav-item[data-section="model-settings"]::before { content: '\f0d0'; }
 .nav-item[data-section="changelog"]::before { content: '\f1ea'; }
@@ -602,7 +610,7 @@ body {
   justify-content: center;
 }
 
-#app.global-sidebar-collapsed #sidebar h1 {
+#app.global-sidebar-collapsed .sidebar-title {
   display: none;
 }
 
@@ -632,6 +640,7 @@ body {
 #app.global-sidebar-collapsed #nav {
   gap: 8px;
   overflow-x: hidden;
+  scrollbar-width: none;
 }
 
 #app.global-sidebar-collapsed .nav-item {
@@ -707,6 +716,7 @@ body {
   place-items: center;
   justify-content: center;
   align-content: center;
+  gap: 0;
   width: 36px;
   min-width: 36px;
   height: 36px;
@@ -755,7 +765,6 @@ body {
   place-items: center;
   width: 36px;
   height: 36px;
-  transform: translateY(3px);
 }
 
 /* Main */
@@ -942,6 +951,11 @@ textarea:focus {
 .item-card.builtin { border-style: solid; }
 .item-card .item-title { font-weight: 400; }
 .item-card .item-sub { color: var(--text-secondary); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-card .badge { flex-shrink: 0; }
+/* 宽屏沿用卡片布局，窄屏将 ID、操作和状态作为一组换行。 */
+.item-card-end { display: contents; }
+.item-card .item-id,
+.item-card > :is(.item-sub, .connection-summary, .knowledge-card-main) + * { margin-left: auto; }
 .item-id {
   display: inline-block;
   min-width: 0;
@@ -973,17 +987,20 @@ textarea:focus {
 }
 .item-card[aria-disabled="true"] { cursor: wait; opacity: 0.6; }
 .item-card.knowledge-mcp-tool-card { cursor: default; }
-.item-card > :is(.item-title, .item-id) {
+.item-card > .item-title,
+.item-card .item-id {
   min-width: 0;
   max-width: 30%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.item-card > .btn-small {
+.item-card :is(.btn-small, .btn-secondary, .btn-danger) {
   flex-shrink: 0;
   white-space: nowrap;
 }
+.item-list-compact > .item-card { min-height: 36px; padding: 3px 8px; gap: 8px; }
+.item-list-compact > .item-card > :is(.badge, .btn-small, .btn-secondary, .btn-danger) { flex-shrink: 0; white-space: nowrap; }
 .badge {
   font-size: 11px;
   padding: 2px 7px;
@@ -1015,6 +1032,7 @@ textarea:focus {
 }
 .editor.hidden, .hidden { display: none; }
 .editor h3 { font-family: 'Roboto Slab', Georgia, serif; font-size: 15px; font-weight: 500; margin-bottom: 8px; color: var(--accent); }
+#plugin-editor .section-header h3 { margin-bottom: 0; }
 .form-row { margin-bottom: 8px; }
 .form-row label { display: block; font-family: 'Roboto Slab', Georgia, serif; font-size: 12px; color: var(--text); margin-bottom: 4px; letter-spacing: 0.05rem; }
 .form-row label.switch-label {
@@ -1042,6 +1060,11 @@ textarea:focus {
   font-size: 13px;
 }
 .form-row textarea { height: auto; min-height: 32px; padding: 7px 8px; font-family: 'SF Mono', 'JetBrains Mono', Consolas, monospace; resize: vertical; }
+.password-input { position: relative; min-width: 0; }
+.form-row .password-input > input { display: block; padding-right: 36px; }
+.password-input > .password-toggle { position: absolute; top: 0; right: 0; width: 28px; height: 100%; padding: 0; border: 0; background: transparent; }
+.password-toggle::before { content: '\f06e'; font: 14px/1 'FontAwesome'; }
+.password-toggle[aria-pressed="true"]::before { content: '\f070'; }
 .form-row.checkbox-row { display: flex; align-items: center; gap: 8px; }
 .form-row.checkbox-row label { margin: 0; }
 .form-row-offset { padding-top: 22px; }
@@ -1117,6 +1140,23 @@ textarea:focus {
 }
 .editor-actions { display: flex; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .editor-actions .spacer { flex: 1; }
+#plugin-editor .editor-actions { flex-wrap: wrap; }
+#plugin-editor .editor-actions > button { flex-shrink: 0; }
+#plugin-editor .editor-actions > [hidden] { display: none; }
+#plugin-editor .plugin-error { color: var(--danger); overflow-wrap: anywhere; }
+#plugin-editor .plugin-error:empty { display: none; }
+#plugin-editor .plugin-config-fields { border: 0; padding: 0; margin: 12px 0; min-width: 0; }
+#plugin-editor .plugin-config-fields legend { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+#plugin-editor .plugin-config-group { border: 1px solid var(--border); border-radius: 6px; padding: 8px; min-width: 0; }
+#plugin-editor .plugin-config-entry { border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 8px; }
+#plugin-editor .plugin-account-name { overflow-wrap: anywhere; }
+#plugin-editor .plugin-command-switches { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin: 8px 0; }
+#section-plugins .section-header { flex-wrap: wrap; gap: 8px; }
+.plugin-code-editor .plugin-source-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.plugin-code-editor .plugin-source-section > :is(h4, .form-row) { margin: 0; }
+.plugin-code-editor .app-actions[hidden],
+.plugin-code-editor .app-actions > [hidden] { display: none; }
+#plugin-create-form textarea { font-family: inherit; }
 
 /* Manual extension update */
 #section-release > .editor { border-color: var(--border); }
@@ -1126,6 +1166,20 @@ textarea:focus {
 #section-release .form-help { overflow-wrap: anywhere; }
 #section-release .editor-actions { flex-wrap: wrap; align-items: center; }
 #section-release .editor-actions > button { flex-shrink: 0; }
+#release-download-progress {
+  width: 100%;
+  height: 8px;
+  margin: 8px 0;
+  border: 0;
+  border-radius: var(--radius);
+  appearance: none;
+  background: var(--bg-muted);
+  accent-color: var(--accent);
+}
+#release-download-progress:not([hidden]) { display: block; }
+#release-download-progress::-webkit-progress-bar { background: var(--bg-muted); border-radius: inherit; }
+#release-download-progress::-webkit-progress-value { background: var(--accent); border-radius: inherit; }
+#release-status .release-download-details { display: flex; flex-wrap: wrap; gap: 2px 16px; margin-top: 2px; font-variant-numeric: tabular-nums; }
 #release-page {
   display: inline-flex;
   align-items: center;
@@ -1597,6 +1651,8 @@ page-code-editor[hidden] { display: none !important; }
   background: var(--danger);
   border-color: var(--danger);
 }
+.knowledge-mcp-editor > .editor-actions { flex-wrap: wrap; }
+.knowledge-mcp-actions { display: flex; gap: 8px; margin-left: auto; }
 .knowledge-mcp-editor textarea,
 .knowledge-skill-editor textarea {
   min-height: 96px;
@@ -2198,7 +2254,9 @@ page-code-editor[hidden] { display: none !important; }
 }
 .drawer-guide-content p + p,
 .drawer-guide-content dl,
+.drawer-guide-content ol,
 .drawer-guide-content ul { margin-top: 8px; }
+.drawer-guide-content ol,
 .drawer-guide-content ul { padding-left: 20px; }
 .drawer-guide-content dt { margin-top: 8px; }
 .drawer-guide-content dd { margin: 2px 0 0; white-space: pre-wrap; }
@@ -2231,14 +2289,16 @@ page-code-editor[hidden] { display: none !important; }
   .item-card,
   .node-card-header { flex-wrap: wrap; gap: 8px; }
   .item-card > .item-title,
-  .item-card > .item-id { max-width: 100%; }
-  .item-card > .item-sub { flex-basis: 100%; order: 1; }
+  .item-card .item-id { max-width: 100%; }
+  .item-card > .item-sub { flex-basis: 100%; }
+  .item-card-end { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: inherit; min-width: 0; max-width: 100%; margin-left: auto; }
+  .item-card-end > .item-id { margin-left: 0; }
   .knowledge-card-main { flex-basis: 100%; flex-wrap: wrap; }
   .knowledge-card-main > :is(.item-title, .knowledge-meta) { max-width: 100%; }
   .knowledge-card-main > .item-sub { flex-basis: 100%; }
   .connection-summary { flex-wrap: wrap; }
-  .connection-summary > :is(.item-title, .item-id) { max-width: 100%; }
-  .connection-summary > .item-sub { flex-basis: 100%; order: 1; }
+  .connection-summary > .item-title { max-width: 100%; }
+  .connection-summary > .item-sub { flex-basis: 100%; }
   .node-card-header .node-title { min-width: 0; overflow-wrap: anywhere; }
   .flow-editor-header { flex-wrap: wrap; align-items: center; }
   .flow-editor-header .form-row { flex-basis: 100%; }
@@ -3957,8 +4017,7 @@ label.conversation-permission-item {
   background: var(--bg);
 }
 
-.conversation-app-binding,
-.conversation-image-references {
+.conversation-composer > :is(.conversation-app-binding, .conversation-image-references):first-child {
   padding-top: 0;
 }
 
@@ -4063,6 +4122,12 @@ label.conversation-permission-item {
   color: var(--text);
   cursor: pointer;
   font-size: 12px;
+}
+
+.conversation-app-binding > a.conversation-chat-log-btn {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
 }
 
 .conversation-chat-log-btn[data-conversation-action="export-topic-archive"],

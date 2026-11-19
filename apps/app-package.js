@@ -6,7 +6,7 @@
   function builtinSourceFiles(item) {
     var files = item.sourceFiles;
     if (files === undefined) return {};
-    if (!files || typeof files !== 'object' || Array.isArray(files)) throw new Error('内置应用 sourceFiles 必须为文件名与插件路径的映射');
+    if (!files || typeof files !== 'object' || Array.isArray(files)) throw new Error('内置应用 sourceFiles 必须为文件名与扩展路径的映射');
     Object.keys(files).forEach(function (name) {
       C.sourceFileName(name);
       var path = files[name];

@@ -23,6 +23,12 @@ const { createHttpApi } = require('./http-api');
 const { McpHttpHandler, canonicalToMcpUri, mcpToCanonicalUri } = require('./mcp-http-handler');
 const { createServerArp } = require('./server-arp');
 const { Archive } = require('./archive');
+const { BotService } = require('./bot-service');
+const { PostgresService } = require('./postgres-service');
+const { DevToolsService } = require('./devtools-service');
+const { deletionGuidance } = require('../shared/devtools-catalog');
+const { createBotHttpApi } = require('./bot-http-api');
+const { createConfigApi } = require('./config-api');
 const { version: SERVER_VERSION } = require('./package.json');
 const { LIMITS } = contract;
 
@@ -92,18 +98,27 @@ class PageAgentMCPServer {
     this.options = options; this.version = SERVER_VERSION; this.auth = new AuthStore(options.stateDir);
     this.serverName = contract.serverName(options.serverName ?? (String(process.env.PAGE_AGENT_SERVER_NAME || '').trim() || os.hostname()));
     this.clients = new Map(); this.sockets = new Map(); this.callContext = new AsyncLocalStorage();
+    this.connectionLogs = [];
     this.requestBroker = new ExtensionRequestBroker((socket, body, callback) => this.send(socket, body, callback));
     this.mailQueue = createMailQueue(); this.mailRequests = new Set(); this.closing = false;
-    this.instructions = '本 MCP 的 /local/* 在服务端直接执行文件、Bash、环境与桌面操作，不依赖插件连接或插件授权，也不需要 mcpClientId、connectionId 或 workspaceId。'
-      + '本地任务先 GET /local 获取支持的能力和链接，再 OPTIONS 具体路径获取参数，按声明的方法直接调用；无需经 /clients/{clientId}/arp 转发当前服务端的本地任务，该路径会先经过插件再回到服务端执行，并受插件权限管控。'
-      + '只有访问插件资源才查询 GET /clients 并选择客户端；客户端绑定不改变 /local 的服务端归属。OPTIONS / 查看服务端资源目录。'
-      + '用户要求直接使用「知识中已配置的 HTTP MCP」时，复用目标插件的配置和认证：先 GET /clients 确认目标，再通过 POST /clients/{clientId}/arp 转发 {"method":"GET","request":{"uri":"/mcp-servers"}} 发现已配置服务器。'
-      + '在同一插件内 GET /mcp-servers/{serverId}/tools 获取工具与 schemaHash，按任务选择工具；参数未知时 OPTIONS /mcp-servers/{serverId}/tools/{toolName}/calls，再 POST 该路径，body 包含 arguments 和 schemaHash，沿回执 operationUri 用 GET 读取最终结果。'
-      + '这些插件路径及返回链接均通过同一客户端转发，客户端、服务器和工具不明确时先查询，仍有歧义再询问用户；已有配置可用时直接执行用户任务，无需用户重复提供地址或密钥，也无需新增 MCP 配置。';
+    this.instructions = '本 MCP 的 /local/* 在服务端直接执行文件、Bash、环境与桌面操作，不依赖扩展连接或扩展授权，也不需要 mcpClientId、connectionId 或 workspaceId。'
+      + '本地任务先 GET /local 获取支持的能力和链接，再 OPTIONS 具体路径获取参数，按声明的方法直接调用；无需经 /clients/{clientId}/arp 转发当前服务端的本地任务，该路径会先经过扩展再回到服务端执行，并受扩展权限管控。'
+      + '只有访问扩展资源才查询 GET /clients 并选择客户端；客户端绑定不改变 /local 的服务端归属。OPTIONS / 查看服务端资源目录。'
+      + 'GET /bots 发现服务端平台消息账号；/bots/* 可独立配置账号、读取持久消息和发送消息，无需扩展在线。'
+      + 'GET /devtools 发现 PostgreSQL、MySQL、Jira、Confluence、Jenkins、Redis、GitLab、SSH 和 S3 的已配置连接与操作；先 OPTIONS 具体操作路径，再 POST 并携带 profileId。PostgreSQL 使用 $1、$2，MySQL 使用 ? 参数占位符，query 只读、execute 写入。所有工具均为可选，连接和凭据在 /config 的研发工具页面按需添加，无需浏览器在线。'
+      + deletionGuidance
+      + '机器人消息支持标准 resources/subscribe 和 GET /mcp SSE 变更通知；可靠消费使用 POST /bots/accounts/{id}/pull 及 /bots/accounts/{id}/ack，服务端确认后推进进度。GET /bots/accounts/{id}/events 默认最近 50 条，用 after=0 从头分页。邮件专用 /bots/accounts/{id}/mail 支持 HTML、附件、抄送与密抄。'
+      + '用户要求直接使用「知识中已配置的 HTTP MCP」时，复用目标扩展的配置和认证：先 GET /clients 确认目标，再通过 POST /clients/{clientId}/arp 转发 {"method":"GET","request":{"uri":"/mcp-servers"}} 发现已配置服务器。'
+      + '在同一扩展内 GET /mcp-servers/{serverId}/tools 获取工具与 schemaHash，按任务选择工具；参数未知时 OPTIONS /mcp-servers/{serverId}/tools/{toolName}/calls，再 POST 该路径，body 包含 arguments 和 schemaHash，沿回执 operationUri 用 GET 读取最终结果。'
+      + '这些扩展路径及返回链接均通过同一客户端转发，客户端、服务器和工具不明确时先查询，仍有歧义再询问用户；已有配置可用时直接执行用户任务，无需用户重复提供地址或密钥，也无需新增 MCP 配置。';
     this.toolDefinitions = arp.createToolDefinitions().filter(item => arp.METHODS.includes(item.name)).map(item => ({ ...item,
       description: this.instructions + '\n' + item.description,
       inputSchema: { ...item.inputSchema, properties: { ...item.inputSchema.properties,
-        mcpClientId: { type: 'string', minLength: 1, maxLength: 200, description: '访问插件资源时的目标客户端 ID；服务端 /local、/clients 无需填写，也可使用 /clients/{clientId}/arp' } } } }));
+        mcpClientId: { type: 'string', minLength: 1, maxLength: 200, description: '访问扩展资源时的目标客户端 ID；服务端 /local、/clients 无需填写，也可使用 /clients/{clientId}/arp' } } } }));
+  }
+  logConnection(level, message, details = {}) {
+    this.connectionLogs.unshift({ timestamp: new Date().toISOString(), level, message, ...details });
+    if (this.connectionLogs.length > 100) this.connectionLogs.pop();
   }
   async run() {
     checkNodeVersion();
@@ -125,6 +140,8 @@ class PageAgentMCPServer {
         delete this.options.password;
       }
       const httpCredential = await this.auth.ensureHttpBearerToken(this.options.httpMcpBearerToken ?? process.env.PAGE_AGENT_HTTP_BEARER_TOKEN);
+      this.httpTokenManagedByEnvironment = !!String(this.options.httpMcpBearerToken ?? process.env.PAGE_AGENT_HTTP_BEARER_TOKEN ?? '').trim();
+      this.httpBearerTokenHash = httpCredential.hash;
       if (httpCredential.generatedToken) console.error('自动生成的 HTTP MCP Bearer 令牌：' + httpCredential.generatedToken);
       delete httpCredential.generatedToken;
       delete this.options.httpMcpBearerToken;
@@ -137,7 +154,7 @@ class PageAgentMCPServer {
         desktop: { supported: desktopSupported, actions: desktop.supported,
           reason: desktopSupported ? null : process.platform === 'linux' ? 'X11_SCREENSHOT_UNAVAILABLE' : 'PLATFORM_UNSUPPORTED',
           permissionsVerified: false, requirements: desktop.requirements },
-        mail: { supported: true, protocol: 'smtp/1' }, configuration: { ...contract.CONFIGURATION, version: SERVER_VERSION },
+        mail: { supported: true, protocol: 'bot-mail/1' }, configuration: { ...contract.CONFIGURATION, version: SERVER_VERSION },
         serverPolicy: 'allow-implemented', policyRevision: 1,
         environment: { schemaVersion: 1, disk: true, dynamicTtlMs: LIMITS.dynamicTtlMs },
         execution: { ...LIMITS, cancelAck: true, processTermination: terminationCapability(), cpuHardLimit: false, memoryHardLimit: false },
@@ -145,6 +162,11 @@ class PageAgentMCPServer {
       this.execution = new ExecutionControl(this.audit);
       this.archive = new Archive(this);
       await this.archive.init();
+      this.bots = new BotService(this);
+      await this.bots.init();
+      this.devtools = new DevToolsService(this);
+      await this.devtools.init();
+      this.postgres = new PostgresService(this);
       this.serverArp = createServerArp(this); this.httpHandler = new McpHttpHandler(this);
       const host = this.options.host || process.env.PAGE_AGENT_HOST || '127.0.0.1';
       const wsHost = this.options.wsHost || process.env.PAGE_AGENT_WS_HOST || host;
@@ -155,12 +177,15 @@ class PageAgentMCPServer {
       const wsReady = listenReady(this.wsServer);
       this.wsServer.on('connection', (socket, request) => this.accept(socket, request));
       this.httpServer = createHttpApi({ port: httpPort, host: httpHost,
-        mcpBearerTokenHash: httpCredential.hash,
+        getMcpBearerTokenHash: () => this.httpBearerTokenHash,
         allowedOrigins: this.options.allowedHttpOrigins ?? process.env.PAGE_AGENT_HTTP_CORS_ORIGINS,
         getExtensionClients: () => this.listExtensionClients(),
+        handleBotHttp: createBotHttpApi(this.bots),
+        handleConfigHttp: createConfigApi(this),
         onAuthenticationFailure: address => {
           try { this.auth.checkRate(address); } catch (_) { return; }
           this.auth.failed(address);
+          this.logConnection('error', 'HTTP 连接认证失败', { transport: 'http', address, reason: 'AUTH_FAILED' });
           this.audit.bestEffort('auth.denied', { principal: null, operation: 'http.authenticate', errorReason: 'AUTH_FAILED' });
         },
         handleMcpHttp: (...args) => this.httpHandler.handle(...args) });
@@ -171,6 +196,7 @@ class PageAgentMCPServer {
         process.once('SIGINT', this.signalHandler); process.once('SIGTERM', this.signalHandler);
       }
       console.error(`Page Agent MCP ${SERVER_VERSION} [${this.serverName}]: ws://${wsHost}:${wsPort}, http://${httpHost}:${httpPort}/mcp`);
+      console.error(`独立配置页：http://${httpHost}:${httpPort}/config（使用 HTTP Bearer 令牌登录）`);
     } catch (error) { await this.close().catch(() => {}); throw error; }
   }
   send(socket, body, callback) {
@@ -206,6 +232,7 @@ class PageAgentMCPServer {
       address: request.socket.remoteAddress || '', activeMail: new Map(), activeArp: new Map(), seen: new Set(), processingAuth: false,
       cipher: null, sendQueue: Promise.resolve(), receiveQueue: Promise.resolve() };
     this.sockets.set(socket, record);
+    this.logConnection('info', 'WebSocket 已连接，等待认证', { transport: 'websocket', address: record.address });
     record.authTimer = setTimeout(() => socket.close(1008, 'Authentication timeout'), LIMITS.authTimeoutMs);
     this.send(socket, { type: 'auth.required', transportProtocol: contract.TRANSPORT, authProtocol: contract.AUTH,
       pairingVersion: contract.PAIRING, serverId: this.serverId });
@@ -252,7 +279,9 @@ class PageAgentMCPServer {
         auditInvalidFrame(error.reason || 'INVALID_FRAME'); socket.close(1008, 'Invalid encrypted or authentication frame');
       });
     });
-    socket.on('close', () => this.disconnect(record)); socket.on('error', () => {});
+    socket.on('close', () => this.disconnect(record));
+    socket.on('error', error => this.logConnection('error', 'WebSocket 连接异常', {
+      transport: 'websocket', clientId: record.identity?.clientId, address: record.address, reason: error.code || 'SOCKET_ERROR' }));
   }
   async message(record, message) {
     const { socket } = record;
@@ -283,7 +312,7 @@ class PageAgentMCPServer {
           requestId: message.requestId, serverId: authenticated.serverId, clientId: authenticated.clientId,
           pairingId: authenticated.pairingId, transportSessionId: authenticated.transportSessionId, ...(token ? { token, communicationKey } : {}) });
         record.cipher = cipher; record.identity = authenticated; socket.pageAgentIdentity = authenticated;
-        record.clientInfo = message.clientInfo; record.state = 'authenticated'; clearTimeout(record.authTimer);
+        record.clientInfo = message.clientInfo; record.state = 'authenticated'; record.connectedAt = Date.now(); clearTimeout(record.authTimer);
         if (previous) {
           const revoked = previous.identity.pairingId !== authenticated.pairingId;
           this.disconnect(previous, revoked ? 'grant_revoked' : 'disconnect');
@@ -294,6 +323,8 @@ class PageAgentMCPServer {
           environment: this.environment, capabilities: this.capabilities, startupDirectory: this.startupDirectory, shell: this.shell,
           seen: record.seen, reply: body => this.send(socket, body), validateParent: (parent, identity) => this.requestBroker.validateParent(parent, identity) });
       } catch (error) {
+        this.logConnection('error', 'WebSocket 认证未完成', {
+          transport: 'websocket', address: record.address, reason: error.reason || 'AUTH_FAILED' });
         if (error.reason !== 'AUTH_RATE_LIMITED') await this.audit.bestEffort('auth.denied', { claimedClientId: typeof message.clientId === 'string' ? message.clientId.slice(0, 200) : null, errorReason: error.reason || 'AUTH_FAILED' });
         throw error;
       } finally { delete message.password; delete message.token; }
@@ -325,6 +356,11 @@ class PageAgentMCPServer {
       try {
         const result = await record.local.configure(message);
         if (version === record.configureVersion) record.state = 'ready';
+        if (record.state === 'ready' && !record.readyLogged) {
+          record.readyLogged = true;
+          this.logConnection('success', 'WebSocket 连接就绪', { transport: 'websocket',
+            clientId: record.identity.clientId, sessionId: record.identity.transportSessionId, address: record.address });
+        }
         this.send(socket, { type: 'local.configured', requestId: message.requestId, ok: true, ...result });
         if (record.state === 'ready') this.archive.connected(record.identity.clientId).catch(error => {
           console.error('Archive connection: ' + error.message);
@@ -342,32 +378,17 @@ class PageAgentMCPServer {
     contract.fail('UNEXPECTED_FRAME');
   }
   async mail(record, message) {
-    const context = { ...record.local.context(message), operation: 'mail.send', parameters: { action: 'send' } };
-    if (record.seen.has(message.requestId)) throw Object.assign(new Error('重复请求，原邮件投递结果不可推断'), {
-      code: 'RESOURCE_CONFLICT', reason: 'DUPLICATE_REQUEST', performed: 'unknown' });
-    if (record.seen.size >= LIMITS.seenRequests) contract.fail('SESSION_REQUEST_LIMIT', '会话请求数量已达上限', 'RESOURCE_BUSY');
-    record.seen.add(message.requestId);
-    const controller = new AbortController(); record.activeMail.set(message.requestId, controller);
-    let result, error, sending = false;
-    try {
-      context.parentAssurance = this.requestBroker.validateParent(message.caller.parentRequest, record.identity) ? 'server_verified'
-        : message.caller.parentRequest ? 'client_asserted' : null;
-      // Reserve the existing bounded mail slot before asynchronous audit/auth
-      // work, so large SMTP payloads cannot accumulate outside that queue.
-      result = await this.mailQueue.enqueue(message.payload, { signal: controller.signal, beforeSend: async signal => {
-        await this.audit.write('execution.intent', context); await this.auth.assertActive(record.identity);
-        if (signal.aborted || this.closing) throw new Error('邮件发送已取消');
-        sending = true;
-      } });
-    } catch (failure) { error = failure; }
-    finally { message.payload = null; record.activeMail.delete(message.requestId); }
-    const receipt = { performed: error ? error.performed || (sending ? 'unknown' : 'no') : 'yes' };
-    const recorded = await this.audit.bestEffort('execution.finished', { ...context, receipt,
-      errorReason: error ? sending && error.performed !== 'no' ? 'MAIL_DELIVERY_UNKNOWN' : error.reason || 'MAIL_NOT_SENT' : null });
-    this.send(record.socket, { type: 'mail.result', requestId: message.requestId, ok: !error,
-      ...(error ? { error: safeError(error) } : { result }), receipt, audit: { recorded } });
+    message.payload = null;
+    this.send(record.socket, { type: 'mail.result', requestId: message.requestId, ok: false,
+      error: { code: 'UNSUPPORTED_CAPABILITY', reason: 'SERVER_MAIL_ACCOUNT_REQUIRED',
+        message: '邮件凭据已迁移到服务端，请更新扩展并选择服务端邮件账号', retryable: false },
+      receipt: { performed: 'no' }, audit: { recorded: false } });
   }
   disconnect(record, reason = 'disconnect') {
+    if (record.state === 'disconnected') return;
+    this.logConnection(reason === 'shutdown' ? 'info' : 'warn', 'WebSocket 连接断开', {
+      transport: 'websocket', clientId: record.identity?.clientId,
+      sessionId: record.identity?.transportSessionId, address: record.address, reason });
     record.state = 'disconnected';
     clearTimeout(record.authTimer); if (record.local) record.local.close(reason);
     for (const controller of record.activeMail.values()) controller.abort();
@@ -532,6 +553,8 @@ class PageAgentMCPServer {
           this.execution ? this.execution.close() : Promise.resolve(true),
           Promise.allSettled([...this.mailRequests]),
           this.archive ? this.archive.drain() : Promise.resolve(),
+          this.bots ? this.bots.close() : Promise.resolve(),
+          this.devtools ? this.devtools.close() : Promise.resolve(),
         ]);
         await Promise.all([closeListener(this.wsServer), closeListener(this.httpServer)]);
         if (this.audit) await this.audit.close();

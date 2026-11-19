@@ -2418,6 +2418,10 @@
     this.authorize = typeof options.authorize === 'function' ? options.authorize : null;
     this.generateRequestId = typeof options.requestId === 'function' ? options.requestId : defaultRequestId;
     this.unsafeLocks = new Set();
+    // Only a currently executing handler can delegate a nested operation.
+    // This authority is process-local and never accepted from request payloads.
+    this.executingContexts = new WeakMap();
+    this.executingInvocations = new WeakSet();
   }
 
   Router.prototype.lockKey = function (context) {
@@ -2441,8 +2445,22 @@
     });
   };
 
-  Router.prototype.dispatch = function (toolName, input, context) {
+  Router.prototype.dispatchNested = function (method, input, parentContext, signal) {
+    var router = this, parent = this.executingContexts.get(parentContext);
+    if (!parent || !parent.accepting) throw arpError('RESOURCE_CONFLICT', 'Parent resource operation is no longer executing');
+    if (parent.depth >= 32) throw arpError('RESOURCE_CONFLICT', 'Nested resource depth exceeded');
+    var context = Object.assign({}, parentContext, { abortSignal: signal || parentContext.abortSignal });
+    var operation = parent.queue.then(function () {
+      if (context.abortSignal && context.abortSignal.aborted) throw arpError('RESOURCE_CONFLICT', 'Nested resource operation was cancelled', { performed: 'no' });
+      return router.dispatch(method, input, context, parent);
+    });
+    parent.queue = operation.catch(function () {});
+    return operation;
+  };
+
+  Router.prototype.dispatch = function (toolName, input, context, parent) {
     var router = this;
+    if (parent && (!this.executingInvocations.has(parent) || !parent.active)) parent = null;
     var method = String(toolName || '');
     var requestId = nonEmptyString(this.generateRequestId(), 'requestId');
     var requestTrace = { method: method, requestTarget: null, canonicalPath: null, routeTemplate: null, routeSchema: 'not-checked' };
@@ -2492,12 +2510,13 @@
 
     var unsafe = method !== 'GET';
     var lockKey = unsafe ? this.lockKey(context) : '';
-    if (unsafe && this.unsafeLocks.has(lockKey)) {
+    var inheritedLock = unsafe && parent && parent.active && parent.lockKey === lockKey;
+    if (unsafe && !inheritedLock && this.unsafeLocks.has(lockKey)) {
       return Promise.resolve(createErrorResponse(requestId, arpError('RESOURCE_CONFLICT', 'Another unsafe ARP request is already running for this actor and conversation', {
         stage: 'execution-lock', trace: requestTrace,
       }), { trace: requestTrace }));
     }
-    if (unsafe) this.unsafeLocks.add(lockKey);
+    if (unsafe && !inheritedLock) this.unsafeLocks.add(lockKey);
     var executionStarted = false;
     var idempotencyToken = null;
     var idempotencyKey = request.idempotencyKey;
@@ -2588,6 +2607,9 @@
         return { terminalResponse: createArpResponse({ requestId: requestId, statusCode: 304, trace: requestTrace }) };
       }
       if (!idempotencyKey) return null;
+      for (var ancestor = parent; ancestor; ancestor = ancestor.parent) {
+        if (ancestor.idempotencyKey === idempotencyKey) throw arpError('RESOURCE_CONFLICT', 'Nested operation cannot reuse an active parent idempotency key');
+      }
       var prepare = typeof resolved.adapter.prepareRequest === 'function'
         ? resolved.adapter.prepareRequest(context, request, resolved.route) : null;
       return Promise.resolve(prepare).then(function () {
@@ -2611,8 +2633,21 @@
         params: Object.freeze(Object.assign({}, resolved.params)),
         routeTemplate: resolved.route.template,
       }));
-      return Promise.resolve(handler.call(resolved.adapter, normalizeContext(context).raw, adapterRequest)).then(function (value) {
+      var handlerContext = Object.assign({}, normalizeContext(context).raw);
+      var invocation = { active: true, accepting: true, lockKey: unsafe ? lockKey : parent && parent.lockKey,
+        queue: Promise.resolve(), parent: parent, depth: parent ? parent.depth + 1 : 0, idempotencyKey: idempotencyKey };
+      router.executingContexts.set(handlerContext, invocation);
+      router.executingInvocations.add(invocation);
+      return Promise.resolve().then(function () {
+        return handler.call(resolved.adapter, handlerContext, adapterRequest);
+      }).then(function (value) {
         return { adapterResult: normalizeAdapterResult(method, value) };
+      }).finally(async function () {
+        invocation.accepting = false;
+        await invocation.queue;
+        invocation.active = false;
+        router.executingContexts.delete(handlerContext);
+        router.executingInvocations.delete(invocation);
       });
     }).then(function (stage) {
       if (stage.terminalResponse) return stage.terminalResponse;
@@ -2672,7 +2707,7 @@
       });
       return finish(response);
     }).finally(function () {
-      if (unsafe) router.unsafeLocks.delete(lockKey);
+      if (unsafe && !inheritedLock) router.unsafeLocks.delete(lockKey);
     });
   };
 

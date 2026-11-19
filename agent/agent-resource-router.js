@@ -128,6 +128,7 @@
       missingDomains: missing,
       optionsIntrospector: optionsIntrospector,
       dispatch: function (method, input, context) { return router.dispatch(method, input, context); },
+      dispatchNested: function (method, input, context, signal) { return router.dispatchNested(method, input, context, signal); },
       beginPageToolBatch: function (context) {
         return adapters.page && typeof adapters.page.beginToolBatch === 'function'
           ? adapters.page.beginToolBatch(context || {}) : Promise.resolve();

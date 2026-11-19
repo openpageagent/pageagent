@@ -14,6 +14,7 @@
     "zod": "4.4.3"
   },
   "dependencies": {
+    "@cordisjs/core": "3.18.1",
     "croner": "10.0.1",
     "dompurify": "3.4.15",
     "marked": "14.0.0",

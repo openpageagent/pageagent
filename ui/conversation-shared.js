@@ -632,12 +632,15 @@
     var text = eventText(event);
     var reasoningEvent = event.kind === 'reasoning';
     var summary = reasoningEvent ? '' : compactEventSummary(event);
-    var detailHtml = eventDetailHtml(event);
+    // 文本输出也保留正文是否存在的信息，沿用下方的默认折叠判断。
+    var detailHtml = options.format === 'text' ? text : eventDetailHtml(event);
     var eventStatus = event.detail && event.detail.status || event.status || '';
     var toolEvent = isToolEvent(event);
     var codeValue = toolEvent ? toolEventCodeValue(event) : undefined;
     var normalizedStatus = String(eventStatus).trim().toLowerCase();
     var renderOptions = {
+      format: options.format,
+      toolEvent: toolEvent,
       kind: event.kind || 'info',
       title: eventTitle(event),
       text: text,

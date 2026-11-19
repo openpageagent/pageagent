@@ -612,21 +612,24 @@
     var metadata = '使用 ' + (item.useCount || 0) + ' 次 · 更新 ' + fmtTime(item.updatedAt);
     var badges = '<span class="badge">' + esc(item.typeLabel || TYPE_LABELS[item.type] || item.type || '知识') + '</span>'
       + '<span class="badge">' + esc(item.sourceLabel || SOURCE_LABELS[sourceKind] || sourceKind) + '</span>';
-    if (item.pinned) badges += '<span class="badge on">置顶</span>';
-    if (item.archived) badges += '<span class="badge">归档</span>';
+    var statuses = '';
+    if (item.pinned) statuses += '<span class="badge on">置顶</span>';
+    if (item.archived) statuses += '<span class="badge">归档</span>';
     if (item.verificationState) {
       var danger = item.verificationState === 'stale' || item.verificationState === 'rejected';
-      badges += '<span class="badge' + (item.verificationState === 'verified' ? ' on' : (danger ? ' danger' : '')) + '">' + esc(item.verificationState) + '</span>';
+      statuses += '<span class="badge' + (item.verificationState === 'verified' ? ' on' : (danger ? ' danger' : '')) + '">' + esc(item.verificationState) + '</span>';
     }
     return '<div class="item-card knowledge-card' + (knowledgeDraft && knowledgeDraft.id === item.id ? ' selected' : '') + '" role="button" tabindex="0" data-knowledge-action="edit" data-id="' + esc(item.id) + '">'
       + (!readonly ? '<input type="checkbox" data-knowledge-select="' + esc(item.id) + '" aria-label="选择 ' + esc(item.title || item.id) + '"' + (selectedKnowledge.has(item.id) ? ' checked' : '') + '>' : '')
       + '<div class="knowledge-card-main">'
       + '<span class="item-title" title="' + esc(title) + '">' + esc(title) + '</span>'
+      + badges
       + '<span class="item-sub" title="' + esc(summary) + '">' + esc(summary) + '</span>'
       + '<span class="knowledge-meta" title="' + esc(metadata) + '">' + esc(metadata) + '</span>'
-      + '</div>' + badges + deps.itemIdHtml(item.id)
+      + '</div><span class="item-card-end">' + deps.itemIdHtml(item.id)
       + '<button class="btn-small btn-danger-outline" data-knowledge-action="delete" data-id="' + esc(item.id) + '"' + (readonly ? ' disabled' : '') + '>删除</button>'
-      + '</div>';
+      + statuses
+      + '</span></div>';
   }
 
   function captureKnowledgeDraft() {
@@ -707,16 +710,16 @@
       + (!readonly ? '<input type="checkbox" data-skill-select="' + esc(item.id) + '" aria-label="选择 ' + esc(item.name || item.id) + '"' + (selectedSkills.has(item.id) ? ' checked' : '') + '>' : '')
       + '<div class="knowledge-card-main">'
       + '<span class="item-title" title="' + esc(title) + '">' + esc(title) + '</span>'
+      + (builtin ? '<span class="badge builtin">内置</span>' : '<span class="badge">用户</span>')
       + '<span class="item-sub" title="' + esc(description) + '">' + esc(description) + '</span>'
       + '<span class="knowledge-meta" title="' + esc(metadata) + '">' + esc(metadata) + '</span>'
       + '</div>'
-      + (builtin ? '<span class="badge builtin">内置</span>' : '<span class="badge">用户</span>')
-      + (item.enabled === false ? '<span class="badge">停用</span>' : '')
-      + (item.archived ? '<span class="badge">归档</span>' : '')
-      + deps.itemIdHtml(item.id)
+      + '<span class="item-card-end">' + deps.itemIdHtml(item.id)
       + (!item.archived && !readonly ? '<button class="btn-small btn-danger-outline" data-skill-action="archive" data-id="' + esc(item.id) + '">归档</button>' : '')
       + (!readonly ? '<button class="btn-small btn-danger-outline" data-skill-action="delete" data-id="' + esc(item.id) + '">删除</button>' : '')
-      + '</div>';
+      + (item.enabled === false ? '<span class="badge">停用</span>' : '')
+      + (item.archived ? '<span class="badge">归档</span>' : '')
+      + '</span></div>';
   }
 
   function captureSkillDraft() {
@@ -1178,6 +1181,7 @@
     if (!mcpDraft) return '';
     var item = mcpDraft;
     var existing = !!item.id;
+    var savedServer = viewState.mcpServers.find(function (server) { return server.id === item.id; });
     var auth = item.auth || {};
     return '<div class="editor knowledge-mcp-editor">'
       + '<h3>' + (existing ? '编辑 HTTP MCP 服务器' : '添加 HTTP MCP 服务器') + '</h3>'
@@ -1197,7 +1201,12 @@
       + (existing ? '<label class="switch-label"><input type="checkbox" id="http-mcp-clear-token"' + (item._clearBearerToken ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">清除 Token</span></label><label class="switch-label"><input type="checkbox" id="http-mcp-clear-headers"' + (item._clearHeaders ? ' checked' : '') + '><span class="switch-slider"></span><span class="switch-text">清除 Header</span></label>' : '<input type="checkbox" id="http-mcp-clear-token" hidden><input type="checkbox" id="http-mcp-clear-headers" hidden>')
       + '</div>'
       + '<p class="form-help">Cookie 默认隔离。开启后尝试复用当前浏览器登录态，需服务端支持 Cookie 认证并符合浏览器 Cookie 策略。仅使用 Cookie 时，请清除已保存的 Token 和 Authorization Header。</p>'
-      + '<div class="editor-actions"><button class="btn-primary" data-http-mcp-action="save">保存服务器</button><button class="btn-secondary" data-http-mcp-action="cancel">取消</button></div>'
+      + '<div class="editor-actions"><button class="btn-primary" data-http-mcp-action="save">保存</button><button class="btn-secondary" data-http-mcp-action="cancel">取消</button>'
+      + (existing ? '<span class="knowledge-mcp-actions">'
+        + '<button class="btn-secondary" data-http-mcp-action="test" data-id="' + esc(item.id) + '" data-mcp-operation="' + esc(operationKey('mcp-test', item.id)) + '" data-server-disabled="' + (!savedServer || !savedServer.enabled) + '" title="使用已保存的配置检查连接">检查连接</button>'
+        + '<button class="btn-secondary" data-http-mcp-action="discover" data-id="' + esc(item.id) + '" data-mcp-operation="' + esc(operationKey('mcp-discovery', item.id)) + '" data-server-disabled="' + (!savedServer || !savedServer.enabled) + '" title="使用已保存的配置刷新工具">刷新工具</button>'
+        + '</span>' : '')
+      + '</div>'
       + '</div>';
   }
 
@@ -1220,23 +1229,20 @@
   }
 
   function renderMcpServerCard(server) {
-    var lastStatus = server.lastStatus === 'ok' ? '可用' : (server.lastStatus === 'error' ? '异常' : '未检查');
-    var statusClass = server.lastStatus === 'ok' ? ' on' : (server.lastStatus === 'error' ? ' danger' : '');
+    var lastStatus = !server.enabled ? '停用' : server.lastStatus === 'ok' ? '可用' : (server.lastStatus === 'error' ? '异常' : '未检查');
+    var statusClass = !server.enabled ? '' : server.lastStatus === 'ok' ? ' on' : (server.lastStatus === 'error' ? ' danger' : '');
     var title = server.name || server.id;
     var metadata = '工具 ' + (server.toolCount || 0) + ' 个 · 最近更新 ' + fmtTime(server.syncedAt || server.updatedAt)
-      + (server.lastError ? ' · ' + server.lastError : '');
+      + (server.enabled && server.lastError ? ' · ' + server.lastError : '');
     return '<div class="item-card knowledge-mcp-card' + (mcpDraft && mcpDraft.id === server.id ? ' selected' : '') + '" role="button" tabindex="0" data-http-mcp-action="edit" data-id="' + esc(server.id) + '">'
       + '<div class="knowledge-card-main"><span class="item-title" title="' + esc(title) + '">' + esc(title) + '</span>'
       + '<span class="item-sub" title="' + esc(server.url || '') + '">' + esc(server.url || '') + '</span>'
       + '<span class="knowledge-meta" title="' + esc(metadata) + '">' + esc(metadata) + '</span></div>'
-      + '<span class="badge' + statusClass + '">' + esc(lastStatus) + '</span>'
-      + (server.enabled ? '' : '<span class="badge">停用</span>')
-      + deps.itemIdHtml(server.id)
-      + '<button class="btn-small" data-http-mcp-action="test" data-id="' + esc(server.id) + '" data-mcp-operation="' + esc(operationKey('mcp-test', server.id)) + '" data-server-disabled="' + !server.enabled + '">检查连接</button>'
-      + '<button class="btn-small" data-http-mcp-action="discover" data-id="' + esc(server.id) + '" data-mcp-operation="' + esc(operationKey('mcp-discovery', server.id)) + '" data-server-disabled="' + !server.enabled + '">刷新工具</button>'
+      + '<span class="item-card-end">' + deps.itemIdHtml(server.id)
       + '<button class="btn-small" data-http-mcp-action="tools" data-id="' + esc(server.id) + '">查看工具</button>'
       + '<button class="btn-small btn-danger-outline" data-http-mcp-action="delete" data-id="' + esc(server.id) + '">删除</button>'
-      + '</div>';
+      + '<span class="badge' + statusClass + '">' + esc(lastStatus) + '</span>'
+      + '</span></div>';
   }
 
   function captureToolCallDraft() {

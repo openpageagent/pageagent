@@ -230,7 +230,7 @@
     return (bytes / (1024 * 1024)).toFixed(1) + ' MiB';
   }
 
-  function renderAttachments(attachments, topicId, referencesOnly) {
+  function renderAttachments(attachments, topicId, referencesOnly, format) {
     function acquisitionLabel(value) {
       var labels = {
         'page-resource-cache': '页面缓存',
@@ -249,6 +249,7 @@
     return (attachments || []).map(function (item) {
       if (referencesOnly) {
         var label = item.name || item.alt || '图片';
+        if (format === 'text') return label;
         return '<span class="conversation-user-image-reference" data-image-artifact-reference data-image-artifact="' + esc(item.artifactUri) + '" data-topic-id="' + esc(topicId || '') + '">'
           + '<button type="button" data-image-artifact-action="open" title="查看图片：' + esc(label) + '">' + esc(label) + '</button>'
           + '<span class="conversation-image-placeholder" data-image-artifact-placeholder hidden></span></span>';
@@ -257,6 +258,7 @@
       var dimensions = Number(item.width) > 0 && Number(item.height) > 0
         ? Math.round(Number(item.width)) + '×' + Math.round(Number(item.height)) : '';
       var meta = [item.name, representation, acquisitionLabel(item.acquisitionSource), dimensions, formatBytes(item.byteLength)].filter(Boolean).join(' · ');
+      if (format === 'text') return meta || representation;
       return '<figure class="conversation-image-attachment" data-image-artifact="' + esc(item.artifactUri) + '" data-topic-id="' + esc(topicId || '') + '">'
         + '<button type="button" class="conversation-image-preview" data-image-artifact-action="open" title="查看大图">'
         + '<img data-image-artifact-img alt="' + esc(item.alt || '页面图片') + '" hidden>'
@@ -264,7 +266,7 @@
         + '<figcaption><span>' + esc(meta || representation) + '</span>'
         + '<button type="button" data-image-artifact-action="download" title="下载图片">下载</button></figcaption>'
         + '</figure>';
-    }).join('');
+    }).join(format === 'text' ? '\n' : '');
   }
 
   function renderEvent(event, index, options) {
@@ -311,19 +313,27 @@
     // 内容格式与事件语义是两条独立维度。工具结果可能因验证状态被标成
     // warn/error，用户或助手也可能直接返回 JSON；这些内容都应使用同一
     // 个可滚动代码视图，不能由 kind 决定是否按 JSON 展示。
-    var codeHtml = renderJsonCode(codeValue === undefined ? text : codeValue);
+    var codeHtml = options.format === 'text' ? jsonCodeText(codeValue === undefined ? text : codeValue)
+      : renderJsonCode(codeValue === undefined ? text : codeValue);
     var detailHtml = codeHtml || optionValue(options, 'detailHtml', text
-      ? (kind === 'error' ? '<p class="conversation-error-text">' + esc(text) + '</p>' : renderMarkdown(text))
+      ? (options.format === 'text' ? text : kind === 'error' ? '<p class="conversation-error-text">' + esc(text) + '</p>' : renderMarkdown(text))
       : '');
     if (executionSummary) detailHtml = '<p class="conversation-event-summary">' + esc(executionSummary) + '</p>' + detailHtml;
-    var attachmentHtml = renderAttachments(eventAttachments(event, options), optionValue(options, 'topicId', event.topicId || ''), kind === 'user');
-    var application = options.applicationLinks === false ? null : applicationResult(event.result || event.detail || event.text);
-    if (options.applicationLinks !== false && !application && event.text) application = applicationResult(event.text);
+    var attachmentHtml = renderAttachments(eventAttachments(event, options), optionValue(options, 'topicId', event.topicId || ''), kind === 'user', options.format);
     if (attachmentHtml) detailHtml += kind === 'user'
       ? '<div class="conversation-user-image-references"><span>引用图片</span>' + attachmentHtml + '</div>'
       : '<div class="conversation-image-attachments">' + attachmentHtml + '</div>';
     var collapsible = optionValue(options, 'collapsible', (kind === 'tool' || kind === 'tool-result'
       || kind === 'llm-request' || kind === 'llm-response') && !!(summary || detailHtml) && !attachmentHtml);
+    // 平台只发送默认可见内容；折叠详情、工具 JSON 和执行摘要留在页面中。
+    if (options.format === 'text') {
+      if (hasElapsedDuration) title += '（' + formatElapsedDuration(elapsedDurationMs) + '）';
+      var showText = !collapsible && options.toolEvent !== true;
+      return [title + (status ? ' · ' + status : ''), showText ? text : '',
+        showText && attachmentHtml ? (kind === 'user' ? '引用图片\n' : '') + attachmentHtml : ''].filter(Boolean).join('\n');
+    }
+    var application = options.applicationLinks === false ? null : applicationResult(event.result || event.detail || event.text);
+    if (options.applicationLinks !== false && !application && event.text) application = applicationResult(event.text);
     var attrs = ' data-conversation-event-index="' + esc(index) + '"'
       + (key ? ' data-conversation-event-key="' + esc(key) + '"' : '');
     var actions = '<span class="conversation-event-actions">'

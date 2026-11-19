@@ -1,12 +1,32 @@
 # Page Agent MCP 服务
 
-MCP Server 提供服务端本地能力和 ARP 客户端通信。外部 Agent 通过 HTTP 使用本地能力或调用插件；插件通过配对的 WebSocket 使用服务端能力、发送邮件，也可调用同一服务端的其他客户端。支持多个服务端和多个客户端连接。
+MCP Server 提供服务端本地能力和 ARP 客户端通信。外部 Agent 通过 HTTP 使用本地能力或调用扩展；扩展通过配对的 WebSocket 使用服务端能力、发送邮件，也可调用同一服务端的其他客户端。支持多个服务端和多个客户端连接。
 
-连接的「权限」控制经此连接进入当前插件的远程操作，适用于 HTTP Agent 和客户端转发。读取／查询、写入、执行默认开启，删除默认关闭。
+连接的「权限」控制经此连接进入当前扩展的远程操作，适用于 HTTP Agent 和客户端转发。读取／查询、写入、执行默认开启，删除默认关闭。
 
-经插件转发的文件写入、删除分别需要远程「创建／修改」「删除」和目录写入权限；Bash 需要远程与目录的执行权限。远程权限按接口操作分类，不判断页面点击、脚本或 Bash 的业务含义。
+经扩展转发的文件写入、删除分别需要远程「创建／修改」「删除」和目录写入权限；Bash 需要远程与目录的执行权限。远程权限按接口操作分类，不判断页面点击、脚本或 Bash 的业务含义。
 
 服务需 Node.js 22.16.0 或更高版本。外部客户端使用 Streamable HTTP，不支持 stdio。
+
+服务端可独立管理飞书、钉钉、QQ、企业微信、企业微信智能机器人及邮件账号，收发消息无需连接扩展。账号配置与浏览器触发规则见[平台消息插件](./Page-Agent-15-平台消息插件.md)。
+
+## 独立配置页
+
+服务启动后，访问 `http://127.0.0.1:9998/config`，使用 HTTP Bearer 令牌登录，可管理账号和客户端授权。根路径 `/` 展示同一页面，与 `/mcp` 共用 HTTP 端口；自定义 `--http-port` 时按实际端口访问。
+
+配置页包含「账号管理」「连接配置」「运行状态」「审计日志」，分别用于账号与授权管理、HTTP 接入与配对、客户端与队列状态、审计查询。运行状态可每 5 秒刷新；审计展示最近 4 MB 中最多 100 条记录的元数据，可按关键词、级别、时间范围、客户端 ID 和事件组合筛选当前加载的记录，完整历史保存在状态目录 `audit` 中。日志保持单行，超长记录可点击「查看」阅读完整日志文本。
+
+账号、客户端和会话统一展示名称、标签、状态、ID 与操作按钮；仅操作按钮打开抽屉，复制和保存等操作通过底部浮层提示结果。连接日志独立保留本次服务运行最近 100 条连接状态，重启后清空；审计记录从磁盘读取操作、认证与授权行为。账号「配置」可设置固定回复，「消息」可查看收信及回复结果并手动回复；流程／对话触发规则在扩展「插件管理 → 平台消息 → 配置」中填写。
+
+在「连接配置」生成配对码，粘贴到扩展「MCP 服务器连接 → 一键配对」，确认地址后配对并开启连接。配对码有效期 5 分钟，仅用一次，服务重启后失效。
+
+重置 HTTP 令牌会使旧令牌和 HTTP 会话失效，需保存新令牌并更新外部客户端；WebSocket 配对不变。启动配置指定的令牌需修改部署配置后重启。
+
+扩展「连接配置 → 服务端独立配置」可填写地址并打开页面。已就绪连接的“打开配置页”按钮使用 WebSocket 地址的主机名及默认 HTTP 端口 `9998`，`ws` 对应 `http`，`wss` 对应 `https`；自定义端口或反向代理地址需在独立入口填写。
+
+HTTP 令牌保存在当前标签页的会话存储（sessionStorage）中，刷新页面后自动恢复登录；退出或凭据失效时清除。本页重置令牌后同步保存新令牌。令牌来源见[HTTP API](#http-api)。通过配对扩展的对话管理账号，见[配置账号](./Page-Agent-15-平台消息插件.md#配置账号)。
+
+局域网访问需绑定可访问的地址。HTTPS 反向代理需转发 `/config`、`/config/*`、`/api/config/*` 和 `/mcp`，并将公开页面来源（如 `https://mcp.example.com`）加入 `PAGE_AGENT_HTTP_CORS_ORIGINS`。`/api/config/*` 只接受 HTTP 操作者令牌，不向扩展 ARP 暴露。
 
 ## MCP 工具
 
@@ -16,9 +36,11 @@ MCP 提供 `GET`、`POST`、`PUT`、`PATCH`、`DELETE`、`OPTIONS` 六个方法�
 
 HTTP Bearer 代表服务端操作者；WebSocket 身份由配对认证确定。客户端不能通过自报身份或权限扩大授权。
 
+平台消息支持 MCP 资源订阅和 HTTP pull／ack 消费，见[消息订阅与消费](./Page-Agent-15-平台消息插件.md#标准-mcp-订阅)。MCP JSON 请求上限为 32 MiB，`/api/bots` 的 JSON 请求上限为 2 MiB。
+
 ### 服务端本地能力
 
-HTTP 本地能力独立于插件，无需客户端 ID 或插件在线。以下为通过 `/mcp` 方法工具访问的 ARP 路径：
+HTTP 本地能力独立于扩展，无需客户端 ID 或扩展在线。以下为通过 `/mcp` 方法工具访问的 ARP 路径：
 
 | ARP 调用 | 用途 |
 | --- | --- |
@@ -27,9 +49,9 @@ HTTP 本地能力独立于插件，无需客户端 ID 或插件在线。以下�
 | `GET /local/desktop` | 平台支持的桌面动作 |
 | `POST /local/{operation}` | 文件、Bash 或桌面操作 |
 
-HTTP `/local` 始终指向当前服务端，不受插件绑定影响。文件操作限定在启动工作目录内；Bash 从该目录启动，按服务端进程权限执行。HTTP Bearer 可使用本地及平台支持的桌面能力，不依赖插件授权。
+HTTP `/local` 始终指向当前服务端，不受扩展绑定影响。文件操作限定在启动工作目录内；Bash 从该目录启动，按服务端进程权限执行。HTTP Bearer 可使用本地及平台支持的桌面能力，不依赖扩展授权。
 
-本地操作使用 `/local` 返回的链接，通过具体路径的 `OPTIONS` 查询参数，无需 `connectionId` 或 `workspaceId`。`/clients/{clientId}/arp` 用于调用插件资源。
+本地操作使用 `/local` 返回的链接，通过具体路径的 `OPTIONS` 查询参数，无需 `connectionId` 或 `workspaceId`。`/clients/{clientId}/arp` 用于调用扩展资源。
 
 ### 客户端通信
 
@@ -37,29 +59,29 @@ HTTP `/local` 始终指向当前服务端，不受插件绑定影响。文件操
 | --- | --- |
 | `GET /clients` | HTTP 查询服务端全部已连接客户端及总数 |
 | `POST /clients/{clientId}/arp` | HTTP 调用指定客户端 |
-| `GET /connections/{connectionId}/clients` | 插件查询服务端全部已连接客户端及总数 |
-| `POST /connections/{connectionId}/clients/{clientId}/arp` | 插件调用指定客户端 |
+| `GET /connections/{connectionId}/clients` | 扩展查询服务端全部已连接客户端及总数 |
+| `POST /connections/{connectionId}/clients/{clientId}/arp` | 扩展调用指定客户端 |
 
-转发请求体包含目标方法 `method` 和 ARP 参数 `request`；返回链接属于目标客户端。`connectionId` 是本插件保存的服务端连接 ID，`clientId` 是目标客户端 ID。插件查询需 `connections.read`，调用需 `connections.execute`。
+转发请求体包含目标方法 `method` 和 ARP 参数 `request`；返回链接属于目标客户端。`connectionId` 是本扩展保存的服务端连接 ID，`clientId` 是目标客户端 ID。扩展查询需 `connections.read`，调用需 `connections.execute`。
 
 连接与本地能力响应中的 `clients` 链接提供列表入口。列表含当前客户端，`total` 为服务端已连接客户端总数；`isSelf` 标识自己，自身不提供调用链接。默认助手具备连接查询权限。
 
-服务端根据认证会话确认来源并拒绝自调用（`FORBIDDEN / SELF_CALL_FORBIDDEN`）。转发请求不能在目标插件中继续转发；来源取消或断线会取消请求，结果未知时不自动重放。插件本地操作仍受连接的目录与桌面授权约束。
+服务端根据认证会话确认来源并拒绝自调用（`FORBIDDEN / SELF_CALL_FORBIDDEN`）。转发请求不能在目标扩展中继续转发；来源取消或断线会取消请求，结果未知时不自动重放。扩展本地操作仍受连接的目录与桌面授权约束。
 
-### 插件版本与更新
+### 扩展版本与更新
 
-`GET /clients` 的 `version` 为插件当前运行版本。以下路径通过 `POST /clients/{clientId}/arp` 转发调用：
+`GET /clients` 的 `version` 为扩展当前运行版本。以下路径通过 `POST /clients/{clientId}/arp` 转发调用：
 
 | ARP 调用 | 用途 |
 | --- | --- |
 | `GET /config/extension` | 查询当前版本、最新版本、更新状态及目录授权情况 |
-| `POST /config/extension/updates` | 更新插件；`body.version` 使用查询返回的 `latestVersion` |
+| `POST /config/extension/updates` | 更新扩展；`body.version` 使用查询返回的 `latestVersion` |
 
 `updateAvailable` 表示有新版本，`canUpdate` 表示当前可更新；不可更新时返回 `reason` 和 `message`。版本检查失败时，`latestVersion`、`updateAvailable` 为 `null`。
 
-查询需连接开启读取权限，更新需开启写入权限。插件目录须在目标插件的「最新版本」页选择并授权，位于插件所在机器。授权失效时返回 `DIRECTORY_PERMISSION_REQUIRED`，需在配置页重新授权。
+查询需连接开启读取权限，更新需开启写入权限。扩展目录须在目标扩展的「最新版本」页选择并授权，位于扩展所在机器。授权失效时返回 `DIRECTORY_PERMISSION_REQUIRED`，需在配置页重新授权。
 
-更新成功返回 `appliedVersion` 和 `reloadRequired: true`，需在「最新版本」页重新加载后生效。重新加载前再次更新返回 `RELOAD_REQUIRED`；请求结果未知时，应先查询状态。
+更新成功返回 `appliedVersion` 和 `reloadRequired: true`，需在「最新版本」页重新加载扩展后生效。重新加载前再次更新返回 `RELOAD_REQUIRED`；请求结果未知时，应先查询状态。
 
 ## 连接与目录配置
 
@@ -261,7 +283,7 @@ Bash 非零退出码、超时或取消按失败处理，不写入成功输出变
 
 ### 邮件
 
-邮件使用唯一 SMTP 配置，由 `connectionId` 指定发送服务端，不自动切换。发送方式与回执见[邮件通知](./Page-Agent-12-邮件通知.md)。
+邮件使用服务端账号，扩展通过 `connectionId` 与 `accountId` 指定发送目标，不自动切换。HTTP MCP 可独立调用 `POST /bots/accounts/{id}/mail`。配置、发送参数与回执见[邮件通知](./Page-Agent-12-邮件通知.md)。
 
 ## 浏览器目标
 
@@ -350,7 +372,7 @@ Docker 文件和部署说明统一位于 `docker/`。开发时在工作区根目
 - 日常更新：`./docker/build.sh app`。
 - 两种目录使用相同命令，宿主机无需安装 Node.js，也无需先生成发布包。
 
-镜像分层、首次配对、HTTPS、环境变量、更新与数据保留方式见 [Docker、同步和备份](../docker/README.md)。容器同时运行 MCP Server、Chromium 和插件，支持启动自动同步；各环境均可手动同步和备份。
+镜像分层、首次配对、HTTPS、环境变量、更新与数据保留方式见 [Docker、同步和备份](../docker/README.md)。容器同时运行 MCP Server、Chromium 和扩展，支持启动自动同步；各环境均可手动同步和备份。
 
 ## 配对与 WebSocket 会话
 
@@ -438,9 +460,9 @@ HTTP 认证只响应匹配的代理认证挑战；`/system-settings` 响应不�
 
 `POST /mcp` 的请求体最多 2 MiB，需设置 `Content-Type: application/json`，且 `Accept` 同时包含 `application/json` 和 `text/event-stream`。客户端先完成 `initialize` 与 `notifications/initialized`，后续请求携带返回的 `Mcp-Session-Id`；若携带 `MCP-Protocol-Version`，须与会话协商版本一致。
 
-本地能力无需客户端 ID。插件请求可通过 `/clients/{clientId}/arp` 指定目标，也可使用 URL 参数 `mcpClientId`、请求头 `X-Page-Agent-MCP-Client-Id` 或工具参数 `mcpClientId`。各处 ID 必须一致；会话绑定后不能更换目标，多客户端调用使用未绑定会话。
+本地能力无需客户端 ID。扩展请求可通过 `/clients/{clientId}/arp` 指定目标，也可使用 URL 参数 `mcpClientId`、请求头 `X-Page-Agent-MCP-Client-Id` 或工具参数 `mcpClientId`。各处 ID 必须一致；会话绑定后不能更换目标，多客户端调用使用未绑定会话。
 
-HTTP 和 WebSocket 转发到插件的请求可读取资源、操作页面／浏览器及使用当前服务端已授权的本地能力；不能创建、修改或启动 Flow、流程组、脚本、对话、定时任务或应用动作，也不能转发到其他服务端执行本地操作。
+HTTP 和 WebSocket 转发到扩展的请求可读取资源、操作页面／浏览器及使用当前服务端已授权的本地能力；不能创建、修改或启动 Flow、流程组、脚本、对话、定时任务或应用动作，也不能转发到其他服务端执行本地操作。
 
 服务最多支持 64 个 HTTP 会话；无活动请求且空闲 30 分钟后会话过期。每会话最多 8 个并发调用，全服务最多 32 个，超限返回 429。会话过期或服务重启后需重新连接。
 
@@ -498,7 +520,7 @@ Bash 非零退出视为失败，保留退出码及输出。失败、超时或取
 
 ## 服务端审计
 
-审计保存在 `<state-dir>/audit/`，记录连接和配对的时间、客户端身份，以及实际权限变更。握手、重复提交同一版权限、协议心跳和配置状态轮询不单独记录。文件、命令、桌面、邮件、环境查询和转发请求均依赖审计可用。
+审计保存在 `<state-dir>/audit/`，记录认证、配对、客户端身份，以及实际权限变更和操作执行。连接建立、就绪和断开属于运行时连接日志；旧版落盘的断开记录保留在原文件中，不再混入页面审计列表。握手、重复提交同一版权限、协议心跳和配置状态轮询不单独记录。文件、命令、桌面、邮件、环境查询和转发请求均依赖审计可用。
 
 执行审计记录执行前的意图和最终结果，通过会话和请求 ID 关联。Bash 命令默认明文记录一次，包含命令中的路径和参数；使用 `--audit-command-content hash` 仅记录摘要。其他本地操作只记录参数的 SHA-256 摘要和字节数，文件路径和转发 URI 也仅记录摘要；文件正文、搜索词、键盘和剪贴板输入、操作返回内容、邮件内容和认证凭据不明文写入。
 
@@ -534,7 +556,7 @@ HTTP Bearer 随 `auth.json` 迁移，客户端可继续使用原令牌；新部�
 
 ### 扩展连接备份
 
-连接备份包含地址、别名、服务端身份、远程操作权限、目录授权和引用，不含配对凭据、客户端身份或运行会话。SMTP 密码规则见[邮件备份](./Page-Agent-12-邮件通知.md#配置备份与恢复)。
+连接备份包含地址、别名、服务端身份、远程操作权限、目录授权和引用，不含配对凭据、客户端身份或运行会话。邮件仅备份账号引用，见[邮件备份](./Page-Agent-12-邮件通知.md#配置备份与恢复)。
 
 导入连接（含覆盖）均禁用并清除本机凭据，需重新配对。目录权限须与服务端实际路径核对；缺少有效路径记录或路径变化时需重新授权。应用附带的连接遵循相同规则。
 

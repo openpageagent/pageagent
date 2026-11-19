@@ -53,7 +53,7 @@
     if (!item) throw root.AppContract.error('RESOURCE_NOT_FOUND', 'UI 组件不存在: ' + id);
     var result = { id: id, apiVersion: 1, summary: item.summary, api: item.api, usage: item.usage, example: item.example,
       lifecycle: 'UI 仅在应用文档使用，纯展示不需要 SDK 业务权限；不因暂时断线销毁输入，页面卸载统一清理。',
-      theme: '沿用应用主题变量及回退值；--code-height、--message-list-height 控制各自高度。组件实现随插件提供，应用主题保持保存的快照。' };
+      theme: '沿用应用主题变量及回退值；--code-height、--message-list-height 控制各自高度。组件实现随扩展提供，应用主题保持保存的快照。' };
     if (id === 'icons') result.icons = Object.keys(root.AppContract.ICONS);
     return JSON.parse(JSON.stringify(result));
   }

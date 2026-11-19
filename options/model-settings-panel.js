@@ -166,11 +166,11 @@
           + '" data-id="' + esc(service.id) + '" aria-expanded="' + expanded + '" aria-controls="model-service-editor"'
           + (loading || mutating ? ' aria-disabled="true"' : '') + '>'
           + '<span class="connection-summary"><span class="item-title" title="' + esc(displayName(service)) + '">' + esc(displayName(service)) + '</span>'
-          + '<span class="item-sub" title="' + esc(description) + '">' + esc(description) + '</span>'
-          + deps.itemIdHtml(service.id) + '</span>'
           + (service.id === defaultServiceId ? '<span class="badge">全局默认</span>' : '')
+          + '<span class="item-sub" title="' + esc(description) + '">' + esc(description) + '</span></span>'
+          + '<span class="item-card-end">' + deps.itemIdHtml(service.id)
           + '<span class="badge' + (configured ? ' on' : '') + '">' + (configured ? '已配置' : '待配置') + '</span>'
-          + '</div>';
+          + '</span></div>';
       }).join('') || (modelEditorOpen && !loading && !loadError ? ''
         : '<div class="placeholder">' + esc(loading ? '正在加载模型服务…' : loadError || '还没有模型服务，点击「新增服务」配置') + '</div>');
       if (focusedId) {

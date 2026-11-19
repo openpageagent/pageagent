@@ -122,7 +122,7 @@
       : function () { return new AbortController(); };
     var authorizeInteractionSurface = typeof options.authorizeInteractionSurface === 'function'
       ? options.authorizeInteractionSurface
-      : function (surface) { return !!(surface && ['options', 'page'].indexOf(surface.type) !== -1); };
+      : function (surface) { return !!(surface && ['options', 'page', 'messaging'].indexOf(surface.type) !== -1); };
     var faultInjector = typeof options.faultInjector === 'function' ? options.faultInjector : null;
     var recordingAttachments = options.recordingAttachments || null;
     var endPageGeneration = typeof options.endPageGeneration === 'function' ? options.endPageGeneration : null;

@@ -26,6 +26,10 @@
         tabId: 0, windowId: 0, incognito: sender.incognito === true,
       };
     }
+    if (sender.internalSurface === 'messaging') {
+      return { type: 'messaging', instanceId: text(sender.instanceId),
+        tabId: 0, windowId: 0, incognito: sender.incognito === true };
+    }
     if (sender.internalSurface === 'mcp') {
       var mcpSurface = {
         type: 'mcp', instanceId: text(sender.instanceId) || 'mcp-transport',

@@ -21,8 +21,8 @@
   var API_VERSION = 1;
   var arp = deps.arp;
   var projection = deps.projection;
-  var CORE_PERMISSION_SCOPE = deps.runtimePermissions.permissions.filter(function (permission) { return permission !== 'local.execute'; });
-  var CORE_ROOT_METHODS = Object.freeze(Object.assign({}, deps.runtimePermissions.rootMethods, {
+  var CORE_PERMISSION_SCOPE = deps.runtimePermissions.conversation.permissions.filter(function (permission) { return permission !== 'local.execute'; });
+  var CORE_ROOT_METHODS = Object.freeze(Object.assign({}, deps.runtimePermissions.conversation.rootMethods, {
     // /current is an internal, permission-free ground-truth clock resource;
     // it is intentionally not an editable Assistant resource root.
     '/current': Object.freeze(['GET', 'OPTIONS']),
@@ -105,7 +105,7 @@
     routes.forEach(function (entry) {
       var route = entry && entry.route;
       if (!route) return;
-      var rootUri = '/' + route.root;
+      var rootUri = route.root.startsWith('plugin-') ? '/plugins' : '/' + route.root;
       var methods = catalog[rootUri] || (catalog[rootUri] = Object.create(null));
       Object.keys(route.methods || {}).forEach(function (method) {
         var permissions = methods[method] || (methods[method] = []);
@@ -123,14 +123,15 @@
     var output = Object.create(null);
     Object.keys(catalog).forEach(function (rootUri) {
       var configured = roots && roots[rootUri];
+      var coreMethods = CORE_ROOT_METHODS[rootUri] || ['OPTIONS'];
       var methods = configured && Array.isArray(configured.methods)
-        ? configured.methods : (CORE_ROOT_METHODS[rootUri] || ['OPTIONS']);
+        ? configured.methods : coreMethods;
       output[rootUri] = methods.map(function (method) { return text(method).toUpperCase(); }).filter(function (method) {
         return RESOURCE_METHODS.indexOf(method) !== -1;
       });
       if (rootUri === '/recordings' && output[rootUri].indexOf('GET') === -1) output[rootUri].push('GET');
       if (output[rootUri].indexOf('OPTIONS') === -1) output[rootUri].push('OPTIONS');
-      (rootUri === '/local' ? ['GET'] : CORE_ROOT_METHODS[rootUri] || []).forEach(function (method) {
+      (rootUri === '/local' ? ['GET'] : coreMethods).forEach(function (method) {
         if (output[rootUri].indexOf(method) === -1) output[rootUri].push(method);
       });
       output[rootUri] = RESOURCE_METHODS.filter(function (method) {
@@ -151,7 +152,7 @@
     var configured = assistant && assistant.resourcePolicy && assistant.resourcePolicy.permissions;
     if (Array.isArray(configured)) {
       var explicit = Object.create(null);
-      configured.map(text).filter(Boolean).forEach(function (permission) { explicit[permission] = true; });
+      deps.runtimePermissions.normalizePluginPermissions(configured).map(text).filter(Boolean).forEach(function (permission) { explicit[permission] = true; });
       Object.keys(selected).forEach(function (permission) {
         if (!explicit[permission]) delete selected[permission];
       });
@@ -250,7 +251,8 @@
       // 由中央协议层返回精确错误和恢复信息。
       return { allowed: true };
     }
-    var rootUri = '/' + text(resolved.route && resolved.route.root);
+    var routeRoot = text(resolved.route && resolved.route.root);
+    var rootUri = routeRoot.startsWith('plugin-') ? '/plugins' : '/' + routeRoot;
     if (!policy[rootUri] || policy[rootUri].indexOf(method) === -1) {
       return denied('Assistant 策略不允许在所请求的资源根上使用此方法', {
         method: method, uri: uri, resourceRoot: rootUri,
@@ -401,9 +403,17 @@
       );
       var canReadModelService = context.permissionScope.indexOf('model-services.read') !== -1;
       var selectedResourceContextPromise = null;
+      var authorizedRoutes = router.registry.routes;
+      var authorizedRouteCount = authorizedRoutes.length;
       var scope = arp.createToolScope({
         router: router,
         contextProvider: function () {
+          // Newly registered plugin routes use the same grant in this turn.
+          if (authorizedRoutes !== router.registry.routes || authorizedRouteCount !== router.registry.routes.length) {
+            context.allowedRouteMethods = deriveAllowedRouteMethods(resourceRuntime, assistant, context.permissionScope);
+            authorizedRoutes = router.registry.routes;
+            authorizedRouteCount = authorizedRoutes.length;
+          }
           var snapshot = clone(context);
           // Keep cancellation runtime-only. The non-enumerable property is
           // available to PageResourceAdapter but cannot enter ARP payloads,

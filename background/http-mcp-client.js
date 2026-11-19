@@ -792,7 +792,7 @@
         '服务说明通过 GET /mcp-servers/{serverId} 读取；参数结构以工具目录为准，知识条目不保存副本。',
         '先 GET /mcp-servers/{serverId}/tools/{toolName} 获取当前参数定义和 schemaHash；参数不明确时 OPTIONS /mcp-servers/{serverId}/tools/{toolName}/calls。',
         '再 POST /mcp-servers/{serverId}/tools/{toolName}/calls，body 包含 arguments 和读取到的 schemaHash，可选 timeoutMs。沿回执 operationUri 用 GET 读取到 succeeded、failed 或 interrupted。',
-        '外部 Agent 经 Page Agent MCP Server 使用时，先 GET /clients 确认目标插件；以上调用及结果查询均通过 POST /clients/{clientId}/arp 转发，body 使用 method 和 request，目标路径放 request.uri，目标 POST 的参数放 request.body。');
+        '外部 Agent 经 Page Agent MCP Server 使用时，先 GET /clients 确认目标扩展；以上调用及结果查询均通过 POST /clients/{clientId}/arp 转发，body 使用 method 和 request，目标路径放 request.uri，目标 POST 的参数放 request.body。');
       return lines.join('\n');
     }
 

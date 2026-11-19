@@ -1,4 +1,4 @@
-// One SMTP account, stored separately from settings exposed to page contexts.
+// Browser account references, server SMTP validation, and shared message limits.
 (function (root, factory) {
   var api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
@@ -22,6 +22,23 @@
     resultTimeoutMs: 150000,
   });
   var ADDRESS = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
+
+  function normalizeBinding(raw) {
+    raw = raw && typeof raw === 'object' ? raw : {};
+    return { enabled: raw.enabled !== false, connectionId: String(raw.connectionId || ''), accountId: String(raw.accountId || '') };
+  }
+
+  function validateBinding(raw, allowUnconfigured) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('邮件账号引用必须是对象');
+    if (Object.keys(raw).some(function (key) { return ['enabled', 'connectionId', 'accountId'].indexOf(key) < 0; })) throw new Error('邮件凭据请在服务端配置，此处仅接受连接与账号引用');
+    if (raw.enabled !== undefined && typeof raw.enabled !== 'boolean') throw new Error('邮件通知开关必须为布尔值');
+    var config = normalizeBinding(raw);
+    ['connectionId', 'accountId'].forEach(function (key) {
+      if (allowUnconfigured && !config[key]) return;
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(config[key])) throw new Error('请选择服务端连接及邮件账号');
+    });
+    return config;
+  }
 
   function normalize(raw) {
     raw = raw && typeof raw === 'object' ? raw : {};
@@ -133,6 +150,7 @@
 
   return Object.freeze({
     SETTINGS_KEY: SETTINGS_KEY, normalize: normalize, validate: validate, recipients: recipients,
+    normalizeBinding: normalizeBinding, validateBinding: validateBinding,
     validateFlowNotification: validateFlowNotification,
     FLOW_NOTIFICATION_DEFAULTS: FLOW_NOTIFICATION_DEFAULTS,
     prepareMessage: prepareMessage, MAX_ATTACHMENT_BYTES: MAX_ATTACHMENT_BYTES, MAX_REQUEST_BYTES: MAX_REQUEST_BYTES,

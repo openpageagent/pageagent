@@ -1,6 +1,6 @@
 # Docker 部署、更新与备份
 
-每个容器以 root 运行 MCP Server、Chromium 和 Page Agent 插件，通过 Selkies 查看和操作浏览器。宿主机需安装 Docker（含 Compose）和 Bash，无需安装 Node.js。
+每个容器以 root 运行 MCP Server、Chromium 和 Page Agent 扩展，通过 Selkies 查看和操作浏览器。宿主机需安装 Docker（含 Compose）和 Bash，无需安装 Node.js。
 
 系统 locale 为 `zh_CN.UTF-8`，Chromium 界面和首选网页语言为简体中文。容器和浏览器默认使用 `Asia/Shanghai` 时区，可在 `docker/.env` 中通过 `TZ` 修改，重新创建容器后生效。中文 locale 和时区数据由基础工具层提供，更新该层需执行 `./docker/build.sh all`。
 
@@ -40,8 +40,10 @@ docker compose --env-file ./docker/.env -f ./docker/compose.yaml \
 打开 **<https://localhost:10000/>** 查看浏览器。
 
 - 首次访问需信任自动生成的自签名证书。
-- 插件自动配对容器内的 MCP Server。
+- 扩展自动配对容器内的 MCP Server。
 - 已保存认证和浏览器配对数据时，重启无需再次提供密码。
+
+平台消息账号可在 `http://localhost:9998/config` 使用 HTTP Bearer 令牌独立配置，与 `/mcp` 共用端口。见[独立配置页](../docs/Page-Agent-11-MCP服务.md#独立配置页)。
 
 ## 日常更新
 
@@ -54,13 +56,13 @@ docker compose --env-file ./docker/.env -f ./docker/compose.yaml \
   up -d --no-build --force-recreate
 ```
 
-启动脚本、插件和 MCP Server 从镜像加载；修改挂载目录不会更新运行代码。部署到其他主机时，先更新目标主机的镜像，再重新创建容器。
+启动脚本、扩展和 MCP Server 从镜像加载；修改挂载目录不会更新运行代码。部署到其他主机时，先更新目标主机的镜像，再重新创建容器。
 
 ### 依赖也发生变化时
 
 | 修改了什么 | 按顺序构建哪些层 |
 | --- | --- |
-| 插件、MCP Server、启动脚本 | `app` |
+| 扩展、MCP Server、启动脚本 | `app` |
 | Selkies 依赖 | `runtime` → `app` |
 | Node.js、Chromium | `browser` → `runtime` → `app` |
 | Ubuntu 或基础工具 | `all` |
@@ -117,7 +119,7 @@ docker compose --env-file ./docker/.env -f ./docker/compose.yaml down
 | 地址 | 用途 |
 | --- | --- |
 | `https://localhost:10000/` | 查看和操作浏览器 |
-| `ws://127.0.0.1:9999` | 插件连接 MCP Server |
+| `ws://127.0.0.1:9999` | 扩展连接 MCP Server |
 | `http://127.0.0.1:9998/mcp` | 外部 HTTP MCP 客户端，使用独立 Bearer 令牌 |
 
 ### HTTPS 与远程访问
@@ -176,7 +178,7 @@ PAGE_AGENT_DISPLAY_SCALE='3'
 
 区域截图的 `region: {x,y,width,height}` 使用原图物理像素，坐标非负且区域须完全位于显示器内。`quality` 控制编码压缩，不改变分辨率；PNG 始终无损。模式、格式和延迟参数见 [MCP 桌面操作](../docs/Page-Agent-11-MCP服务.md#桌面操作)。
 
-插件内使用 `/local/connections/{connectionId}/desktop/screenshot`，需启用连接的桌面权限。流程使用 `localScreenshot` 节点，定时截图由调度触发。
+扩展内使用 `/local/connections/{connectionId}/desktop/screenshot`，需启用连接的桌面权限。流程使用 `localScreenshot` 节点，定时截图由调度触发。
 
 升级前不含 `scrot` 或 `openbox` 的镜像时，依次构建 `runtime`、`app` 并重新创建容器，具体命令见[依赖也发生变化时](#依赖也发生变化时)。
 
@@ -184,7 +186,7 @@ PAGE_AGENT_DISPLAY_SCALE='3'
 
 **升级或迁移时，保留 `docker/.env` 和整个 `data/`。**
 
-重建容器沿用原 `data/` 时，插件配置、授权和配对凭据会保留。启动时指定的客户端名称（`PAGE_AGENT_CLIENT_NAME` 或内置连接文件中的 `clientName`）和模型密钥（`PAGE_AGENT_MODEL_API_KEY_*`）优先于插件中的设置。
+重建容器沿用原 `data/` 时，扩展配置、授权和配对凭据会保留。启动时指定的客户端名称（`PAGE_AGENT_CLIENT_NAME` 或内置连接文件中的 `clientName`）和模型密钥（`PAGE_AGENT_MODEL_API_KEY_*`）优先于扩展中的设置。
 
 | 宿主机位置 | 容器内位置 | 用途 |
 | --- | --- | --- |
@@ -205,7 +207,7 @@ PAGE_AGENT_DISPLAY_SCALE='3'
 data/
   auth.json                       服务端身份与凭据校验信息
   audit/                          审计
-  browser/                        Chromium 配置、插件本地存储和配对凭据
+  browser/                        Chromium 配置、扩展本地存储和配对凭据
   browser.lock                    浏览器进程锁
   browser-cache/
     selkies/                      浏览器磁盘缓存
@@ -335,7 +337,7 @@ PAGE_AGENT_AUTO_SYNC_ENABLED=true
 
 `archive/index.json` 中，`operations` 记录操作，`buckets.*.versions` 记录备份版本。同一客户端内容未变化时复用版本，同一启动目标失败时复用失败操作记录。
 
-当前同步协议为 7，插件与 MCP Server 需匹配，旧格式 7 备份仍可读取。旧备份缺少 Skill 或 HTTP MCP 配置时，保留本机对应配置，跳过缺失引用并告警；完整恢复需在来源端升级后重新备份、标记可同步，再更新启动版本。
+当前同步协议为 7，扩展与 MCP Server 需匹配，旧格式 7 备份仍可读取。旧备份缺少 Skill 或 HTTP MCP 配置时，保留本机对应配置，跳过缺失引用并告警；完整恢复需在来源端升级后重新备份、标记可同步，再更新启动版本。
 
 ### 权限与数据影响
 
@@ -372,13 +374,13 @@ Project root must contain manifest.json and MCP server source or bundle: <项目
 
 | 项目内容 | 镜像构建方式 |
 | --- | --- |
-| 源码工作区 | 复制当前插件代码，在 Docker 构建阶段生成 MCP Server 单文件 |
-| release 解压目录 | 复制当前插件代码，直接使用包内已有的 MCP Server 单文件 |
+| 源码工作区 | 复制当前扩展代码，在 Docker 构建阶段生成 MCP Server 单文件 |
+| release 解压目录 | 复制当前扩展代码，直接使用包内已有的 MCP Server 单文件 |
 
 源码的 MCP 构建依赖和中间产物仅保留在构建阶段。也可指定 release 目录构建：
 
 ```bash
-./docker/build.sh app ./dist/page-agent-extension-1.2.5
+./docker/build.sh app ./dist/page-agent-extension-1.3.0
 ```
 
 相对路径以当前执行目录为基准，构建时打印实际使用的目录。
@@ -402,7 +404,7 @@ Project root must contain manifest.json and MCP server source or bundle: <项目
 | `base` | `page-agent-base:latest` | Ubuntu 与基础工具 |
 | `browser` | `page-agent-browser:latest` | Node.js 与 Chromium |
 | `runtime` | `page-agent-runtime:latest` | Selkies 运行环境 |
-| `app` | `page-agent:latest` | 插件、MCP Server 与启动脚本 |
+| `app` | `page-agent:latest` | 扩展、MCP Server 与启动脚本 |
 
 ### `docker/` 文件用途
 

@@ -461,7 +461,7 @@
     assetReferences: assetReferences, validateAssets: validateAssets,
     unsupportedNodes: unsupportedNodes, assertNode: assertNode,
     checkPermission: checkPermission,
-    guidance: '创建、修改或修复应用前，读取 /apps 或目标应用资源；当前上下文缺少完整生成指引或已知指引更新时，完整 GET /knowledge/builtin_app_generation_guide，摘要或检索片段不能代替正文。同一对话复用已读指引，不因新一轮输入、继续或后台重启而重读。__builtin=true 的应用只读；编辑前带 If-Match 调用 POST /apps/{appId}/copy，后续修改返回的应用副本。内置应用声明的本地 JS/CSS 存入 code.files，复制、发布和导出携带原文；GET /apps/{appId}/{slot}/files 列出文件，GET /apps/{appId}/{slot}/files/{fileName} 按行读取或搜索，slot 为 draft 或 published，无需访问插件安装目录。局部源码修改优先 POST /apps/{appId}/draft/edits，body 为 {edits:[{field,oldText,newText}]}，文件编辑另带 fileName 且 field=files；只读和提交所需片段，携带最新应用 ETag 和幂等键，无需重传整段源码。',
+    guidance: '创建、修改或修复应用前，读取 /apps 或目标应用资源；当前上下文缺少完整生成指引或已知指引更新时，完整 GET /knowledge/builtin_app_generation_guide，摘要或检索片段不能代替正文。同一对话复用已读指引，不因新一轮输入、继续或后台重启而重读。__builtin=true 的应用只读；编辑前带 If-Match 调用 POST /apps/{appId}/copy，后续修改返回的应用副本。内置应用声明的本地 JS/CSS 存入 code.files，复制、发布和导出携带原文；GET /apps/{appId}/{slot}/files 列出文件，GET /apps/{appId}/{slot}/files/{fileName} 按行读取或搜索，slot 为 draft 或 published，无需访问扩展安装目录。局部源码修改优先 POST /apps/{appId}/draft/edits，body 为 {edits:[{field,oldText,newText}]}，文件编辑另带 fileName 且 field=files；只读和提交所需片段，携带最新应用 ETag 和幂等键，无需重传整段源码。',
     limits: Object.freeze({ recentApps: 5, nameLength: 32, messageBytes: 256 * 1024, inFlight: 8, requestsPerSecond: 30, timeoutMs: 60000 })
   });
 })(globalThis);

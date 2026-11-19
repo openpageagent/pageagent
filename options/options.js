@@ -84,6 +84,8 @@
   var scheduleController = null;
   var backupController = null;
   var appController = null;
+  var pluginController = null;
+  var pluginTypesSequence = 0;
   var releaseController = null;
   var lifecycle = globalThis.PageAgentLifecycle.create(window);
   var syncEventStream = globalThis.PageAgentSyncEventStream
@@ -836,7 +838,8 @@
   function loadConfig() {
     var loadingFlows = currentSection === 'flows';
     if (loadingFlows) pendingFlowConfigRefresh = false;
-    return loadConfigResourceSnapshot().then(function (snapshot) {
+    return Promise.all([loadConfigResourceSnapshot(), loadPluginNodeTypes()]).then(function (values) {
+      var snapshot = values[0];
       config = snapshot;
       renderCurrentSection();
       return { ok: true, payload: clonePlain(snapshot) };
@@ -845,6 +848,15 @@
       toast('加载资源失败: ' + resourceErrorText(error), true);
       renderCurrentSection();
       return { ok: false, error: resourceErrorText(error) };
+    });
+  }
+
+  function loadPluginNodeTypes() {
+    var ticket = ++pluginTypesSequence;
+    return resourceClient.get('/plugins/contributions').then(function (response) {
+      if (tornDown || ticket !== pluginTypesSequence) return;
+      if (response.error) throw new Error(response.error.message);
+      globalThis.NodeTypes.replacePluginTypes(response.primary.data.nodes);
     });
   }
 
@@ -952,6 +964,7 @@
     if (controller) states.push(controller.getState());
     if (currentSection === 'model-settings') states.push(globalThis.OptionsModelSettingsPanel.getState());
     if (currentSection === 'knowledge') states.push(globalThis.OptionsKnowledgePanel.getState());
+    if (pluginController) states.push(pluginController.getState());
     if (currentSection === 'mcp') {
       states.push({
         dirty: mcpSettingsDirty || mcpLocalDirectoryDirty || mcpArpPermissionsDirty
@@ -981,6 +994,7 @@
     if (editing.dirty && !await confirmUnsavedChanges()) return false;
     if ($('#drawer').classList.contains('active') && !await closeDrawer({ discard: true })) return false;
     clearConfigListDraft(currentSection);
+    if (currentSection === 'plugins' && pluginController) pluginController.discard();
     if (currentSection === 'conversation' && globalThis.Conversation) globalThis.Conversation.discardEditor();
     if (currentSection === 'model-settings') globalThis.OptionsModelSettingsPanel.discard();
     if (currentSection === 'knowledge') globalThis.OptionsKnowledgePanel.discard();
@@ -1004,7 +1018,7 @@
       navigationReady = true;
       // Entry targets are captured before the initial navigation and used only once.
       var url = new URL(location.href);
-      ['section', 'appId', 'action', 'assistantId', 'topicId'].forEach(function (key) { url.searchParams.delete(key); });
+      ['section', 'appId', 'pluginId', 'action', 'assistantId', 'topicId'].forEach(function (key) { url.searchParams.delete(key); });
       if (url.href !== location.href) history.replaceState(history.state, '', url.href);
       if (section !== 'conversation') pendingConversationTarget = null;
       currentSection = section;
@@ -1028,6 +1042,7 @@
   function renderCurrentSection() {
     switch (currentSection) {
       case 'apps': if (appController) appController.render().catch(function (error) { toast(error.message, true); }); break;
+      case 'plugins': if (pluginController) pluginController.render(); break;
       case 'pages': if (pageController) pageController.render(); break;
       case 'flows': if (flowController) flowController.render(); break;
       case 'flowGroups': if (flowGroupController) flowGroupController.render(); break;
@@ -1513,10 +1528,10 @@
       if (!response || !response.ok || !response.payload) throw new Error(response && response.error || '未收到有效的代理状态');
       var status = response.payload;
       var labels = {
-        controlled_by_this_extension: '当前由本插件控制',
-        controllable_by_this_extension: '当前未由本插件控制，本插件可以接管',
-        controlled_by_other_extensions: '当前由其他插件控制，本插件的代理配置未生效',
-        not_controllable: '当前不允许本插件控制代理（可能受浏览器策略限制）',
+        controlled_by_this_extension: '当前由本扩展控制',
+        controllable_by_this_extension: '当前未由本扩展控制，本扩展可以接管',
+        controlled_by_other_extensions: '当前由其他扩展控制，本扩展的代理配置未生效',
+        not_controllable: '当前不允许本扩展控制代理（可能受浏览器策略限制）',
       };
       element.textContent = (labels[status.levelOfControl] || '代理控制状态未知')
         + '；' + (status.scope === 'regular' ? '普通浏览器配置' : '无痕浏览器配置')
@@ -1753,6 +1768,7 @@
     if (toggle) {
       toggle.title = collapsed ? '显示侧边栏' : '隐藏侧边栏';
       toggle.setAttribute('aria-label', toggle.title);
+      toggle.setAttribute('aria-expanded', String(!collapsed));
     }
     try {
       localStorage.setItem('options_sidebar_collapsed', collapsed ? '1' : '0');
@@ -1879,7 +1895,7 @@
     var list = $('#mcp-connections-list');
     var focusedCard = document.activeElement.closest('.mcp-connection-card');
     var focusedId = focusedCard && list.contains(focusedCard) ? focusedCard.dataset.id : null;
-    var focusedCopy = document.activeElement.matches('[data-action="copy-id"]');
+    var focusedAction = document.activeElement.dataset.action;
     var html = mcpConnections.map(function (connection) {
       var expanded = mcpEditorOpen && mcpConnection && mcpConnection.id === connection.id;
       var description = connection.url + ' · ' + (connection.platform || '待确认平台');
@@ -1890,17 +1906,22 @@
         + '" data-id="' + esc(connection.id) + '" aria-expanded="' + !!expanded + '" aria-controls="mcp-connection-editor"'
         + (mcpSettingsSaving || mcpEnabledUpdating ? ' aria-disabled="true"' : '') + '>'
         + '<span class="connection-summary"><span class="item-title" title="' + esc(connection.alias || connection.url) + '">' + esc(connection.alias || connection.url) + '</span>'
-        + '<span class="item-sub" title="' + esc(description) + '">' + esc(description) + '</span>'
-        + itemIdHtml(connection.id) + '</span>'
+        + '<span class="item-sub" title="' + esc(description) + '">' + esc(description) + '</span></span>'
+        + '<span class="item-card-end">' + itemIdHtml(connection.id)
+        + '<button type="button" class="btn-small" data-action="open-server-config" title="打开服务端配置页（默认 HTTP 端口 9998）"'
+        + (!connection.ready || mcpSettingsSaving || mcpEnabledUpdating ? ' disabled' : '') + '>打开配置页</button>'
         + '<span class="badge' + (connection.ready ? ' on' : '') + '" title="' + esc(connection.reason || '') + '">' + esc(stateLabel) + '</span>'
-        + '</div>';
+        + '</span></div>';
     }).join('') || (mcpEditorOpen ? '' : '<div class="placeholder">还没有服务端，点击「新增服务端」配置连接</div>');
     if (html === mcpConnectionsHtml) return;
     mcpConnectionsHtml = html;
     list.innerHTML = html;
     if (focusedId) {
       var focused = Array.from(list.children).find(function (item) { return item.dataset.id === focusedId; });
-      if (focused) (focusedCopy ? focused.querySelector('.item-id') : focused).focus({ preventScroll: true });
+      if (focused) {
+        var action = Array.from(focused.querySelectorAll('[data-action]')).find(function (item) { return item.dataset.action === focusedAction; });
+        (action && !action.disabled ? action : focused).focus({ preventScroll: true });
+      }
     }
   }
   function setMcpEditorOpen(open) {
@@ -2230,13 +2251,14 @@
       var path = document.createElement('span'); path.className = 'item-sub';
       path.textContent = workspace.resolvedPath || workspace.path || '待服务端确认'; path.title = path.textContent;
       summary.append(title, path);
-      summary.insertAdjacentHTML('beforeend', itemIdHtml(workspace.id));
+      var end = document.createElement('span'); end.className = 'item-card-end';
+      end.insertAdjacentHTML('beforeend', itemIdHtml(workspace.id));
       var state = workspace.needsAuthorization && workspace.state !== 'invalid' ? '待授权'
         : ({ ready: '已确认', invalid: '目录无效', changed: '待授权', unverified: '待确认' })[workspace.state] || '待确认';
       var badge = document.createElement('span');
       badge.className = 'badge' + (workspace.state === 'invalid' ? ' status-failed' : state === '已确认' ? ' on' : '');
       badge.textContent = state;
-      card.append(summary, badge); list.appendChild(card);
+      end.append(badge); card.append(summary, end); list.appendChild(card);
     });
     if (focusedId) {
       var replacement = Array.from(list.children).find(function (item) { return item.dataset.workspaceId === focusedId; });
@@ -2270,6 +2292,14 @@
   $('#mcp-connections-list').addEventListener('click', async function (event) {
     var card = event.target.closest('.mcp-connection-card');
     if (!card || mcpSettingsSaving || mcpEnabledUpdating) return;
+    if (event.target.closest('[data-action="open-server-config"]')) {
+      event.stopPropagation();
+      var target = mcpConnections.find(function (item) { return item.id === card.dataset.id; });
+      if (!target || !target.ready) return;
+      try { await chrome.tabs.create({ url: globalThis.OptionsServerConfigController.connectionUrl(target) }); }
+      catch (error) { toast(error.message, true); }
+      return;
+    }
     if (mcpEditorOpen && mcpConnection && mcpConnection.id === card.dataset.id) { collapseMcpEditor(); return; }
     if (!await confirmMcpEditorChange()) return;
     var connection = mcpConnections.find(function (item) { return item.id === card.dataset.id; });
@@ -2291,6 +2321,25 @@
     setMcpEditorOpen(true);
     renderMcpLogs([]); renderMcpConnectionStatus();
     $('#mcp-alias').focus({ preventScroll: true });
+  });
+  $('#btn-mcp-quick-pair').addEventListener('click', async function () {
+    if (mcpSettingsSaving || mcpEnabledUpdating || !await confirmMcpEditorChange()) return;
+    OptionsServerConfigController.openPairing({ pair: async function (input) {
+      if (mcpSettingsSaving || mcpEnabledUpdating) throw new Error('连接设置正在保存');
+      mcpEnabledUpdating = true; updateMcpSaveSettingsButton();
+      try {
+        await refreshMcpConnections();
+        var connection = mcpConnections.find(function (item) { return new URL(item.url).href === input.url; });
+        if (!connection) connection = resourceData(await resourceClient.authorizedPost('/connections', { alias: input.alias, url: input.url }, mcpMutationOptions()));
+        resetMcpEditorDraft(); mcpCreating = false; applyMcpConnectionToControls(connection); setMcpEditorOpen(true);
+        await mcpControl('MCP_CONNECTION_PAIR', { connectionId: connection.id, password: input.password, ifMatch: '"mcp-' + connection.configRevision + '"' });
+        input.password = '';
+        connection = resourceData(await resourceClient.get(mcpConnectionUri(connection.id)));
+        applyMcpConnectionToControls(connection);
+        if (!connection.enabled) await patchMcpConnection({ enabled: true });
+        await updateMCPStatus(); toast('已配对，连接已开启');
+      } finally { mcpEnabledUpdating = false; updateMcpSaveSettingsButton(); }
+    } });
   });
   $('#btn-mcp-delete').addEventListener('click', async function () {
     if (!mcpConnection || mcpSettingsSaving || mcpEnabledUpdating) return;
@@ -2467,6 +2516,11 @@
     refreshMcpDisk(true);
   });
   chrome.runtime.onMessage.addListener(function (message) {
+    if (message.type === 'PLUGINS_CHANGED' && !tornDown) {
+      loadPluginNodeTypes().catch(function (error) { toast(error.message, true); });
+      if (currentSection === 'plugins' && pluginController) pluginController.render();
+      if (currentSection === 'apps' && appController) appController.render().catch(function (error) { toast(error.message, true); });
+    }
     if (message.type === 'MCP_CONNECTIONS_CHANGED' && currentSection === 'mcp' && !mcpSettingsSaving && !mcpEnabledUpdating) {
       refreshMcpConnections().then(function (connections) { if (connections && mcpConnection) return updateMCPStatus(); }).catch(function () {});
     }
@@ -2479,11 +2533,14 @@
     var needsPairing = hasConnection && mcpConnection.needsPairing === true;
     var isPairing = hasConnection && mcpConnection.state === 'pairing';
     $('#btn-mcp-add').disabled = mcpSettingsSaving || mcpEnabledUpdating;
+    $('#btn-mcp-quick-pair').disabled = mcpSettingsSaving || mcpEnabledUpdating;
     $('#btn-mcp-add').setAttribute('aria-expanded', String(mcpEditorOpen && mcpCreating));
     $('#btn-mcp-cancel-settings').disabled = mcpSettingsSaving || mcpEnabledUpdating;
     $('#btn-mcp-delete').disabled = !hasConnection || mcpSettingsSaving || mcpEnabledUpdating;
     $('#mcp-connections-list').querySelectorAll('.mcp-connection-card').forEach(function (card) {
       card.setAttribute('aria-disabled', String(mcpSettingsSaving || mcpEnabledUpdating));
+      var connection = mcpConnections.find(function (item) { return item.id === card.dataset.id; });
+      card.querySelector('[data-action="open-server-config"]').disabled = !connection || !connection.ready || mcpSettingsSaving || mcpEnabledUpdating;
     });
     $('#btn-mcp-clear-logs').disabled = !hasConnection || mcpSettingsSaving || mcpEnabledUpdating;
     ['#btn-mcp-pair', '#btn-mcp-confirm-pair', '#mcp-pair-password'].forEach(function (selector) {
@@ -2564,45 +2621,8 @@
       + quoteCliPath(joinMcpBundlePath(mcpExtensionDir)) + ' ' + buildMcpPortArgs();
   }
 
-  function buildCherryStudioConfig() {
-    return JSON.stringify({
-      mcpServers: {
-        'page-agent': {
-          type: 'streamableHttp',
-          url: 'http://127.0.0.1:' + mcpHttpPort + '/mcp',
-          headers: { Authorization: 'Bearer <HTTP令牌>' }
-        }
-      }
-    }, null, 2);
-  }
-
-  function buildGenericMcpUsagePrompt() {
-    return [
-      '请使用已配置的 page-agent MCP 完成我提出的任务，并按以下方式选择能力：',
-      '1. 先调用 OPTIONS，参数 {"uri":"/"}，发现服务端资源。',
-      '2. 操作服务端本地文件、命令或桌面时，先 GET /local 查看工作目录和能力，沿返回链接调用；无需选择插件。先用 OPTIONS 查询具体操作的参数。',
-      '3. 操作浏览器时，先 GET /clients，按名称和 ID 选择已就绪的目标，再调用 POST，参数为 {"uri":"/clients/{clientId}/arp","body":{"method":"GET","request":{"uri":"/page/current"}}}，将 {clientId} 替换为查询到的 ID。',
-      '4. 发现目标插件能力时，将内层 method 改为 OPTIONS、request.uri 改为 /。后续页面请求和响应链接仍通过同一客户端转发，不自动换目标。',
-      '5. 用户要求直接使用知识中已配置的 HTTP MCP 时，复用目标插件的配置和认证：先 GET /clients 确认目标，再按第 3 步的转发结构访问 GET /mcp-servers、GET /mcp-servers/{serverId}/tools，按任务选择服务器和工具。参数未知时 OPTIONS /mcp-servers/{serverId}/tools/{toolName}/calls，再 POST 该路径，body 包含 arguments 和目录返回的 schemaHash；沿回执 operationUri 用 GET 读取最终结果。以上调用均通过同一客户端转发，无需重复配置地址或密钥，目标仍有歧义时再询问用户。',
-      '6. 外部调用不创建或启动 Flow、脚本、对话、定时任务或应用动作；这些任务在扩展内管理。',
-      '7. 断线、取消或结果未知时，先核对实际效果，不自动重试有副作用的操作。'
-    ].join('\n');
-  }
-
-  function buildMcpClientGuide() {
-    return [
-      '名称: page-agent',
-      '传输方式: Streamable HTTP',
-      'URL: http://127.0.0.1:' + mcpHttpPort + '/mcp',
-      '请求头 Authorization: Bearer <HTTP令牌>'
-    ].join('\n');
-  }
-
   function updateMcpConfigSnippets() {
     $('#mcp-start-command').textContent = buildMcpStartCommand();
-    $('#mcp-cherry-config').textContent = buildCherryStudioConfig();
-    $('#mcp-client-guide').textContent = buildMcpClientGuide();
-    $('#mcp-usage-prompt').textContent = buildGenericMcpUsagePrompt();
   }
 
   function copyText(text) {
@@ -3217,12 +3237,14 @@
       if (mcpSettingsSaving || mcpEnabledUpdating) return false;
       if (!discard && (mcpLocalDirectoryDirty || mcpArpPermissionsDirty) && !await confirmUnsavedChanges()) return false;
     }
+    if (pluginController && !await pluginController.confirmDrawerClose(discard)) return false;
     if (appController && !await appController.confirmDrawerClose(discard)) return false;
     if (globalThis.Conversation && globalThis.Conversation.discardEditor) globalThis.Conversation.discardEditor();
     if (flowNodeController) flowNodeController.handleDrawerClosed();
     drawerEditBaseline = '';
     $('#drawer-overlay').classList.remove('active');
     $('#drawer').classList.remove('active');
+    if (pluginController) pluginController.handleDrawerClosed();
     globalThis.OptionsKnowledgePanel.handleDrawerClosed();
     if (mcpActionDrawer) {
       var clientSettings = mcpActionDrawer === 'client';
@@ -3287,6 +3309,7 @@
     [
       backupController,
       appController,
+      pluginController,
       runReportController,
       urlTriggerController,
       scheduleController,
@@ -3572,8 +3595,26 @@
     getCurrentSection: function () { return currentSection; },
   });
   backupController.init();
+  pluginController = globalThis.OptionsPluginController.create({
+    resourceClient: resourceClient,
+    loadResourceCollection: loadResourceCollection,
+    toast: toast,
+    confirm: confirmSettingsAction,
+    prompt: promptSettingsInput,
+    exportPlugin: function (pluginId) { return backupController.exportPlugin(pluginId); },
+    openDrawer: openDrawer,
+    closeDrawer: closeDrawer,
+    scrollOpenedEditor: scrollOpenedEditor,
+    openApp: async function (appId) {
+      if (await switchSection('apps')) await appController.edit(appId);
+    },
+    converse: async function (pluginId) {
+      if (await switchSection('conversation')) await globalThis.Conversation.openPlugin(pluginId);
+    },
+  });
   appController = globalThis.OptionsAppController.create({
     resourceClient: resourceClient,
+    renderPluginApps: function (container) { return pluginController.renderAppTemplates(container); },
     toast: toast,
     confirm: confirmSettingsAction,
     prompt: promptSettingsInput,
@@ -3594,13 +3635,16 @@
   releaseController = globalThis.OptionsReleaseController.create({ confirm: confirmSettingsAction });
   var appTarget = new URLSearchParams(location.search);
   switchSection(appTarget.get('section') === 'conversation' || pendingConversationTarget ? 'conversation'
-    : appTarget.get('section') === 'release' ? 'release' : 'apps');
+    : appTarget.get('section') === 'release' ? 'release' : appTarget.get('section') === 'plugins' ? 'plugins' : 'apps');
   if (appTarget.get('section') === 'apps') {
     if (appTarget.get('appId')) {
       var appAction = appTarget.get('action');
       if (appAction === 'manage') appController.openManagement(appTarget.get('appId')).catch(function (error) { toast(error.message, true); });
       if (appAction === 'edit' || appAction === 'permissions') appController[appAction](appTarget.get('appId')).catch(function (error) { toast(error.message, true); });
     }
+  }
+  if (appTarget.get('section') === 'plugins' && appTarget.get('pluginId')) {
+    pluginController.open(appTarget.get('pluginId')).catch(function (error) { toast(error.message, true); });
   }
 
   loadConfig();

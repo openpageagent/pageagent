@@ -19,6 +19,7 @@
   var writeQueue = Promise.resolve();
   var cachedState = null;
   var cachedStateValid = false;
+  var permissionCatalogVersion = 0, installedCatalogVersion = 0;
 
   function cloneForRead(value) {
     if (value === undefined || value === null) return value;
@@ -749,7 +750,8 @@
 
   function queueStateOperation(operation) {
     var result = writeQueue.then(function () {
-      if (ConversationProfileSchema.hasResourcePermissionCatalog()) return;
+      if (ConversationProfileSchema.hasResourcePermissionCatalog() && installedCatalogVersion === permissionCatalogVersion) return;
+      var version = permissionCatalogVersion;
       return new Promise(function (resolve, reject) {
         chrome.runtime.sendMessage({ type: 'GET_CONVERSATION_PERMISSION_CATALOG' }, function (response) {
           if (chrome.runtime.lastError) {
@@ -762,6 +764,7 @@
           }
           try {
             ConversationProfileSchema.installResourcePermissionCatalog(response.payload);
+            installedCatalogVersion = version;
             resolve();
           } catch (error) { reject(error); }
         });
@@ -769,6 +772,14 @@
     }).then(operation);
     writeQueue = result.catch(function () {});
     return result;
+  }
+
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener(function (message) {
+      if (!message || message.type !== 'PLUGINS_CHANGED') return;
+      permissionCatalogVersion++;
+      queueStateOperation(function () {}).catch(function (error) { console.error('刷新插件资源权限目录失败', error); });
+    });
   }
 
   function loadDirect(options) {

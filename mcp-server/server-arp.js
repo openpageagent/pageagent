@@ -10,6 +10,9 @@ const { OPERATIONS, ENVIRONMENT_INPUT_SCHEMA, isRead } = require('../resources/m
 const { execute, localPath, checkedPath } = require('./local-operations');
 const { checkSignal } = require('./execution-control');
 const { LIMITS } = contract;
+const { createBotResource } = require('./bot-resource');
+const { createPostgresResource } = require('./postgres-resource');
+const { createDevToolsResource } = require('./devtools-resource');
 const EMPTY = { type: 'object', properties: {}, additionalProperties: false };
 
 function createServerArp(server) {
@@ -97,7 +100,7 @@ function createServerArp(server) {
     local.routeContracts.push(route(uri, 'GET', schema, 'local.execute', summary));
     local.handlers.GET[uri] = handler;
   }
-  localGet('/local', EMPTY, '服务端本地能力；独立于浏览器插件，文件路径基于服务端启动目录', request => result(request.uri, 'ServerLocal', describeLocal()));
+  localGet('/local', EMPTY, '服务端本地能力；独立于浏览器扩展，文件路径基于服务端启动目录', request => result(request.uri, 'ServerLocal', describeLocal()));
   localGet('/local/desktop', EMPTY, '服务端桌面能力', request => result(request.uri, 'ServerDesktop', server.capabilities.desktop));
   for (const name of ['environment', 'disk']) localGet('/local/' + name, ENVIRONMENT_INPUT_SCHEMA, '服务端' + name,
     async (request, context) => result(request.uri, 'LocalEnvironment', await runLocal(name, request.query, context)));
@@ -173,21 +176,30 @@ function createServerArp(server) {
   archiveRoute('/archive/operations/{operationId}/retries', 'POST', EMPTY, '恢复中断或失败的配置操作',
     async (request, context) => result(request.uri, 'ArchiveOperation', await archive.retryOperation(request.params.operationId, context)));
   registry.register(adapters.create({ root: 'archive', resource: archiveResource }));
+  registry.register(createBotResource(server.bots));
+  registry.register(createPostgresResource(server.postgres));
+  registry.register(createDevToolsResource(server.devtools));
   const router = arp.createRouter({ registry, requestId: randomUUID, idempotency: { retentionMs: LIMITS.settledTtlMs },
     authorize: ({ descriptor, request, context, route }) => {
       if (route.template === '/clients/{clientId}/arp' && context.target && context.target !== route.match(request.uri).clientId) {
         throw arp.arpError('INVALID_REQUEST', '目标客户端与 HTTP 会话绑定不一致');
       }
+      // Check current database grants before the router can replay a cached result.
+      if (route.template.startsWith('/postgres/')) server.postgres.authorize(context, route.template === '/postgres/execute', request.body);
+      if (route.template.startsWith('/devtools/')) {
+        const [, , kind, operation] = route.template.split('/');
+        server.devtools.authorize(context, kind, operation, request.body);
+      }
       return descriptor.requiredPermissions.every(permission => context.permissionScope.includes(permission));
     } });
   return { owns(method, request) {
     const uri = arp.canonicalizeUri(arp.parseRequestTarget(request.uri, method).path, { allowRoot: true });
-    return uri === '/' || /^\/(local|clients|archive)(\/|$)/.test(uri);
+    return uri === '/' || /^\/(local|clients|archive|bots|postgres|devtools)(\/|$)/.test(uri);
   }, dispatch(method, request, options) {
     const context = { ...options, ...options.context, abortSignal: options.signal,
       actorId: options.sourceIdentity ? 'websocket:' + options.sourceIdentity.clientId : 'http:operator',
-      permissionScope: options.sourceIdentity ? ['clients.read', 'clients.call', 'archive.manage']
-        : ['local.execute', 'clients.read', 'clients.call', 'archive.manage'] };
+      permissionScope: options.sourceIdentity ? ['clients.read', 'clients.call', 'archive.manage', 'bots.read', 'bots.manage', 'bots.send', 'postgres.read', 'postgres.write', 'devtools.read', 'devtools.write']
+        : ['local.execute', 'clients.read', 'clients.call', 'archive.manage', 'bots.read', 'bots.manage', 'bots.send', 'postgres.read', 'postgres.write', 'devtools.read', 'devtools.write'] };
     return router.dispatch(method, request, context);
   } };
 }

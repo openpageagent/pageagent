@@ -396,10 +396,10 @@
             + '<span class="item-title">' + esc(ownDataValue(trigger, 'label') || '(未命名)') + '</span>'
             + '<span class="item-sub">' + esc(triggerPattern(trigger)) + ' → '
             + esc((target.known && target.kind === 'flowGroup' ? '流程组 · ' : '') + target.label) + '</span>'
+            + '<span class="item-card-end">' + itemIdHtml(ownDataValue(trigger, 'id'))
             + '<span class="badge' + (ownDataValue(trigger, 'enabled') !== false ? ' on' : '') + '">'
             + (ownDataValue(trigger, 'enabled') !== false ? '已启用' : '已停用') + '</span>'
-            + itemIdHtml(ownDataValue(trigger, 'id'))
-            + '</div>';
+            + '</span></div>';
         }
       );
       renderEditor();

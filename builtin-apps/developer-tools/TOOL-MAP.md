@@ -72,4 +72,4 @@
 - 系统默认权限包括 `utilities.read`、`utilities.execute` 及 `/utilities` 的 GET/POST/OPTIONS。资源发现、对话授权与结果投影没有排除任何工具；入口权限上限仍生效。
 - 52 类计算工具均有算法处理器、脚本方法、流程节点和对应操作资源。二维码默认返回 SVG，也可用 `imageFormat: png` 返回 Base64 编码的 PNG 文件内容；条形码返回 SVG。Base64 图片返回编码文本或 data URL，不能把返回数据等同于在对话中自动显示预览。
 - **页面功能边界**：Developer Utils 的 HTML 预览和 Markdown 预览只在应用页面渲染，没有对应的 `/utilities` 资源、脚本方法或流程节点，不计入 52 类计算工具。`/utilities/html` 是实体编解码；`/utilities/code/format` 可格式化 Markdown，两者都不是预览接口。
-- 本次仅检查当前工作区的契约、调用链、目录覆盖、导入路径、语法及 JSON。没有启动插件、调用算法、编译或执行测试，因此不宣称运行时及算法结果已验证。
+- 本次仅检查当前工作区的契约、调用链、目录覆盖、导入路径、语法及 JSON。没有启动扩展、调用算法、编译或执行测试，因此不宣称运行时及算法结果已验证。

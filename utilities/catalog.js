@@ -39,7 +39,7 @@
   add('hexString', 'UTF-8 / Hex', '编码与解码', ['encode', 'decode'], { inputEncoding: inputEncoding(), outputEncoding: select('解码输出', ['utf8', 'base64']), uppercase: bool('大写'), separator: text('字节分隔符') });
   add('html', 'HTML 实体', '编码与解码', ['encode', 'decode']);
   add('htmlToJsx', 'HTML / SVG → JSX', '格式与数据', ['convert'], {}, '转换 HTML/SVG 属性、样式和注释，不执行源码；内联事件须由使用者改为 React 函数。');
-  add('markdown', 'Markdown → HTML', '格式与数据', ['render'], {}, '使用插件内的 Marked 转换 Markdown，返回 HTML 文本，不执行或加载其中的内容。');
+  add('markdown', 'Markdown → HTML', '格式与数据', ['render'], {}, '使用扩展内的 Marked 转换 Markdown，返回 HTML 文本，不执行或加载其中的内容。');
   add('gzip', 'Gzip', '编码与解码', ['encode', 'decode'], { deflate: bool('Deflate'), inputEncoding: inputEncoding(), outputEncoding: select('输出格式', ['auto', 'base64', 'hex', 'utf8', 'download']) }, '支持 Gzip / Deflate；解压限制输出大小。');
   add('punycode', 'Punycode', '编码与解码', ['encode', 'decode'], {}, '转换 Unicode 域名与 ASCII 域名。');
   add('jwt', 'JWT 解析', '编码与解码', ['decode'], { algorithm: select('验签算法', ['HS256', 'HS384', 'HS512']), secret: text('HMAC 密钥（留空仅解码）') }, '解析 Header、Payload、签名和时间声明；填写密钥时按明确选择的 HMAC 算法验签。验签不代表声明或身份可信。');

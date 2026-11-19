@@ -85,6 +85,8 @@
       ['新增与导入', '新建应用或选择备份包导入。'],
     ]), recent, toolbar, orderHint, catalog);
     search.oninput = draw;
+    var pluginTemplates = el('section'); pluginTemplates.hidden = true;
+    if (!options.compact && options.renderPluginApps) section.append(pluginTemplates);
     function normalizeLayout(value) {
       var normalized = {};
       ['order', 'favorites'].forEach(function (key) {
@@ -282,6 +284,10 @@
         var nextApps = Array.from(collected.values()), nextLayout = await writeLayout(nextApps);
         if (ticket !== sequence) return;
         apps = nextApps; layout = nextLayout; layoutReady = true;
+        if (!options.compact && options.renderPluginApps) {
+          try { await options.renderPluginApps(pluginTemplates); }
+          catch (error) { pluginTemplates.hidden = false; pluginTemplates.textContent = '插件应用模板加载失败：' + error.message; }
+        }
       } catch (error) {
         if (ticket !== sequence) return;
         loadError = true;
@@ -646,7 +652,7 @@
         permissionDefaults.replaceChildren(el('b', '默认权限：'),
           app.__builtin && app.__builtinDefaultPermissions && app.__builtinDefaultPermissions.resources !== 'system'
             ? '使用应用随包声明，可按需调整。' : '使用系统默认值，可按需调整。');
-        content.append(master, scope, el('h4', '插件模块权限'));
+        content.append(master, scope, el('h4', '扩展模块权限'));
         var groups = new Map(), operationLabels = { read: '读取', write: '创建和修改', delete: '删除', execute: '执行', cancel: '取消运行', call: '调用工具', interact: '页面交互', javascript: '执行页面脚本', navigate: '导航', debugger: '调试器', 'tabs.write': '管理标签页', 'windows.write': '管理窗口', 'downloads.read': '读取下载', 'downloads.write': '管理下载', 'nodes.read': '读取节点', 'nodes.write': '修改节点', 'nodes.delete': '删除节点', 'report.read': '读取报告', 'debug.read': '读取调试数据', 'trace.read': '读取追踪记录', 'export.read': '导出' };
         app.permissions.resourceCatalog.forEach(function (item) {
           if (!groups.has(item.group)) groups.set(item.group, []);

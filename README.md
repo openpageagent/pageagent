@@ -4,7 +4,7 @@
 
 用自然语言操作网页，把重复任务保存为流程，把常用需求做成自己的工具应用。
 
-版本 `1.2.5` · Chrome／Edge 等 Chromium `116+` 浏览器 · [Apache 2.0](LICENSE)
+版本 `1.3.0` · Chrome／Edge 等 Chromium `116+` 浏览器 · [Apache 2.0](LICENSE)
 
 [安装与上手](#安装与上手) · [已实现功能](#已实现功能) · [内置应用](#内置应用) · [MCP Server](#可选-mcp-server) · [打包](#打包) · [文档导航](#文档导航)
 
@@ -57,11 +57,15 @@
 
 定时支持间隔、每天多个时刻、指定日期和 Cron，可按工作日或节假日批量选日。使用浏览器本地时区，**浏览器需保持运行**；错过超过 5 分钟的固定时刻不补跑。
 
-邮件在「连接配置 → 邮件通知」配置 SMTP 和发送连接，再开启 Flow 结束通知或添加邮件节点。见[邮件配置](docs/Page-Agent-12-邮件通知.md)。
+邮件账号在服务端配置，扩展「连接配置 → 邮件服务器连接」选择发送连接与账号，再开启 Flow 结束通知或添加邮件节点。见[邮件配置](docs/Page-Agent-12-邮件通知.md)。
 
 ## 可选 MCP Server
 
 文件、Bash、桌面、邮件及外部 MCP 接入需要此服务；普通页面任务不需要。支持连接多台服务端，操作发生在 **MCP Server 所在机器**。macOS／Windows 支持桌面操作，部分功能需 `robotjs` 和系统授权；Linux 支持通过 scrot 截取 X11 桌面。
+
+服务端支持飞书、钉钉、QQ、企业微信、企业微信智能机器人及邮件账号，可在 `/config` 使用 HTTP Bearer 令牌独立配置，无需连接扩展。见[平台消息插件](docs/Page-Agent-15-平台消息插件.md)。
+
+PostgreSQL、MySQL、Jira、Confluence、Jenkins、Redis、GitLab、SSH、S3 均为可选研发工具，在 `/config → 研发工具 → 添加连接` 中统一配置，支持多个连接和独立写入授权。凭据配置一次，现有 MCP、助手、脚本和流程共用；浏览器按需启用对应插件。配置与调用方式见[研发工具](docs/Page-Agent-16-研发工具.md)。
 
 ### 启动与配对
 
@@ -90,7 +94,7 @@ node mcp-server/index.js
 
 - 首次构建：`./docker/build.sh all`。
 - 日常更新：`./docker/build.sh app`。
-- 验证打包产物：`./docker/build.sh app ./dist/page-agent-extension-1.2.5`。
+- 验证打包产物：`./docker/build.sh app ./dist/page-agent-extension-1.3.0`。
 - 配置文件：`docker/.env`；运行数据：`data/`。
 
 准备好配置并构建镜像后启动：
@@ -100,13 +104,13 @@ docker compose --env-file ./docker/.env -f ./docker/compose.yaml \
   up -d --no-build --force-recreate
 ```
 
-每个容器同时运行 MCP Server、Chromium 和插件，通过 `https://localhost:10000/` 查看浏览器。首次部署、镜像命名、日常更新及同步备份配置见 [Docker、同步和备份](docker/README.md)。
+每个容器同时运行 MCP Server、Chromium 和扩展，通过 `https://localhost:10000/` 查看浏览器。首次部署、镜像命名、日常更新及同步备份配置见 [Docker、同步和备份](docker/README.md)。
 
 ### 连接外部 MCP 客户端
 
 使用 Streamable HTTP：`http://127.0.0.1:9998/mcp`，通过 Bearer 凭据认证。可通过 `PAGE_AGENT_HTTP_BEARER_TOKEN` 指定；未配置且没有已保存的令牌时，启动自动生成并显示，后续启动复用。
 
-`/local` 直接访问服务端本地能力，无需插件；`GET /clients` 发现客户端，`POST /clients/{clientId}/arp` 转发插件资源及页面／浏览器操作。插件也可通过 WebSocket 调用同一服务端的其他客户端，服务端拒绝自调用。转发不开放流程等自动化任务的创建与运行。调用范围、桌面依赖及远程部署见 [MCP 服务](docs/Page-Agent-11-MCP服务.md)。
+`/local` 直接访问服务端本地能力，无需扩展；`GET /clients` 发现客户端，`POST /clients/{clientId}/arp` 转发扩展资源及页面／浏览器操作。扩展也可通过 WebSocket 调用同一服务端的其他客户端，服务端拒绝自调用。转发不开放流程等自动化任务的创建与运行。调用范围、桌面依赖及远程部署见 [MCP 服务](docs/Page-Agent-11-MCP服务.md)。
 
 ## 打包
 
@@ -152,6 +156,7 @@ node mcp-server/dist/page-agent-mcp-server.cjs
 | 对话、助手与流程 | [对话入口与页面绑定](docs/Page-Agent-03-对话入口与页面绑定.md) · [内置助手](docs/Page-Agent-04-内置助手.md) · [提示词与 Flow 节点](docs/Page-Agent-06-提示词与Flow节点.md) |
 | 模型、知识与 Skill | [模型服务兼容性](docs/Page-Agent-08-模型服务兼容性.md) · [知识系统](docs/Page-Agent-05-知识系统.md) · [提示词缓存](docs/Page-Agent-07-提示词缓存.md) |
 | 创建、使用和分享应用 | [应用说明](docs/Page-Agent-13-应用.md) |
+| 插件管理与平台消息接入 | [内置能力插件](docs/Page-Agent-14-内置能力插件.md) · [平台消息插件](docs/Page-Agent-15-平台消息插件.md) |
 | 本地操作、外部接入与通知 | [MCP 服务](docs/Page-Agent-11-MCP服务.md) · [邮件通知](docs/Page-Agent-12-邮件通知.md) |
 | 工具调用与资源接口 | [ARP 工具调用](docs/Page-Agent-09-ARP工具调用.md) · [ARP 协议](docs/Page-Agent-10-ARP协议.md) |
 | 反馈问题与参与贡献 | [贡献与问题反馈](docs/Page-Agent-01-贡献与问题反馈.md) |
@@ -160,7 +165,7 @@ node mcp-server/dist/page-agent-mcp-server.cjs
 
 配置与应用数据保存在本机浏览器；模型请求发送到你配置的服务，内容不会自动脱敏。应用与 MCP 本地操作需按用途授权。
 
-备份不含模型凭据和 MCP 配对凭据，导出的邮件配置含明文 SMTP 密码／授权码。见[迁移说明](docs/Page-Agent-00-安装与打包.md#升级与迁移)。
+备份不含模型凭据、MCP 配对凭据或 SMTP 密码；邮件仅导出连接与账号引用。服务端账号与消息需单独备份状态目录。见[迁移说明](docs/Page-Agent-00-安装与打包.md#升级与迁移)。
 
 ## 致谢
 

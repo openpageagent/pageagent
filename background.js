@@ -4,6 +4,8 @@
 
   // --- 导入核心模块 ---
   importScripts(
+    'dependencies/cordis/cosmokit.js',
+    'dependencies/cordis/core.js',
     'agent/conversation-protocol.js',
     'shared/recording-contract.js',
     'ui/session-floating-message-contract.js',
@@ -24,6 +26,7 @@
     'shared/app-contract.js',
     'shared/app-ui-contract.js',
     'dependencies/utilities/diff/dist/diff.js',
+    'resources/source-code.js',
     'apps/app-store.js',
     'apps/app-package.js',
     'background/builtin-app-loader.js',
@@ -55,6 +58,8 @@
     'agent/providers/compat/index.js',
     'agent/tool-result-projection.js',
     'ui/conversation-list-view.js',
+    'ui/conversation-event-view.js',
+    'ui/conversation-shared.js',
     'agent/providers/provider-message-normalizer.js',
     'agent/providers/openai-chat-completions-provider.js',
     'agent/providers/openai-responses-provider.js',
@@ -161,6 +166,15 @@
     'resources/modules/flow-resource.js',
     'resources/modules/node-type-resource.js',
     'resources/modules/utility-resource.js',
+    'plugins/host.js',
+    'plugins/source-runtime.js',
+    'plugins/user-plugin.js',
+    'plugins/runtime.js',
+    'builtin-plugins/messaging.js',
+    'shared/devtools-catalog.js',
+    'builtin-plugins/devtools.js',
+    'builtin-plugins/index.js',
+    'resources/modules/plugin-resource.js',
     'resources/modules/flow-group-resource.js',
     'resources/modules/conversation-resource.js',
     'resources/modules/recording-resource.js',
@@ -204,6 +218,8 @@
   });
   var mailClient = globalThis.MailClient.create(chrome, function (connectionId) {
     return mcpRuntime && mcpRuntime.getClient(connectionId);
+  }, function (connectionId, method, request, context) {
+    return mcpRuntime.callServerArp(connectionId, method, request, context);
   });
   var SessionFloatingMessages = globalThis.PageAgentSessionFloatingMessageContract;
   if (!SessionFloatingMessages || SessionFloatingMessages.API_VERSION !== 1) throw new Error('session/floating message contract 未加载');
@@ -272,6 +288,7 @@
 
   function broadcast(msg) {
     if (globalThis.PageAgentAppBridge) globalThis.PageAgentAppBridge.runEvent(msg);
+    if (globalThis.PageAgentPlugins && msg.type !== 'PLUGINS_CHANGED') globalThis.PageAgentPlugins.emitHostEvent(msg);
     try {
       chrome.runtime.sendMessage(msg).catch(function () {});
     } catch (_) {}
@@ -2940,6 +2957,42 @@
         browser: { cdpSessionManager: cdpSessionManager, pageAgent: pageAgent },
       },
     });
+    runtime.plugins = globalThis.PageAgentPluginRuntime.create({
+      resourceRuntime: runtime,
+      utilityService: resourceOptions.utilityService,
+      runScript: function (code, options) { return sandboxEngine.runScript(code, options); },
+      serverArp: function (connectionId, method, request, context) { return mcpRuntime.callServerArp(connectionId, method, request, context); },
+      conversationCommand: async function (command, input, signal, pluginId) {
+        signal.throwIfAborted();
+        if (!['START_TURN', 'GET_CONVERSATION', 'GET_EVENTS', 'STEER_GENERATION', 'RESOLVE_INTERACTION', 'CANCEL_GENERATION'].includes(command)) {
+          throw new Error('平台对话通道不支持此操作');
+        }
+        var response = await conversationCommandBus.dispatchInternal({ command: command, input: input }, {
+          type: 'messaging', instanceId: 'plugin:' + pluginId, incognito: INCOGNITO_CONTEXT,
+        });
+        signal.throwIfAborted();
+        if (!response.ok) throw Object.assign(new Error(response.error.message), response.error);
+        return response.result;
+      },
+      plugins: globalThis.PageAgentBuiltinPlugins,
+      storageArea: chrome.storage.local,
+      incognito: INCOGNITO_CONTEXT,
+      onChanged: function () {
+        if (pluginChangeQueued) return;
+        pluginChangeQueued = true;
+        queueMicrotask(function () {
+          pluginChangeQueued = false;
+          conversationResourcePermissionCatalog = globalThis.AgentCore.resourcePermissionCatalog(runtime);
+          globalThis.ConversationProfileSchema.installResourcePermissionCatalog(conversationResourcePermissionCatalog);
+          mcpTransportPermissionScope = collectCanonicalTransportPermissions(runtime);
+          broadcast({ type: 'PLUGINS_CHANGED' });
+        });
+      },
+    });
+    var pluginChangeQueued = false;
+    globalThis.PageAgentPlugins = runtime.plugins;
+    runtime.adapters.plugins = globalThis.PluginResource.createAdapter(runtime.plugins);
+    runtime.registry.register(runtime.adapters.plugins);
     runtime.imageArtifactStore = imageArtifactStoreRuntime;
     runtime.localOperations = localOperations;
     runtime.resolveImageArtifact = function (artifactUri, resolveOptions) {
@@ -3984,6 +4037,13 @@
     readConversationArchiveExportRange: readConversationArchiveExportRange,
     releaseConversationArchiveExport: releaseConversationArchiveExport,
     dispatchResource: function (method, request, context) {
+      // The verified Options page can grant registered resource permissions to plugins.
+      if (context.trustedConnectionUi === true && ['POST', 'PUT', 'DELETE'].includes(method)
+          && /^\/plugins(?:\/|\?|$)/.test(request.uri)) {
+        context = Object.assign({}, context, { permissionScope: Array.from(new Set(
+          context.permissionScope.concat(collectCanonicalTransportPermissions(canonicalResourceRuntime))
+        )) });
+      }
       return canonicalResourceRuntime.dispatch(method, request, context);
     },
     getState: getState,
@@ -4021,6 +4081,46 @@
   // --- Chrome API 事件绑定 ---
 
   chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+    if (message && message.type === 'PLUGIN_MANAGE') {
+      if (sender.id !== chrome.runtime.id || String(sender.url || '').split(/[?#]/)[0] !== chrome.runtime.getURL('options/options.html')) {
+        sendResponse({ error: { message: '插件配置仅允许配置中心操作' } });
+        return false;
+      }
+      var plugins = canonicalResourceRuntime.plugins;
+      plugins.initialized.then(async function () {
+        if (message.operation === 'settings') return plugins.settings(message.pluginId);
+        if (message.operation === 'update') return plugins.update(message.pluginId, message.input || {});
+        if (message.operation === 'message-accounts') {
+          await prepareMcpConnections();
+          var connections = (await mcpRuntime.listConnections()).filter(function (connection) { return connection.enabled; });
+          var results = await Promise.allSettled(connections.map(async function (connection) {
+            if (!connection.ready) throw new Error('连接未就绪');
+            var response = await mcpRuntime.callServerArp(connection.id, 'GET', { uri: '/bots' }, { trustedConnectionUi: true });
+            if (response.error) throw new Error(response.error.message);
+            var data = response.primary.data;
+            return data.items.map(function (account) {
+              var adapter = (data.adapters || []).find(function (item) { return item.id === account.adapter; });
+              return { connectionId: connection.id, accountId: account.id, name: account.name,
+                connectionName: connection.alias || connection.serverName || connection.id,
+                platform: adapter ? adapter.name : account.adapter };
+            });
+          }));
+          var accounts = [], warnings = [];
+          results.forEach(function (result, index) {
+            if (result.status === 'fulfilled') accounts.push.apply(accounts, result.value);
+            else warnings.push((connections[index].alias || connections[index].id) + '：' + result.reason.message);
+          });
+          return { items: accounts, warnings: warnings };
+        }
+        if (message.operation === 'bind-conversation') {
+          var binding = message.input || {};
+          return plugins.bindConversation(message.pluginId, binding.conversationId, binding.previousConversationId);
+        }
+        if (message.operation === 'createApp') return plugins.host.createApp(message.pluginId, message.appId);
+        throw new Error('未知插件管理操作');
+      }).then(function (result) { sendResponse({ result: result }); }, function (error) { sendResponse({ error: { message: error.message } }); });
+      return true;
+    }
     if (message && message.type === 'GET_CONVERSATION_PERMISSION_CATALOG') {
       if (!trustedExtensionSender(sender)) {
         sendResponse({ ok: false, error: '仅扩展页面可以读取授权配置目录' });
@@ -4105,13 +4205,14 @@
     // offscreen 中继消息：发往 offscreen 的消息由 offscreen.js 处理，background 忽略
     if (message && (message.target === 'offscreen' || message.target === 'utility-workers')) return undefined;
 
-    if (message && /^(?:MAIL_SETTINGS_GET|MAIL_SETTINGS_SAVE|MAIL_ENABLED_SET|MAIL_TEST_SEND|MAIL_STATUS)$/.test(message.type)) {
+    if (message && /^(?:MAIL_SETTINGS_GET|MAIL_SETTINGS_SAVE|MAIL_ENABLED_SET|MAIL_TEST_SEND|MAIL_STATUS|MAIL_ACCOUNTS)$/.test(message.type)) {
       if (!trustedExtensionSender(sender)) {
         sendResponse({ ok: false, error: '仅扩展页面可以操作邮件配置和测试发送' });
         return undefined;
       }
       Promise.resolve().then(function () {
         if (message.type === 'MAIL_STATUS') return mailClient.getStatus();
+        if (message.type === 'MAIL_ACCOUNTS') return mailClient.accounts(message.payload && message.payload.connectionId);
         if (message.type === 'MAIL_SETTINGS_GET') return mailClient.load();
         if (message.type === 'MAIL_SETTINGS_SAVE') return mailClient.save(message.payload);
         if (message.type === 'MAIL_ENABLED_SET') return mailClient.setEnabled(message.payload && message.payload.enabled);
@@ -4735,6 +4836,9 @@
     },
     onResetTargets: function (id) { mcpTabManagers.delete(id); },
     onExecutionState: function (state) { broadcast(Object.assign({ type: 'MCP_EXECUTION_STATE' }, state)); },
+    onBotEvent: function (connectionId, event) {
+      canonicalResourceRuntime.plugins.emitHostEvent({ type: 'messaging', connectionId: connectionId, message: event });
+    },
     addLog: loggingStatus.addLog,
     prepareNetwork: async function () {
       await proxyManager.sync();
@@ -4795,7 +4899,10 @@
       });
       var mailKey = globalThis.PageAgentMailSettings.SETTINGS_KEY;
       var mail = (await chrome.storage.local.get(mailKey))[mailKey];
-      if (mail && !Object.prototype.hasOwnProperty.call(mail, 'connectionId')) await mailClient.save(Object.assign({}, mail, { connectionId: migration.connectionId }));
+      if (mail && !Object.prototype.hasOwnProperty.call(mail, 'connectionId')) {
+        var mailMigration = {}; mailMigration[mailKey] = Object.assign({}, mail, { connectionId: migration.connectionId });
+        await chrome.storage.local.set(mailMigration);
+      }
       await mcpRuntime.store.transaction(function (current) { if (current.migration) current.migration.pending = false; });
     },
   });

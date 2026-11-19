@@ -7,11 +7,12 @@
     var handlers = { GET: {}, POST: {} };
     var routes = [support.route({
       template: '/utilities', resourceType: 'UtilityCatalog', relation: 'utilities',
-      summary: '插件离线工具目录：与内置工具应用和流程节点共用', tags: ['offline', 'tools', '离线工具'],
+      summary: '扩展离线工具目录：与内置工具应用和流程节点共用', tags: ['offline', 'tools', '离线工具'],
       methods: { GET: support.read(support.EMPTY_QUERY, 'utilities.read', 'utilities', '读取工具、操作、选项和节点类型') },
     })];
     handlers.GET['/utilities'] = function (request) {
-      return { statusCode: 200, primary: { uri: request.uri, type: 'UtilityCatalog', data: { tools: catalog.tools } } };
+      var plugins = root.PageAgentPlugins;
+      return { statusCode: 200, primary: { uri: request.uri, type: 'UtilityCatalog', data: { tools: catalog.tools.concat(plugins ? plugins.host.utilities() : []) } } };
     };
     catalog.tools.forEach(function (tool) {
       var uri = tool.uri;

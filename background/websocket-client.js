@@ -127,8 +127,9 @@
         || identity && ['TEMPORARILY_UNAVAILABLE', 'RESOURCE_BUSY'].includes(error.code);
       if (!transient) {
         reconnect = false;
+        if (error.message && error.message !== error.reason) log('error', error.message);
         transition(error.reason === 'SERVER_ID_CHANGED' || error.reason === 'SERVER_ALREADY_CONFIGURED' ? 'identity-conflict'
-          : error.reason === 'PROTOCOL_INCOMPATIBLE' ? 'incompatible' : error.reason === 'CREDENTIAL_REVOKED' ? 'revoked'
+          : error.reason === 'PROTOCOL_INCOMPATIBLE' || identity && error.code === 'INVALID_REQUEST' ? 'incompatible' : error.reason === 'CREDENTIAL_REVOKED' ? 'revoked'
             : ['INVALID_CREDENTIAL', 'INVALID_COMMUNICATION_KEY'].includes(error.reason) ? 'pairing-required' : 'auth-failed', error.reason || 'CONFIGURATION_FAILED');
       }
       settleWaiters(error);
@@ -262,6 +263,10 @@
           hello();
         }
         if (deps.onChange) deps.onChange(); return;
+      }
+      if (value.type === 'bot.event') {
+        if (state === 'ready' && deps.onBotEvent) deps.onBotEvent(config.id, value.event);
+        return;
       }
       if (value.type === 'arp.cancel') { var controller = inbound.get(value.requestId); if (controller) controller.abort('远端入口已取消'); return; }
       if (value.type === 'arp.request') { handleInbound(value, current, epoch).catch(failConnection); return; }

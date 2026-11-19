@@ -428,9 +428,9 @@
         return '<div class="item-card' + (draft && draft.id === schedule.id ? ' selected' : '') + '" role="button" tabindex="0" data-action="edit-schedule" data-id="' + esc(schedule.id) + '">'
           + '<span class="item-title">' + esc(schedule.label || '(未命名)') + '</span>'
           + '<span class="item-sub">' + esc(triggerText) + ' → ' + esc(targetText) + '</span>'
+          + '<span class="item-card-end">' + itemIdHtml(schedule.id)
           + '<span class="badge' + (schedule.enabled ? ' on' : '') + '">' + (schedule.enabled ? '已启用' : '已停用') + '</span>'
-          + itemIdHtml(schedule.id)
-          + '</div>';
+          + '</span></div>';
       });
       renderEditor();
       return { ok: true, draftOpen: !!draft };

@@ -23,6 +23,7 @@ class AuthStore {
     this.directory = path.resolve(directory || defaultStateDir());
     this.file = path.join(this.directory, 'auth.json');
     this.queue = Promise.resolve(); this.scryptActive = 0; this.failures = new Map(); this.globalFailures = []; this.rateLimited = 0; this.lastRateSummary = Date.now();
+    this.pairingTickets = new Map();
   }
   async init() {
     await fs.mkdir(this.directory, { recursive: true, mode: 0o700 });
@@ -98,6 +99,13 @@ class AuthStore {
       return { state, value: { pairingId, clientId: state.pairings[pairingId].clientId } };
     });
   }
+  async createPairingTicket() {
+    const state = await this.read(), token = generateCredential(), expiresAt = Date.now() + 5 * 60 * 1000;
+    for (const [key, ticket] of this.pairingTickets) if (ticket.expiresAt <= Date.now()) this.pairingTickets.delete(key);
+    if (this.pairingTickets.size >= 20) contract.fail('RESOURCE_BUSY', '配对码过多，请等待旧码过期');
+    this.pairingTickets.set(digest(token).toString('hex'), { expiresAt, authEpoch: state.authEpoch });
+    return { token, expiresAt };
+  }
   checkRate(address) {
     const cutoff = Date.now() - 60000;
     this.globalFailures = this.globalFailures.filter(time => time > cutoff);
@@ -132,11 +140,18 @@ class AuthStore {
       const transportSessionId = crypto.randomUUID();
       if (message.type === 'auth.pair') {
         this.checkRate(address);
-        this.scryptActive++;
-        let actual;
-        try { actual = await scrypt(message.password, Buffer.from(state.passwordVerifier.salt, 'hex'), 32, COST); }
-        finally { this.scryptActive--; message.password = ''; }
-        if (!crypto.timingSafeEqual(actual, Buffer.from(state.passwordVerifier.hash, 'hex'))) contract.fail('AUTH_FAILED', '认证失败', 'AUTHENTICATION_REQUIRED');
+        const ticketKey = digest(message.password).toString('hex'), ticket = this.pairingTickets.get(ticketKey);
+        if (ticket) {
+          this.pairingTickets.delete(ticketKey);
+          message.password = '';
+          if (ticket.expiresAt <= Date.now() || ticket.authEpoch !== state.authEpoch) contract.fail('AUTH_FAILED', '配对码已失效', 'AUTHENTICATION_REQUIRED');
+        } else {
+          this.scryptActive++;
+          let actual;
+          try { actual = await scrypt(message.password, Buffer.from(state.passwordVerifier.salt, 'hex'), 32, COST); }
+          finally { this.scryptActive--; message.password = ''; }
+          if (!crypto.timingSafeEqual(actual, Buffer.from(state.passwordVerifier.hash, 'hex'))) contract.fail('AUTH_FAILED', '认证失败', 'AUTHENTICATION_REQUIRED');
+        }
         pairingId = crypto.randomUUID(); token = crypto.randomBytes(32).toString('base64url');
         communicationKey = crypto.randomBytes(32).toString('base64url');
         if (beforePair) await beforePair({ serverId: state.serverId, pairingId, clientId: message.clientId, transportSessionId });
@@ -147,6 +162,7 @@ class AuthStore {
             if (item.clientId === message.clientId && !item.revokedAt) item.revokedAt = createdAt;
           }
           current.pairings[pairingId] = { clientId: message.clientId, extensionId: message.clientInfo.extensionId,
+            clientName: message.clientInfo.clientName,
             incognito: message.clientInfo.incognito, tokenHash: digest(token).toString('hex'),
             pairingVersion: contract.PAIRING, communicationKey,
             authEpoch: current.authEpoch, createdAt, revokedAt: null };
@@ -191,7 +207,7 @@ class AuthStore {
   }
   async list() {
     const state = await this.read();
-    return Object.entries(state.pairings).map(([pairingId, item]) => ({ pairingId, clientId: item.clientId,
+    return Object.entries(state.pairings).map(([pairingId, item]) => ({ pairingId, clientId: item.clientId, clientName: item.clientName,
       extensionId: item.extensionId, incognito: item.incognito, createdAt: item.createdAt, revokedAt: item.revokedAt }));
   }
 }

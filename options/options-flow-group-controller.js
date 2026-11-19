@@ -392,8 +392,9 @@
         var builtin = isBuiltinItem(group);
         return '<div class="item-card' + (draft && draft.id === group.id ? ' selected' : '') + (builtin ? ' builtin' : '') + '" role="button" tabindex="0" data-action="edit-flowGroup" data-id="' + esc(group.id) + '">'
           + '<span class="item-title">' + esc(group.label || '(未命名)') + '</span>'
-          + '<span class="item-sub">' + steps.length + ' 个流程' + (usageSummary ? ' · ' + esc(usageSummary) : '') + (group.description ? ' · ' + esc(group.description) : '') + '</span>'
           + (builtin ? '<span class="badge builtin">内置</span>' : '')
+          + '<span class="item-sub">' + steps.length + ' 个流程' + (usageSummary ? ' · ' + esc(usageSummary) : '') + (group.description ? ' · ' + esc(group.description) : '') + '</span>'
+          + '<span class="item-card-end">' + itemIdHtml(group.id)
           + '<button class="btn-small" data-action="run-flowGroup" data-id="' + esc(group.id) + '">运行流程组</button>'
           + (builtin
             ? '<button class="btn-small" disabled title="内置流程组不支持导出，请先复制为用户流程组">导出</button>'
@@ -403,8 +404,7 @@
               + '<button class="btn-small btn-danger-outline" disabled title="内置流程组不能删除">删除</button>'
               + '<button class="btn-small" data-action="copy-flowGroup" data-id="' + esc(group.id) + '">复制</button>'
             : '')
-          + itemIdHtml(group.id)
-          + '</div>';
+          + '</span></div>';
       });
       return renderEditor(groups, flows);
     }

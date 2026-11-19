@@ -142,6 +142,7 @@
       'application/merge-patch+json': true,
     });
     var ARP_OPTION_PERMISSIONS = Object.freeze([
+      'plugins.read', 'plugins.write',
       'utilities.read', 'utilities.execute',
       'flows.read', 'flows.write', 'flows.delete',
       'flows.nodes.read', 'flows.nodes.write', 'flows.nodes.delete',

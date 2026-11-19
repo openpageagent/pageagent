@@ -207,12 +207,20 @@ stage_start "复制 MCP 服务器包"
 mkdir -p "$STAGING_DIR/$(dirname "$MCP_BUNDLE_DEST_REL")"
 cp "$MCP_BUNDLE_SRC" "$STAGING_DIR/$MCP_BUNDLE_DEST_REL"
 cp "$ROOT_DIR/mcp-server/NODEMAILER_LICENSE" "$STAGING_DIR/mcp-server/NODEMAILER_LICENSE"
+cp "$ROOT_DIR/mcp-server/KOISHI_LICENSE" "$STAGING_DIR/mcp-server/KOISHI_LICENSE"
+cp "$ROOT_DIR/mcp-server/POSTGRES_LICENSE" "$STAGING_DIR/mcp-server/POSTGRES_LICENSE"
+cp "$ROOT_DIR/mcp-server/REDIS_LICENSE" "$STAGING_DIR/mcp-server/REDIS_LICENSE"
+cp "$ROOT_DIR/mcp-server/SSH2_LICENSE" "$STAGING_DIR/mcp-server/SSH2_LICENSE"
+cp "$ROOT_DIR/mcp-server/AWS_S3_LICENSE" "$STAGING_DIR/mcp-server/AWS_S3_LICENSE"
+cp "$ROOT_DIR/mcp-server/MYSQL2_LICENSE" "$STAGING_DIR/mcp-server/MYSQL2_LICENSE"
+cp "$ROOT_DIR/mcp-server/WECOM_AIBOT_LICENSE" "$STAGING_DIR/mcp-server/WECOM_AIBOT_LICENSE"
 chmod 755 "$STAGING_DIR/$MCP_BUNDLE_DEST_REL"
 
 if [[ "$MINIFY" -eq 1 ]]; then
   stage_start "压缩 JavaScript"
   export TERSER_BIN
   find "$STAGING_DIR" -type f -name "*.js" \
+    ! -path "$STAGING_DIR/dependencies/cordis/*" \
     ! -path "$STAGING_DIR/dependencies/turndown/*.js" \
     ! -path "$STAGING_DIR/dependencies/marked/*.js" \
     ! -path "$STAGING_DIR/dependencies/dompurify/*.js" \
@@ -220,6 +228,7 @@ if [[ "$MINIFY" -eq 1 ]]; then
     ! -path "$STAGING_DIR/dependencies/utilities/*" \
     ! -path "$STAGING_DIR/builtin-skills/*" \
     ! -path "$STAGING_DIR/builtin-apps/*" \
+    ! -path "$STAGING_DIR/builtin-plugins/*" \
     -print0 | xargs -0 -P "$MINIFY_JOBS" -n 1 bash -c '
       file="$1"
       tmp="${file}.tmp.$$"

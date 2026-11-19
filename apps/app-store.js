@@ -39,6 +39,12 @@
       return C.error(error && error.name === 'QuotaExceededError' ? 'STORAGE_QUOTA_EXCEEDED' : 'STORAGE_FAILED', '应用存储失败，已提交的数据仍保留: ' + (error && error.message || error));
     }
     function normalizePermissions(permission) {
+      if (permission && Array.isArray(permission.resources)) {
+        // App workers load the store without the conversation runtime module.
+        permission.resources = Array.from(new Set(permission.resources.map(function (name) {
+          return /^plugin-[a-z0-9-]+\./.test(name) ? 'plugins.execute' : name;
+        })));
+      }
       if (!permission || !permission.slots) return permission;
       // Keep explicit denials when folding the old per-version grants into one application scope.
       var disabled = new Set();
